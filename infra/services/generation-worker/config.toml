@@ -1,0 +1,23 @@
+[microservice]
+name    = "generation-worker"
+timeout = 30
+
+[mongo]
+uri                    = "mongodb://admin:bimtra654@mongodb:27017"
+database               = "milton_prism_migration"
+connect_timeout        = 10000000000
+socket_timeout         = 5000000000
+max_pool_size          = 20
+min_pool_size          = 2
+retry_writes           = true
+retry_reads            = true
+
+[cache]
+host                   = "keydb-replica-0"
+port                   = "6379"
+requirePass            = "1qaz2WSX"
+protectedMode          = true
+connectionPoolCount    = 5
+idleTimeoutInSec       = 300
+connectionTimeoutInSec = 10
+maxIdle                = 3

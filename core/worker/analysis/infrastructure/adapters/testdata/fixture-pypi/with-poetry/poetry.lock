@@ -1,0 +1,19 @@
+[[package]]
+name = "django"
+version = "4.2.13"
+groups = ["main"]
+
+[[package]]
+name = "requests"
+version = "2.31.0"
+groups = ["main"]
+
+[[package]]
+name = "psycopg2"
+version = "2.9.9"
+groups = ["main"]
+
+[[package]]
+name = "pytest"
+version = "7.4.4"
+groups = ["dev"]

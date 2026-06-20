@@ -1,0 +1,2 @@
+# Root requirements — delegates to the pinned file.
+-r requirements/prod.txt

@@ -1,0 +1,37 @@
+[microservice]
+name    = "migration"
+host    = "0.0.0.0"
+port    = 50053
+timeout = 30
+
+[mongo]
+uri                     = "mongodb://admin:bimtra654@127.0.0.1:27017"
+database                = "milton_prism_migration"
+connect_timeout         = 10000000000
+socket_timeout          = 5000000000
+max_pool_size           = 20
+min_pool_size           = 2
+retry_writes            = true
+retry_reads             = true
+
+[cache]
+host                 = "127.0.0.1"
+port                 = "6379"
+requirePass          = "1qaz2WSX"
+protectedMode        = true
+connectionPoolCount  = 5
+idleTimeoutInSec     = 300
+connectionTimeoutInSec = 10
+maxIdle              = 3
+
+[auth]
+algorithm = 1
+
+[auth.tokenValidator]
+enabled = true
+issuer = "dev-api.agro-saas.localzone"
+audience = "dev-api.agro-saas.localzone"
+blacklist = false
+validateIssuer = true
+validateAudience = true
+publicKey = "5A6C3D9BA08CB65DC1E3ED455C7115460F2DF5B9EC923E8CCF39AE88F624EB0A"

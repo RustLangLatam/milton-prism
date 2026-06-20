@@ -1,0 +1,8 @@
+source 'https://rubygems.org'
+
+gem 'sinatra', '~> 3.1'
+gem 'sequel', '~> 5.78'
+
+group :development, :test do
+  gem 'minitest', '~> 5.0'
+end

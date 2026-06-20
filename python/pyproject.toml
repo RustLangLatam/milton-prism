@@ -1,0 +1,114 @@
+[tool.poetry]
+name = "milton-prism-python"
+version = "0.1.0"
+description = "Milton Prism — Python microservices output target"
+authors = []
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.0"
+grpcio = "^1.68.0"
+googleapis-common-protos = ">=1.66.0"
+protobuf = "^5.29.0"
+motor = "^3.6.0"
+pydantic = "^2.10.0"
+pydantic-settings = "^2.7.0"
+bcrypt = "^4.2.0"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+uvicorn = "^0.34.0"
+
+[tool.poetry.group.dev.dependencies]
+grpcio-tools = "^1.68.0"
+pytest = "^8.3.0"
+pytest-asyncio = "^0.25.0"
+mypy = "^1.14.0"
+ruff = "^0.9.0"
+import-linter = "^2.1.0"
+grpc-stubs = "^1.24.0"
+types-protobuf = "^5.29.0"
+types-python-jose = "^3.3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+exclude = ["gen/", "scripts/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+ignore = ["UP007"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "gen"
+explicit_package_bases = true
+exclude = ["gen/", "scripts/", "conftest\\.py"]
+
+[[tool.mypy.overrides]]
+module = [
+    "grpc.*",
+    "grpc_tools.*",
+    "motor.*",
+    "mongomock_motor.*",
+    "google.protobuf.*",
+    "google.api.*",
+    "jose.*",
+    "gen.*",
+    # Generated proto stubs (resolved via mypy_path=gen, imported as top-level packages)
+    "milton_prism.*",
+    "openapiv3.*",
+]
+ignore_missing_imports = true
+ignore_errors = true
+
+# Interceptors wrap grpc.aio's runtime interface; stubs lack generic parameters.
+[[tool.mypy.overrides]]
+module = "shared.interceptors.interceptors"
+ignore_errors = true
+
+# Motor stubs expose dynamic __getitem__ / session types that mypy can't fully resolve.
+[[tool.mypy.overrides]]
+module = [
+    "shared.mongo_client.client",
+    "shared.mongo_client.transaction_manager",
+]
+ignore_errors = true
+
+# gRPC handler and repositories interface with untyped/partially-typed external libs.
+[[tool.mypy.overrides]]
+module = [
+    "services.identity.infrastructure.grpc_handlers.identity_handler",
+    "services.identity.infrastructure.repositories.user_repository",
+    "services.identity.infrastructure.repositories.session_store",
+    "services.identity.infrastructure.repositories.transaction_manager",
+    "services.identity.infrastructure.repositories.token_manager",
+    "services.identity.__main__",
+    "services.identity.wire",
+    "services.repository.infrastructure.grpc_handlers.repository_handler",
+    "services.repository.infrastructure.repositories.repository_repository",
+    "services.repository.infrastructure.repositories.git_client",
+    "services.repository.infrastructure.repositories.identity_client",
+    "services.repository.__main__",
+    "services.repository.wire",
+    "shared.auth.extractor",
+    "services.migration.infrastructure.grpc_handlers.migration_handler",
+    "services.migration.infrastructure.repositories.migration_repository",
+    "services.migration.infrastructure.repositories.analysis_client",
+    "services.migration.infrastructure.repositories.identity_client",
+    "services.migration.infrastructure.repositories.repository_client",
+    "services.migration.__main__",
+    "services.migration.wire",
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["shared", "services"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+pythonpath = [".", "gen"]
+

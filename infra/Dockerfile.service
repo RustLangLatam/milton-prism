@@ -1,0 +1,23 @@
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.28
+
+# ── Stage 1: fetch grpc_health_probe ──────────────────────────────────────────
+FROM alpine:3.20 AS probe
+ARG GRPC_HEALTH_PROBE_VERSION
+ARG TARGETARCH=amd64
+RUN wget -qO /grpc_health_probe \
+      "https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-${TARGETARCH}" && \
+    chmod +x /grpc_health_probe
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG SERVICE_BINARY
+
+LABEL org.opencontainers.image.description="milton-prism gRPC service · ${SERVICE_BINARY}"
+
+WORKDIR /
+
+COPY --chmod=0755 --from=probe /grpc_health_probe /usr/local/bin/grpc_health_probe
+COPY --chmod=0755            ./bin/${SERVICE_BINARY} /service
+
+ENTRYPOINT ["/service"]
+CMD ["--config-file-path=/etc/config.toml"]

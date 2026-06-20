@@ -1,0 +1,5 @@
+[mongo]
+uri = "mongodb://admin:${MONGO_PASSWORD}@mongodb:27017"
+
+[logging.console]
+level = "warn"

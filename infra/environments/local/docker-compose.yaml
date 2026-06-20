@@ -1,0 +1,345 @@
+---
+# Run from this directory:
+#   docker compose up --build -d
+#
+# Networks are created automatically on first run.
+# Copy .env.example → .env and fill in values.
+
+networks:
+  milton-prism-network:
+  cache-network:
+
+volumes:
+  keydb-data:
+  mongodb-data:
+
+# ── Reusable fragments ────────────────────────────────────────────────────────
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    tag: "{{.Name}}"
+
+x-grpc-env: &grpc-env
+  GRPC_GO_LOG_SEVERITY_LEVEL: info
+  DEPLOYMENT_ENVIRONMENT: local
+  MILTON_PRISM_METRICS_ENABLED: "false"
+  MILTON_PRISM_TRACES_ENABLED:  "false"
+  MILTON_PRISM_PROFILING_ENABLED: "false"
+
+x-grpc-service: &grpc-service
+  environment: *grpc-env
+  networks:
+    - milton-prism-network
+    - cache-network
+  healthcheck:
+    test: ["CMD", "grpc_health_probe", "-addr=:50051", "-connect-timeout=2s"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 15s
+  depends_on:
+    keydb-replica-0:
+      condition: service_healthy
+    mongodb:
+      condition: service_healthy
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *logging
+  security_opt:
+    - no-new-privileges:true
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 256M
+      reservations:
+        memory: 64M
+  ulimits:
+    nofile:
+      soft: 65535
+      hard: 65535
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+services:
+
+  identity-services:
+    <<: *grpc-service
+    ports:
+      - "5100:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: identity_service
+    volumes:
+      - ../../services/identity-services/config.toml:/etc/config.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  repository-services:
+    <<: *grpc-service
+    ports:
+      - "5101:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: repository_service
+    volumes:
+      - ../../services/repository-services/config.toml:/etc/config.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  migration-services:
+    <<: *grpc-service
+    environment:
+      <<: *grpc-env
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      PRISM_MONOREPO_PATH: "${PRISM_MONOREPO_PATH:?PRISM_MONOREPO_PATH is required}"
+    ports:
+      - "5102:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: migration_service
+    volumes:
+      - ../../services/migration-services/config.toml:/etc/config.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+      - "${PRISM_MONOREPO_PATH}:${PRISM_MONOREPO_PATH}:ro"
+    depends_on:
+      keydb-replica-0:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      analysis-services:
+        condition: service_healthy
+
+  analysis-services:
+    <<: *grpc-service
+    environment:
+      <<: *grpc-env
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    ports:
+      - "5103:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: analysis_service
+    volumes:
+      - ../../services/analysis-services/config.toml:/etc/config.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  analysis-worker:
+    environment:
+      <<: *grpc-env
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    networks:
+      - milton-prism-network
+      - cache-network
+    build:
+      context: ../..
+      dockerfile: Dockerfile.worker
+      args:
+        WORKER_BINARY: analysis_worker
+    volumes:
+      - ../../services/analysis-worker/config.toml:/etc/config.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      keydb-replica-0:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      analysis-services:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  generation-worker:
+    environment:
+      <<: *grpc-env
+      # Auth mode: 'apikey' (default, production) or 'subscription' (testing, no per-token billing).
+      # See .env for PRISM_CLAUDE_DIR when using subscription mode.
+      PRISM_AGENT_AUTH: "${PRISM_AGENT_AUTH:-apikey}"
+      # API key mode: required when PRISM_AGENT_AUTH=apikey. Unused in subscription mode.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Subscription mode: HOST path of ~/.claude directory — passed to the Docker daemon
+      # so each agent container gets a live bind-mount of the OAuth credentials directory.
+      # Must be the HOST path (not a container-internal path).
+      PRISM_CLAUDE_DIR: "${PRISM_CLAUDE_DIR:-}"
+      PRISM_MONOREPO_PATH: "${PRISM_MONOREPO_PATH:?PRISM_MONOREPO_PATH is required — set it in .env}"
+      PRISM_WORKSPACE_PATH: "${PRISM_WORKSPACE_PATH:-/tmp/prism-workspaces}"
+      PRISM_GO_MOD_CACHE: "${PRISM_GO_MOD_CACHE:-}"
+      PRISM_GENERATION_CONCURRENCY: "${PRISM_GENERATION_CONCURRENCY:-2}"
+    networks:
+      - milton-prism-network
+      - cache-network
+    build:
+      context: ../..
+      dockerfile: Dockerfile.worker
+      args:
+        WORKER_BINARY: generation_worker
+    volumes:
+      - ../../services/generation-worker/config.toml:/etc/config.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${PRISM_MONOREPO_PATH}:${PRISM_MONOREPO_PATH}:ro"
+      - "${PRISM_WORKSPACE_PATH:-/tmp/prism-workspaces}:${PRISM_WORKSPACE_PATH:-/tmp/prism-workspaces}"
+      - /etc/localtime:/etc/localtime:ro
+      # (No file mount needed for subscription mode — PRISM_CLAUDE_DIR is the HOST path
+      # passed as a string to the Docker daemon for each agent container's bind-mount.)
+    depends_on:
+      keydb-replica-0:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  # ── Gateway ──────────────────────────────────────────────────────────────────
+
+  milton-prism-gateway:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.gateway
+      args:
+        SERVICE_BINARY: milton_prism_gateway
+    environment:
+      GRPC_GO_LOG_SEVERITY_LEVEL: info
+    volumes:
+      - ../../services/milton-prism-gateway/config.toml:/etc/config.toml:ro
+    ports:
+      - "8083:80"
+      - "9091:9000"
+    networks:
+      - milton-prism-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      identity-services:
+        condition: service_healthy
+      repository-services:
+        condition: service_healthy
+      migration-services:
+        condition: service_healthy
+      analysis-services:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  # ── Database ─────────────────────────────────────────────────────────────────
+
+  mongodb:
+    image: mongo:7.0
+    entrypoint:
+      - bash
+      - -c
+      - "openssl rand -base64 756 > /tmp/mongo.key && chmod 400 /tmp/mongo.key && chown 999:999 /tmp/mongo.key && exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile /tmp/mongo.key"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: bimtra654
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - milton-prism-network
+    healthcheck:
+      test: ["CMD", "mongosh", "-u", "admin", "-p", "bimtra654", "--authenticationDatabase", "admin", "--eval",
+             "try { rs.status() } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}) }; db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: "none"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+  # ── Cache ─────────────────────────────────────────────────────────────────────
+
+  keydb-replica-0:
+    image: eqalpha/keydb:latest
+    command: >
+      keydb-server
+        --requirepass "${KEYDB_PASSWORD:?KEYDB_PASSWORD is required}"
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        --save 60 1
+        --loglevel warning
+    healthcheck:
+      test: ["CMD", "keydb-cli", "--no-auth-warning", "-a", "${KEYDB_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - cache-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - keydb-data:/data
+    restart: always
+    logging:
+      driver: "none"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 640M

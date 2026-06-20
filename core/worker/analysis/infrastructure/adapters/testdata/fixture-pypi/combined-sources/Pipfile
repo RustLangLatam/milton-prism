@@ -1,0 +1,14 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+# All wildcards — no pinned versions in Pipfile.
+sqlalchemy = "*"
+Flask-SQLAlchemy = "*"
+werkzeug = "*"
+flask = "*"
+
+[requires]
+python_version = "3.11"

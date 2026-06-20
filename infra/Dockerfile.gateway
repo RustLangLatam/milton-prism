@@ -1,0 +1,15 @@
+FROM alpine:3.20
+ARG SERVICE_BINARY
+ARG UID=1001
+
+LABEL org.opencontainers.image.description="milton-prism API gateway · ${SERVICE_BINARY}"
+
+RUN apk add --no-cache ca-certificates curl && \
+    adduser -S -u ${UID} -H -s /sbin/nologin svc
+
+COPY --chown=${UID}:0 --chmod=0550 ./bin/${SERVICE_BINARY} /service
+
+USER ${UID}
+
+ENTRYPOINT ["/service"]
+CMD ["--config-file-path=/etc/config.toml"]

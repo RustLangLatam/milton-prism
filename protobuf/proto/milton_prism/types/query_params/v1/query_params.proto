@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package milton_prism.types.query_params.v1;
+
+import "google/api/field_behavior.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.WellKnownTypes";
+option go_package = "milton_prism/types/query_params/v1;query_params";
+option java_multiple_files = true;
+option java_outer_classname = "QueryParamsProto";
+option java_package = "milton_prism.types.query_params.v1";
+option objc_class_prefix = "MP";
+
+// The PageQueryParams message describes pagination parameters.
+message PageQueryParams {
+  // Pagination order.
+  enum Order {
+    ORDER_DESC_UNSPECIFIED = 0; // Descending order.
+    ORDER_ASC = 1; // Ascending order.
+  }
+
+  // Sort order.
+  Order order = 1 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {
+      description: "Sort order"
+      default: {string: 'ORDER_ASC'}
+    }
+  ];
+
+  // Result page number to retrieve.
+  uint32 page_number = 2 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {
+      description: "Page number"
+      min_length: 1
+      example: {yaml: "2"}
+    }
+  ];
+
+  // Maximum number of records per page.
+  uint32 page_size = 3 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {
+      description: "Records per page"
+      max_length: 100
+      min_length: 10
+      default: {number: 10}
+      example: {yaml: "20"}
+    }
+  ];
+
+  // The key to sort the results by.
+  string sort_by = 4 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {
+      description: "Field to sort by"
+      default: {string: 'create_time'}
+    }
+  ];
+}

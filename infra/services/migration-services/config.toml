@@ -1,0 +1,76 @@
+[microservice]
+name    = "migration"
+host    = "0.0.0.0"
+port    = 50051
+timeout = 30
+
+[mongo]
+uri                    = "mongodb://admin:bimtra654@mongodb:27017"
+database               = "milton_prism_migration"
+connect_timeout        = 10000000000
+socket_timeout         = 5000000000
+max_pool_size          = 20
+min_pool_size          = 2
+retry_writes           = true
+retry_reads            = true
+
+[cache]
+host                   = "keydb-replica-0"
+port                   = "6379"
+requirePass            = "1qaz2WSX"
+protectedMode          = true
+connectionPoolCount    = 5
+idleTimeoutInSec       = 300
+connectionTimeoutInSec = 10
+maxIdle                = 3
+
+[auth]
+algorithm = 1
+
+[auth.tokenGenerator]
+enabled              = true
+issuer               = "milton-prism"
+audience             = "milton-prism-clients"
+signKey              = "cce81c0e198c6a7e88a96bb7a39b3bc11912fdde5021e98d3bb63a7bff6bd7e8"
+accessTokenDuration  = 3600
+refreshTokenDuration = 86400
+storage              = false
+blacklist            = false
+validateIssuer       = false
+validateAudience     = false
+
+[auth.tokenGenerator.userClaims]
+includeUserId       = true
+includeUsername     = true
+includeUserEmail    = true
+includeUserProfiles = false
+includeCustomClaims = false
+
+[logging.console]
+colorize    = false
+level       = "info"
+prettyPrint = false
+
+[logging.file]
+level       = "info"
+prettyPrint = false
+
+[grpcServices]
+
+[grpcServices.identityServices]
+name    = "identity"
+host    = "identity-services"
+port    = 50051
+enabled = true
+
+[grpcServices.repositoryServices]
+name    = "repository"
+host    = "repository-services"
+port    = 50051
+enabled = true
+
+[grpcServices.analysisServices]
+name    = "analysis"
+host    = "analysis-services"
+port    = 50051
+enabled = true

@@ -1,0 +1,150 @@
+// Package grpc_handlers exposes the analysis application service as an
+// AnalysisServiceServer. It is the driving adapter on top of the hexagonal core.
+package grpc_handlers
+
+import (
+	"context"
+	"errors"
+
+	"milton_prism/core/services/analysis/application"
+	"milton_prism/core/services/analysis/domain"
+	coreerror "milton_prism/core/shared/error"
+	applog "milton_prism/pkg/log"
+	anlsvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
+	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
+	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
+)
+
+// AuthExtractor validates the access token in ctx and returns the authenticated
+// user's identifier and whether the caller is a system user.
+type AuthExtractor func(ctx context.Context) (userID uint64, isSystem bool, err error)
+
+// AnalysisHandler implements anlsvcv1.AnalysisServiceServer.
+type AnalysisHandler struct {
+	anlsvcv1.UnimplementedAnalysisServiceServer
+	svc         *application.Service
+	authExtract AuthExtractor
+}
+
+// NewAnalysisHandler builds a handler bound to the application service.
+func NewAnalysisHandler(svc *application.Service, authExtract AuthExtractor) *AnalysisHandler {
+	return &AnalysisHandler{svc: svc, authExtract: authExtract}
+}
+
+func (h *AnalysisHandler) GetAnalysisSummary(ctx context.Context, req *anlsvcv1.GetAnalysisSummaryRequest) (*analysisv1.AnalysisSummary, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: GetAnalysisSummary authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetIdentifier() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingIdentifier, domain.ErrMissingIdentifier.Message)
+	}
+	s, err := h.svc.GetAnalysisSummary(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if !isSystem && s.GetOwnerUserId() != callerID {
+		return nil, h.mapError(domain.ErrAnalysisSummaryNotFound)
+	}
+	return s, nil
+}
+
+func (h *AnalysisHandler) ListAnalysisSummaries(ctx context.Context, req *anlsvcv1.ListAnalysisSummariesRequest) (*anlsvcv1.ListAnalysisSummariesResponse, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: ListAnalysisSummaries authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	filter := req.GetFilter()
+	if filter == nil {
+		filter = &anlsvcv1.AnalysisSummariesFilter{}
+	}
+	if !isSystem {
+		filter.OwnerUserId = &callerID
+	}
+	items, pag, err := h.svc.ListAnalysisSummaries(ctx, filter, req.GetPageParams())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	return &anlsvcv1.ListAnalysisSummariesResponse{
+		AnalysisSummaries: items,
+		Pagination:        pag,
+	}, nil
+}
+
+func (h *AnalysisHandler) RunAnalysis(ctx context.Context, req *anlsvcv1.RunAnalysisRequest) (*anlsvcv1.RunAnalysisResponse, error) {
+	callerID, _, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: RunAnalysis authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetRepositoryId() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingRepositoryID, domain.ErrMissingRepositoryID.Message)
+	}
+	result, err := h.svc.RunAnalysis(ctx, req.GetRepositoryId(), req.GetMigrationId(), callerID, req.GetSourceBranch(), req.GetForce())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if result.Duplicate != nil {
+		return &anlsvcv1.RunAnalysisResponse{
+			DuplicateFound:   true,
+			ExistingAnalysis: result.Duplicate,
+		}, nil
+	}
+	return &anlsvcv1.RunAnalysisResponse{
+		AnalysisSummary: result.Summary,
+	}, nil
+}
+
+func (h *AnalysisHandler) EvaluateMigrability(ctx context.Context, req *anlsvcv1.EvaluateMigrabilityRequest) (*commonv1.MigrabilityAssessment, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: EvaluateMigrability authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetIdentifier() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingIdentifier, domain.ErrMissingIdentifier.Message)
+	}
+	s, err := h.svc.GetAnalysisSummary(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if !isSystem && s.GetOwnerUserId() != callerID {
+		return nil, h.mapError(domain.ErrAnalysisSummaryNotFound)
+	}
+	assessment, err := h.svc.AssessMigrability(ctx, req.GetIdentifier(), req.GetLanguage())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	return assessment, nil
+}
+
+func (h *AnalysisHandler) mapError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var dErr *domain.Error
+	if errors.As(err, &dErr) {
+		switch dErr.Code {
+		case domain.ErrCodeAnalysisSummaryNotFound:
+			return coreerror.NewNotFoundError(dErr.Code, dErr.Message)
+		case domain.ErrCodeRepositoryNotFound:
+			return coreerror.NewNotFoundError(dErr.Code, dErr.Message)
+		case domain.ErrCodeRepoAuthFailed, domain.ErrCodeRepoUnreachable:
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeNoDeepData:
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeMissingIdentifier, domain.ErrCodeMissingRepositoryID:
+			return coreerror.NewInvalidArgumentError(dErr.Code, dErr.Message)
+		case domain.ErrCodeInternal:
+			applog.Warningf("internal analysis error: code=%s error=%v", dErr.Code, err)
+			return coreerror.NewInternalError(dErr.Code, dErr.Message)
+		default:
+			applog.Warningf("unhandled analysis error: code=%s error=%v", dErr.Code, err)
+			return coreerror.NewInternalError(domain.ErrCodeInternal, domain.ErrInternal.Message)
+		}
+	}
+	applog.Warningf("unhandled analysis error: error=%v", err)
+	return coreerror.NewInternalError(domain.ErrCodeInternal, domain.ErrInternal.Message)
+}

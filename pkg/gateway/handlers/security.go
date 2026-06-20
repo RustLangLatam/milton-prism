@@ -1,0 +1,92 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	commonerr "milton_prism/pkg/gateway/common/error"
+
+	"github.com/unrolled/secure"
+)
+
+const apiKeyName = "MiltonPrismApiKey"
+
+func HandlerSecurityMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		s := secure.New(secure.Options{
+			AllowedHosts:            []string{".*\\.example\\.com"},                                                                                                                                                                                             // AllowedHosts is a list of fully qualified domain_dto names that are allowed. Default is empty list, which allows any and all host names.
+			AllowedHostsAreRegex:    true,                                                                                                                                                                                                                       // AllowedHostsAreRegex determines, if the provided AllowedHosts slice contains valid regular expressions. Default is false.
+			AllowRequestFunc:        nil,                                                                                                                                                                                                                        // AllowRequestFunc is a custom function type that allows you to determine if the request should proceed or not based on your own custom logic. Default is nil.
+			HostsProxyHeaders:       []string{"X-Forwarded-Hosts"},                                                                                                                                                                                              // HostsProxyHeaders is a set of header keys that may hold a proxied hostname value for the request.
+			SSLRedirect:             false,                                                                                                                                                                                                                      // If SSLRedirect is set to true, then only allow HTTPS requests. Default is false.
+			SSLTemporaryRedirect:    false,                                                                                                                                                                                                                      // If SSLTemporaryRedirect is true, the a 302 will be used while redirecting. Default is false (301).
+			SSLHost:                 "ssl.example.com",                                                                                                                                                                                                          // SSLHost is the host name that is used to redirect HTTP requests to HTTPS. Default is "", which indicates to use the same host.
+			SSLHostFunc:             nil,                                                                                                                                                                                                                        // SSLHostFunc is a function pointer, the return value of the function is the host name that has same functionality as `SSHost`. Default is nil. If SSLHostFunc is nil, the `SSLHost` option will be used.
+			SSLProxyHeaders:         map[string]string{"X-Forwarded-Proto": "https"},                                                                                                                                                                            // SSLProxyHeaders is set of header keys with associated values that would indicate a valid HTTPS request. Useful when using Nginx: `map[string]string{"X-Forwarded-Proto": "https"}`. Default is blank map.
+			STSSeconds:              31536000,                                                                                                                                                                                                                   // STSSeconds is the max-age of the Strict-Transport-Security header. Default is 0, which would NOT include the header.
+			STSIncludeSubdomains:    true,                                                                                                                                                                                                                       // If STSIncludeSubdomains is set to true, the `includeSubdomains` will be appended to the Strict-Transport-Security header. Default is false.
+			STSPreload:              true,                                                                                                                                                                                                                       // If STSPreload is set to true, the `preload` flag will be appended to the Strict-Transport-Security header. Default is false.
+			ForceSTSHeader:          false,                                                                                                                                                                                                                      // STS header is only included when the connection is HTTPS. If you want to force it to always be added, set to true. `IsDevelopment` still overrides this. Default is false.
+			FrameDeny:               true,                                                                                                                                                                                                                       // If FrameDeny is set to true, adds the X-Frame-Options header with the value of `DENY`. Default is false.
+			CustomFrameOptionsValue: "SAMEORIGIN",                                                                                                                                                                                                               // CustomFrameOptionsValue allows the X-Frame-Options header value to be set with a custom value. This overrides the FrameDeny option. Default is "".
+			ContentTypeNosniff:      true,                                                                                                                                                                                                                       // If ContentTypeNosniff is true, adds the X-Content-Type-Options header with the value `nosniff`. Default is false.
+			BrowserXssFilter:        true,                                                                                                                                                                                                                       // If BrowserXssFilter is true, adds the X-XSS-Protection header with the value `1; mode=block`. Default is false. 			// CustomBrowserXssValue allows the X-XSS-Protection header value to be set with a custom value. This overrides the BrowserXssFilter option. Default is "".
+			ContentSecurityPolicy:   "default-src 'self'",                                                                                                                                                                                                       // ContentSecurityPolicy allows the Content-Security-Policy header value to be set with a custom value. Default is "". Passing a template string will replace `$NONCE` with a dynamic nonce value of 16 bytes for each request which can be later retrieved using the Nonce function.
+			ReferrerPolicy:          "no-referrer",                                                                                                                                                                                                              // ReferrerPolicy allows the Referrer-Policy header with the value to be set with a custom value. Default is "".
+			PermissionsPolicy:       "accelerometer=(), ambient-light-sensor =(), autoplay=(), camera=(), document-domain_dto=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=()", // PermissionsPolicy allows the Permissions-Policy header with the value to be set with a custom value. Default is "".
+			CrossOriginOpenerPolicy: "same-origin",                                                                                                                                                                                                              // CrossOriginOpenerPolicy allows the Cross-Origin-Opener-Policy header with the value to be set with a custom value. Default is "".
+			//ExpectCTHeader:          `enforce, max-age=30"`,
+			IsDevelopment: true, // This will cause the AllowedHosts, SSLRedirect, and STSSeconds/STSIncludeSubdomains options to be ignored during development. When deploying to production, be sure to set this to false.
+		})
+
+		return s.Handler(next)
+	}
+}
+
+func HandlerApiKeyMiddleware(ApiKey *string) func(http.Handler) http.Handler {
+	// If ApiKey is nil, return a middleware that simply calls the next handler without checking
+
+	if ApiKey == nil {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+
+	// If ApiKey is not nil, use the provided key for validation
+	confApiKey := *ApiKey
+
+	return func(next http.Handler) http.Handler {
+		fn := func(w http.ResponseWriter, r *http.Request) {
+
+			apiKey := r.Header.Get(apiKeyName)
+
+			if apiKey == "" {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				body, _ := json.Marshal(commonerr.ErrorMessage{
+					Detail: "API Key missing",
+					Status: http.StatusUnauthorized,
+					Title:  "PermissionDenied",
+				})
+
+				_, _ = w.Write(body)
+				return
+			} else if apiKey != confApiKey {
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				body, _ := json.Marshal(commonerr.ErrorMessage{
+					Detail: "Invalid API Key",
+					Status: http.StatusUnauthorized,
+					Title:  "PermissionDenied",
+				})
+
+				_, _ = w.Write(body)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		}
+		return http.HandlerFunc(fn)
+	}
+}

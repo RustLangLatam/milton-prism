@@ -1,0 +1,84 @@
+{
+  "_fixture": "conduitWithHub — MIGRABLE with non-empty typed_blockers",
+  "_description": "Conduit variant with a shared-state DB hub (conduit.database FanIn=12). Score=65 (MEDIUM). Verdict=MIGRABLE (3 domain clusters). The frontend guard must suppress typed_blockers from the MIGRABLE panel and render them as structural_findings instead.",
+  "_score_math": "domain_presence.low(10) + hub_severity.severe(20) + routing_layout.single_blueprint(5) = 35 → 100-35 = 65",
+  "migrability_score": {
+    "value": 65,
+    "scoreBand": "SCORE_BAND_MEDIUM",
+    "signals": [
+      {
+        "signal": "domain_presence",
+        "penalty": 10,
+        "detail": "domain ratio 25% — low domain-to-infra ratio",
+        "detailKey": "signal.domain_presence.low",
+        "detailParams": { "ratio": "25" }
+      },
+      {
+        "signal": "cluster_count",
+        "penalty": 0,
+        "detail": "3 clusters detected",
+        "detailKey": "signal.cluster_count.ok",
+        "detailParams": { "count": "3" }
+      },
+      {
+        "signal": "hub_severity",
+        "penalty": 20,
+        "detail": "conduit.database fan-in=12 — severe shared-state hub (concentrates 63% of incoming coupling)",
+        "detailKey": "signal.hub_severity.severe",
+        "detailParams": { "module": "conduit.database", "fan_in": "12", "pct": "63" },
+        "modules": ["conduit.database"]
+      },
+      {
+        "signal": "god_modules",
+        "penalty": 0,
+        "detail": "no god-modules detected",
+        "detailKey": "signal.god_modules.none",
+        "detailParams": {}
+      },
+      {
+        "signal": "routing_layout",
+        "penalty": 5,
+        "detail": "all 3 routes in a single blueprint — no per-domain routing separation",
+        "detailKey": "signal.routing_layout.single_blueprint",
+        "detailParams": { "routes": "3" }
+      }
+    ],
+    "structuralFindings": [
+      {
+        "kind": "shared_state",
+        "severity": "high",
+        "titleKey": "finding.shared_state.hub",
+        "params": {
+          "module": "conduit.database",
+          "state_count": "2",
+          "fan_in": "12"
+        },
+        "modules": ["conduit.database"]
+      }
+    ],
+    "typedBlockers": [
+      {
+        "blockerKey": "blocker.shared_state",
+        "params": { "count": "1" }
+      }
+    ]
+  },
+  "migrability_assessment": {
+    "verdict": "MIGRABLE",
+    "typedRecommendations": [
+      { "recKey": "rec.start_migration" },
+      { "recKey": "rec.review_coupling_findings" },
+      { "recKey": "rec.resolve_high_findings", "params": { "count": "1" } },
+      { "recKey": "rec.validate_architecture" }
+    ]
+  },
+  "_frontend_guard_spec": {
+    "when_verdict_is_MIGRABLE": {
+      "typed_blockers_MUST_NOT_render_in_blockers_panel": true,
+      "typed_blockers_source_of_truth_for_structural_findings_panel": true,
+      "structural_findings_rendered_from": "migrability_score.structuralFindings",
+      "score_band_chip_value": "SCORE_BAND_MEDIUM",
+      "note": "blocker.shared_state is suppressed from the MIGRABLE blockers panel. conduit.database appears in the structural findings section instead."
+    }
+  }
+}

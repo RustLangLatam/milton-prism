@@ -1,0 +1,31 @@
+{
+    "packages": [
+        {
+            "name": "laravel/framework",
+            "version": "v11.0.0",
+            "type": "library"
+        },
+        {
+            "name": "guzzlehttp/guzzle",
+            "version": "7.8.1",
+            "type": "library"
+        },
+        {
+            "name": "symfony/console",
+            "version": "v7.1.0",
+            "type": "library"
+        },
+        {
+            "name": "codeigniter4/framework",
+            "version": "4.5.0",
+            "type": "library"
+        }
+    ],
+    "packages-dev": [
+        {
+            "name": "phpunit/phpunit",
+            "version": "11.0.0",
+            "type": "library"
+        }
+    ]
+}

@@ -1,0 +1,92 @@
+[importlinter]
+root_packages =
+    shared
+    services
+include_external_packages = True
+
+[importlinter:contract:identity-domain-independence]
+name = Identity domain may not import ports, application, or infrastructure
+type = forbidden
+source_modules =
+    services.identity.domain
+forbidden_modules =
+    services.identity.ports
+    services.identity.application
+    services.identity.infrastructure
+    grpc
+
+[importlinter:contract:identity-application-independence]
+name = Identity application may not import infrastructure, grpc, or motor
+type = forbidden
+source_modules =
+    services.identity.application
+forbidden_modules =
+    services.identity.infrastructure
+    grpc
+    motor
+
+[importlinter:contract:handlers-not-import-repositories]
+name = gRPC handlers may not import repositories directly
+type = forbidden
+source_modules =
+    services.identity.infrastructure.grpc_handlers
+forbidden_modules =
+    services.identity.infrastructure.repositories
+
+[importlinter:contract:repository-domain-independence]
+name = Repository domain may not import ports, application, or infrastructure
+type = forbidden
+source_modules =
+    services.repository.domain
+forbidden_modules =
+    services.repository.ports
+    services.repository.application
+    services.repository.infrastructure
+    grpc
+
+[importlinter:contract:repository-application-independence]
+name = Repository application may not import infrastructure, grpc, or motor
+type = forbidden
+source_modules =
+    services.repository.application
+forbidden_modules =
+    services.repository.infrastructure
+    grpc
+    motor
+
+[importlinter:contract:repository-handlers-not-import-repositories]
+name = Repository gRPC handlers may not import repositories directly
+type = forbidden
+source_modules =
+    services.repository.infrastructure.grpc_handlers
+forbidden_modules =
+    services.repository.infrastructure.repositories
+
+[importlinter:contract:migration-domain-independence]
+name = Migration domain may not import ports, application, or infrastructure
+type = forbidden
+source_modules =
+    services.migration.domain
+forbidden_modules =
+    services.migration.ports
+    services.migration.application
+    services.migration.infrastructure
+    grpc
+
+[importlinter:contract:migration-application-independence]
+name = Migration application may not import infrastructure, grpc, or motor
+type = forbidden
+source_modules =
+    services.migration.application
+forbidden_modules =
+    services.migration.infrastructure
+    grpc
+    motor
+
+[importlinter:contract:migration-handlers-not-import-repositories]
+name = Migration gRPC handlers may not import repositories directly
+type = forbidden
+source_modules =
+    services.migration.infrastructure.grpc_handlers
+forbidden_modules =
+    services.migration.infrastructure.repositories

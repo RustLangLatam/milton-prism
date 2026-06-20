@@ -1,0 +1,45 @@
+[gateway]
+name             = "milton-prism-api-gateway"
+port             = 80
+host             = "0.0.0.0"
+apiKey           = "dev123"
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250
+
+[cors]
+enabled        = true
+AllowOrigin    = "*"
+allowedMethods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+allowedHeaders = ["Authorization", "Refresh", "Content-Type", "MiltonPrismApiKey"]
+exposeHeaders  = ["Authorization", "Refresh", "MiltonPrismApiKey"]
+
+[metrics]
+port = 9000
+
+[[grpcServices]]
+name        = "identity"
+host        = "identity-services"
+port        = 50051
+enabled     = true
+healthCheck = false
+
+[[grpcServices]]
+name        = "repository"
+host        = "repository-services"
+port        = 50051
+enabled     = true
+healthCheck = false
+
+[[grpcServices]]
+name        = "migration"
+host        = "migration-services"
+port        = 50051
+enabled     = true
+healthCheck = false
+
+[[grpcServices]]
+name        = "analysis"
+host        = "analysis-services"
+port        = 50051
+enabled     = true
+healthCheck = false

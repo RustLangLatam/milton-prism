@@ -1,0 +1,3035 @@
+# Generated with protoc-gen-openapi
+# https://github.com/google/gnostic/tree/master/cmd/protoc-gen-openapi
+
+openapi: 3.0.3
+info:
+    title: Milton Prism API-Gateway
+    description: |-
+        The **Milton Prism API-Gateway** is the single entry point for all external traffic. It translates HTTP/JSON requests into gRPC calls and forwards them to the appropriate backend microservice.
+
+        ### API Design Standards
+
+        All RPCs follow **Google API Improvement Proposals (AIPs)**.
+    contact:
+        name: Milton Prism API Support
+        email: rust.lang.latam@gmail.com
+    version: 1.1.0-dev
+servers:
+    - url: https://api.miltonprism.com
+paths:
+    /v1/analysis_summaries:
+        get:
+            tags:
+                - AnalysisService
+            summary: List analysis summaries
+            description: Returns a paginated, filtered list of code analysis summaries.
+            operationId: ListAnalysisSummaries
+            parameters:
+                - name: filter.repositoryId
+                  in: query
+                  description: Restrict results to summaries for this repository.
+                  schema:
+                    example: 42
+                    type: string
+                    description: Filter by source repository identifier.
+                - name: filter.migrationId
+                  in: query
+                  description: Restrict results to summaries linked to this migration.
+                  schema:
+                    example: 7
+                    type: string
+                    description: Filter by associated migration identifier.
+                - name: filter.state
+                  in: query
+                  description: Restrict results to summaries in this lifecycle state.
+                  schema:
+                    example: ANALYSIS_STATE_COMPLETED
+                    enum:
+                        - ANALYSIS_STATE_UNSPECIFIED
+                        - ANALYSIS_STATE_RUNNING
+                        - ANALYSIS_STATE_COMPLETED
+                        - ANALYSIS_STATE_FAILED
+                    type: string
+                    description: Filter by analysis lifecycle state.
+                    format: enum
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    example: desc
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: asc
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    example: create_time
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListAnalysisSummariesResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/analysis_summaries/{identifier}:
+        get:
+            tags:
+                - AnalysisService
+            summary: Get an analysis summary
+            description: Returns a single code analysis summary by numeric identifier.
+            operationId: GetAnalysisSummary
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AnalysisSummary'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/analysis_summaries:run:
+        post:
+            tags:
+                - AnalysisService
+            summary: Run a code analysis
+            description: Enqueues an async analysis run. Returns immediately with an AnalysisSummary in RUNNING state.
+            operationId: RunAnalysis
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RunAnalysisRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AnalysisSummary'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/articles:
+        get:
+            tags:
+                - ArticleService
+            summary: List articles
+            description: Returns a paginated, filtered list of articles.
+            operationId: ListArticles
+            parameters:
+                - name: filter.authorIdentifier
+                  in: query
+                  description: Return only articles authored by this profile identifier.
+                  schema:
+                    type: string
+                    description: Filter by author profile identifier.
+                - name: filter.slug
+                  in: query
+                  description: Return only the article with this slug.
+                  schema:
+                    type: string
+                    description: Filter by slug.
+                - name: filter.state
+                  in: query
+                  description: Return only articles in this state.
+                  schema:
+                    enum:
+                        - ARTICLE_STATE_UNSPECIFIED
+                        - ARTICLE_STATE_ACTIVE
+                        - ARTICLE_STATE_DELETED
+                    type: string
+                    description: Filter by state.
+                    format: enum
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    example: desc
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: asc
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    example: create_time
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListArticlesResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+        post:
+            tags:
+                - ArticleService
+            summary: Create an article
+            description: Persists a new article. The author_identifier must reference an existing profile.
+            operationId: CreateArticle
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Article'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Article'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/articles/{article.identifier}:
+        patch:
+            tags:
+                - ArticleService
+            summary: Update an article
+            description: 'Applies a FieldMask-bounded partial update. Mutable fields: slug, title, description, body, state.'
+            operationId: UpdateArticle
+            parameters:
+                - name: article.identifier
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: updateMask
+                  in: query
+                  description: Mask of fields to update. Required; empty mask updates all mutable fields.
+                  schema:
+                    type: string
+                    format: field-mask
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Article'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Article'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/articles/{identifier}:
+        get:
+            tags:
+                - ArticleService
+            summary: Get an article
+            description: Returns an article by numeric identifier.
+            operationId: GetArticle
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Article'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+        delete:
+            tags:
+                - ArticleService
+            summary: Delete an article
+            description: Soft-deletes an article. The record is retained until the purge window expires.
+            operationId: DeleteArticle
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content: {}
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations:
+        get:
+            tags:
+                - MigrationService
+            summary: List migrations
+            description: Returns a paginated, filtered list. Non-system callers see only their own migrations.
+            operationId: ListMigrations
+            parameters:
+                - name: filter.ownerUserId
+                  in: query
+                  description: Restrict results to migrations owned by this user.
+                  schema:
+                    example: 1
+                    type: string
+                    description: Filter by owner user identifier.
+                - name: filter.repositoryId
+                  in: query
+                  description: Restrict results to migrations against this repository.
+                  schema:
+                    example: 42
+                    type: string
+                    description: Filter by source repository identifier.
+                - name: filter.state
+                  in: query
+                  description: Restrict results to migrations in this lifecycle state.
+                  schema:
+                    example: MIGRATION_STATE_PENDING
+                    enum:
+                        - MIGRATION_STATE_UNSPECIFIED
+                        - MIGRATION_STATE_PENDING
+                        - MIGRATION_STATE_ANALYZING
+                        - MIGRATION_STATE_DESIGNING
+                        - MIGRATION_STATE_AWAITING_APPROVAL
+                        - MIGRATION_STATE_GENERATING
+                        - MIGRATION_STATE_TESTING
+                        - MIGRATION_STATE_READY
+                        - MIGRATION_STATE_PUSHED
+                        - MIGRATION_STATE_FAILED
+                        - MIGRATION_STATE_CANCELLED
+                    type: string
+                    description: Filter by migration lifecycle state.
+                    format: enum
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    example: desc
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: asc
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    example: create_time
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListMigrationsResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+        post:
+            tags:
+                - MigrationService
+            summary: Create a migration
+            description: Creates a new migration record in PENDING state. Call StartMigration to begin the pipeline.
+            operationId: CreateMigration
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Migration'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:
+        get:
+            tags:
+                - MigrationService
+            summary: Get a migration
+            description: Returns a migration by numeric identifier. Only the owner or a system user may call this.
+            operationId: GetMigration
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+        delete:
+            tags:
+                - MigrationService
+            summary: Soft-delete a migration
+            description: Marks a terminal-state migration as deleted. Record retained until purge window expires.
+            operationId: DeleteMigration
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content: {}
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:approveDesign:
+        post:
+            tags:
+                - MigrationService
+            summary: Approve or reject the restructure plan
+            description: Advances to GENERATING when approved=true, or sets CANCELLED when approved=false.
+            operationId: ApproveDesign
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ApproveDesignRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:assessMigrability:
+        post:
+            tags:
+                - MigrationService
+            summary: Run migrability assessment
+            description: Triggers an opt-in LLM assessment of migration readiness. Costs tokens. Updates the stored verdict on every call. Requires completed analysis.
+            operationId: AssessMigrability
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the migration to assess. Must have analysis_summary_id > 0.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/AssessMigrabilityRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:cancel:
+        post:
+            tags:
+                - MigrationService
+            summary: Cancel a migration
+            description: Transitions the migration to CANCELLED from any non-terminal state.
+            operationId: CancelMigration
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CancelMigrationRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:generationPackage:
+        post:
+            tags:
+                - MigrationService
+            summary: Get generation package
+            description: Returns the full generation package (proto + boundary spec per service) for a GENERATING migration.
+            operationId: GetGenerationPackage
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the GENERATING migration.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GetGenerationPackageRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GenerationPackage'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:setMigrabilityOverride:
+        post:
+            tags:
+                - MigrationService
+            summary: Set or clear the migrability override
+            description: When override=true, lifts the NOT_MIGRABLE block so the user can proceed with generation despite the verdict.
+            operationId: SetMigrabilityOverride
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the migration.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/SetMigrabilityOverrideRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:start:
+        post:
+            tags:
+                - MigrationService
+            summary: Start the migration pipeline
+            description: Transitions the migration from PENDING to ANALYZING and signals the orchestrator.
+            operationId: StartMigration
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/StartMigrationRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{migrationId}:generationArtifacts:
+        post:
+            tags:
+                - MigrationService
+            summary: Get generated source file artifacts
+            description: Returns the generated source files for the migration. Leave service_name empty to retrieve all services. Separate from GetMigration to avoid loading code on status polls.
+            operationId: GetGenerationArtifacts
+            parameters:
+                - name: migrationId
+                  in: path
+                  description: Numeric migration identifier.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GetGenerationArtifactsRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GetGenerationArtifactsResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{migrationId}:publish:
+        post:
+            tags:
+                - MigrationService
+            summary: Publish migration artifacts to a git repository
+            description: Commits all generated artifacts and pushes them to the target repository. On push failure the migration stays READY (retryable). The write token is never stored.
+            operationId: PublishMigration
+            parameters:
+                - name: migrationId
+                  in: path
+                  description: Numeric migration identifier. Migration must be in READY or PUSHED state.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PublishMigrationRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PublishMigrationResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories:
+        get:
+            tags:
+                - RepositoryService
+            summary: List repositories
+            description: Returns a paginated, filtered list. Non-system callers see only their own repositories.
+            operationId: ListRepositories
+            parameters:
+                - name: filter.ownerUserId
+                  in: query
+                  description: Restrict results to repositories owned by this user.
+                  schema:
+                    example: 7
+                    type: string
+                    description: Filter by owner user identifier.
+                - name: filter.state
+                  in: query
+                  description: Restrict results to repositories in this lifecycle state.
+                  schema:
+                    example: REPOSITORY_STATE_CONNECTED
+                    enum:
+                        - REPOSITORY_STATE_UNSPECIFIED
+                        - REPOSITORY_STATE_CONNECTED
+                        - REPOSITORY_STATE_DISCONNECTED
+                        - REPOSITORY_STATE_ERROR
+                    type: string
+                    description: Filter by repository lifecycle state.
+                    format: enum
+                - name: filter.provider
+                  in: query
+                  description: Restrict results to repositories on this git provider.
+                  schema:
+                    example: GIT_PROVIDER_GITHUB
+                    enum:
+                        - GIT_PROVIDER_UNSPECIFIED
+                        - GIT_PROVIDER_GITHUB
+                        - GIT_PROVIDER_GITLAB
+                        - GIT_PROVIDER_BITBUCKET
+                        - GIT_PROVIDER_GENERIC
+                    type: string
+                    description: Filter by git hosting provider.
+                    format: enum
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    example: desc
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: asc
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    example: create_time
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListRepositoriesResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+        post:
+            tags:
+                - RepositoryService
+            summary: Register a git repository
+            description: Creates a new repository record. The credential_ref field is stored but never returned.
+            operationId: CreateRepository
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Repository'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Repository'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories/{identifier}:
+        get:
+            tags:
+                - RepositoryService
+            summary: Get a repository
+            description: Returns a repository by numeric identifier. Only the owner or a system user may call this.
+            operationId: GetRepository
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Repository'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+        delete:
+            tags:
+                - RepositoryService
+            summary: Soft-delete a repository
+            description: Marks the repository as deleted. Record is retained until the purge window expires.
+            operationId: DeleteRepository
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content: {}
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories/{identifier}:listBranches:
+        get:
+            tags:
+                - RepositoryService
+            summary: List remote branches
+            description: Returns the list of branches currently available on the git remote.
+            operationId: ListBranches
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListBranchesResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories/{identifier}:testConnection:
+        post:
+            tags:
+                - RepositoryService
+            summary: Probe the git remote
+            description: Tests the remote connection and stores the resulting ConnectionStatus on the record.
+            operationId: TestConnection
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TestConnectionRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TestConnectionResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories/{repository.identifier}:
+        patch:
+            tags:
+                - RepositoryService
+            summary: Partial update a repository
+            description: Applies a FieldMask-bounded update. Only the owner or a system user may update.
+            operationId: UpdateRepository
+            parameters:
+                - name: repository.identifier
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: updateMask
+                  in: query
+                  description: FieldMask listing the paths to update.
+                  schema:
+                    type: string
+                    format: field-mask
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/Repository'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Repository'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories:probeSource:
+        post:
+            tags:
+                - RepositoryService
+            summary: Probe a source repository
+            description: Checks reachability and visibility of a remote git URL without cloning. No repository record is required.
+            operationId: ProbeSourceRepository
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ProbeSourceRepositoryRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ProbeSourceRepositoryResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/repositories:pushResult:
+        post:
+            tags:
+                - RepositoryService
+            summary: Push migration artifacts to a git repository
+            description: Commits migration artifacts and pushes them to a target git repository. The write token is used once and never stored.
+            operationId: PushResult
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PushResultRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PushResultResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/tags:
+        get:
+            tags:
+                - ArticleService
+            summary: List tags
+            description: Returns a paginated list of active tags.
+            operationId: ListTags
+            parameters:
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    example: desc
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: asc
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    example: create_time
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListTagsResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/tags/{identifier}:
+        get:
+            tags:
+                - ArticleService
+            summary: Get a tag
+            description: Returns a tag by numeric identifier.
+            operationId: GetTag
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Tag'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/users:
+        get:
+            tags:
+                - IdentityService
+            description: |-
+                ListUsers returns a paginated, filterable list of user records.
+
+                 Requires system-user privileges.
+
+                 Implements [AIP-132](https://google.aip.dev/132).
+            operationId: ListUsers
+            parameters:
+                - name: filter.state
+                  in: query
+                  description: Restrict results to accounts in this lifecycle state.
+                  schema:
+                    example: USER_STATE_ACTIVE
+                    enum:
+                        - USER_STATE_UNSPECIFIED
+                        - USER_STATE_ACTIVE
+                        - USER_STATE_SUSPENDED
+                        - USER_STATE_DELETED
+                    type: string
+                    description: Filter by lifecycle state. Omit to return users in all states.
+                    format: enum
+                - name: filter.email
+                  in: query
+                  description: Restrict results to accounts whose email address exactly matches this value.
+                  schema:
+                    example: alice@example.com
+                    type: string
+                    description: Filter by exact email address match. Case-insensitive.
+                    format: email
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    example: desc
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: asc
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    example: create_time
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: Paginated list of user resources.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListUsersResponse'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/ForbiddenPermission'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+                  Authorization: []
+        post:
+            tags:
+                - IdentityService
+            description: |-
+                CreateUser creates a new user account.
+
+                 Implements [AIP-133](https://google.aip.dev/133).
+            operationId: CreateUser
+            parameters:
+                - name: password
+                  in: query
+                  description: Plain-text password chosen by the user. Never stored; hashed on the server before persistence.
+                  schema:
+                    example: Str0ngP@ssw0rd!
+                    maxLength: 72
+                    minLength: 8
+                    pattern: ^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,72}$
+                    type: string
+                    description: Plain-text initial password. Transmitted over TLS only. Never persisted or returned.
+                    format: password
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/User'
+                required: true
+            responses:
+                "201":
+                    description: User resource created successfully.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                "400":
+                    $ref: '#/components/responses/InvalidArgument'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "409":
+                    $ref: '#/components/responses/AlreadyExists'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+    /v1/users/{identifier}:
+        get:
+            tags:
+                - IdentityService
+            description: |-
+                GetUser retrieves a user by its numeric identifier.
+
+                 Callers must be authenticated. Non-system users may only fetch their own
+                 record; system users may fetch any record.
+
+                 Implements [AIP-131](https://google.aip.dev/131).
+            operationId: GetUser
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the user to retrieve.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: User resource retrieved successfully.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                "400":
+                    $ref: '#/components/responses/InvalidArgument'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/ForbiddenPermission'
+                "404":
+                    $ref: '#/components/responses/NotFound'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+                  Authorization: []
+        delete:
+            tags:
+                - IdentityService
+            description: |-
+                DeleteUser soft-deletes a user account.
+
+                 The record is retained with state USER_STATE_DELETED until a purge runs.
+                 Non-system users may only delete their own account.
+
+                 Implements [AIP-135](https://google.aip.dev/135).
+            operationId: DeleteUser
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the user to delete.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "204":
+                    description: User soft-deleted successfully. No content returned.
+                "400":
+                    $ref: '#/components/responses/InvalidArgument'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/ForbiddenPermission'
+                "404":
+                    $ref: '#/components/responses/NotFound'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+                  Authorization: []
+    /v1/users/{user.identifier}:
+        patch:
+            tags:
+                - IdentityService
+            description: |-
+                UpdateUser applies a FieldMask-bounded partial update to a user record.
+
+                 Non-system users may only update their own record. Omitting update_mask
+                 updates all mutable fields.
+
+                 Implements [AIP-134](https://google.aip.dev/134).
+            operationId: UpdateUser
+            parameters:
+                - name: user.identifier
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: updateMask
+                  in: query
+                  description: |-
+                    Specifies which fields to update. Follows [AIP-134](https://google.aip.dev/134).
+                     An empty mask causes all mutable fields to be replaced.
+                  schema:
+                    type: string
+                    format: field-mask
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/User'
+                required: true
+            responses:
+                "200":
+                    description: User resource updated successfully.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                "400":
+                    $ref: '#/components/responses/InvalidArgument'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/ForbiddenPermission'
+                "404":
+                    $ref: '#/components/responses/NotFound'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+                  Authorization: []
+    /v1/users:authenticate:
+        post:
+            tags:
+                - IdentityService
+            description: |-
+                AuthenticateUser validates email/password credentials and returns a token pair.
+
+                 No prior authentication required. Returns AuthTokens on success.
+
+                 Implements [AIP-136](https://google.aip.dev/136).
+            operationId: AuthenticateUser
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/AuthenticateUserRequest'
+                required: true
+            responses:
+                "200":
+                    description: Authentication successful. Returns access and refresh tokens.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AuthorizationTokens'
+                "400":
+                    $ref: '#/components/responses/InvalidArgument'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/ForbiddenPermission'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+    /v1/users:current:
+        get:
+            tags:
+                - IdentityService
+            description: |-
+                GetCurrentUser returns the profile of the authenticated caller.
+
+                 Equivalent to GetUser(caller_id) without requiring the client to know its
+                 own identifier.
+
+                 Implements [AIP-136](https://google.aip.dev/136).
+            operationId: GetCurrentUser
+            responses:
+                "200":
+                    description: Authenticated caller's user profile.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "404":
+                    $ref: '#/components/responses/NotFound'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+                  Authorization: []
+    /v1/users:logout:
+        post:
+            tags:
+                - IdentityService
+            description: |-
+                Logout invalidates the caller's current session and revokes the access token.
+
+                 Requires a valid bearer token in the Authorization header.
+
+                 Implements [AIP-136](https://google.aip.dev/136).
+            operationId: Logout
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/LogoutRequest'
+                required: true
+            responses:
+                "200":
+                    description: Session invalidated successfully. No content returned.
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+                  Authorization: []
+    /v1/users:refreshToken:
+        post:
+            tags:
+                - IdentityService
+            description: |-
+                RefreshToken issues a new access/refresh token pair from a valid refresh token.
+
+                 The old refresh token is revoked atomically. No bearer token in the
+                 Authorization header is required; the refresh token itself is the credential.
+
+                 Implements [AIP-136](https://google.aip.dev/136).
+            operationId: RefreshToken
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RefreshTokenRequest'
+                required: true
+            responses:
+                "200":
+                    description: Token rotated successfully. Returns a new access/refresh token pair.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AuthorizationTokens'
+                "400":
+                    $ref: '#/components/responses/InvalidArgument'
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "500":
+                    $ref: '#/components/responses/InternalError'
+            security:
+                - ApiKey: []
+components:
+    schemas:
+        AnalysisSummary:
+            title: AnalysisSummary
+            required:
+                - repositoryId
+            type: object
+            properties:
+                identifier:
+                    example: 1
+                    type: string
+                    description: System-assigned unique identifier.
+                repositoryId:
+                    example: 42
+                    type: string
+                    description: Identifier of the repository this summary belongs to.
+                migrationId:
+                    example: 7
+                    type: string
+                    description: Migration identifier that triggered this run (0 if standalone).
+                state:
+                    example: ANALYSIS_STATE_COMPLETED
+                    enum:
+                        - ANALYSIS_STATE_UNSPECIFIED
+                        - ANALYSIS_STATE_RUNNING
+                        - ANALYSIS_STATE_COMPLETED
+                        - ANALYSIS_STATE_FAILED
+                    type: string
+                    description: Lifecycle state of the analysis run.
+                    format: enum
+                technologies:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Technology'
+                    description: Technologies detected during analysis.
+                vulnerabilities:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Vulnerability'
+                    description: Security vulnerabilities detected during analysis.
+                dependencyGraph:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/DependencyEdge'
+                    description: Directed dependency graph edges between modules.
+                totalFiles:
+                    example: 312
+                    type: string
+                    description: Total number of source files scanned.
+                totalLines:
+                    example: 48200
+                    type: string
+                    description: Total number of source lines of code scanned.
+                createTime:
+                    readOnly: true
+                    example: 2025-01-15T10:30:00Z
+                    type: string
+                    description: Creation timestamp (server-assigned, immutable).
+                    format: date-time
+                updateTime:
+                    readOnly: true
+                    example: 2025-06-01T08:00:00Z
+                    type: string
+                    description: Last modification timestamp (server-assigned).
+                    format: date-time
+                deleteTime:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Soft-delete timestamp. Null while active.
+                    format: date-time
+                purgeTime:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Scheduled purge timestamp after retention window.
+                    format: date-time
+                moduleCards:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ModuleCard'
+                    description: Per-module structural cards (functions, classes, routes, state).
+                blueprints:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/BlueprintInfo'
+                    description: Flask Blueprint registrations (name, file, url_prefix).
+            description: 'Output of a code analysis run: technologies, vulnerabilities, and dependency graph.'
+        Any:
+            type: object
+            properties:
+                value:
+                    $ref: '#/components/schemas/GoogleProtobufAny'
+                yaml:
+                    type: string
+        ApiErrorMessage:
+            required:
+                - detail
+                - status
+                - title
+            type: object
+            properties:
+                detail:
+                    type: string
+                    description: Human-readable message describing the error.
+                status:
+                    type: integer
+                    description: The http status code of the error.
+                title:
+                    type: string
+                    description: A short, human-readable summary of the error.
+        ApproveDesignRequest:
+            required:
+                - identifier
+                - approved
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier.
+                approved:
+                    example: true
+                    type: boolean
+                    description: true advances to GENERATING; false transitions to CANCELLED.
+            description: ApproveDesignRequest carries the owner's decision on the restructure plan.
+        Article:
+            required:
+                - authorIdentifier
+            type: object
+            properties:
+                identifier:
+                    readOnly: true
+                    type: string
+                    description: Unique numeric identifier.
+                state:
+                    enum:
+                        - ARTICLE_STATE_UNSPECIFIED
+                        - ARTICLE_STATE_ACTIVE
+                        - ARTICLE_STATE_DELETED
+                    type: string
+                    description: Article lifecycle state.
+                    format: enum
+                slug:
+                    type: string
+                    description: URL-safe slug.
+                title:
+                    type: string
+                    description: Article title.
+                description:
+                    type: string
+                    description: Short description.
+                body:
+                    type: string
+                    description: Article body (Markdown).
+                authorIdentifier:
+                    type: string
+                    description: Profile-service identifier of the author.
+                createTime:
+                    readOnly: true
+                    type: string
+                    description: Creation timestamp.
+                    format: date-time
+                updateTime:
+                    readOnly: true
+                    type: string
+                    description: Last-updated timestamp.
+                    format: date-time
+                deleteTime:
+                    readOnly: true
+                    type: string
+                    description: Soft-delete timestamp; null while active.
+                    format: date-time
+                purgeTime:
+                    readOnly: true
+                    type: string
+                    description: Hard-delete timestamp; null until purged.
+                    format: date-time
+            description: An article resource.
+        AssessMigrabilityRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier. Migration must have a completed analysis.
+            description: AssessMigrabilityRequest triggers the opt-in LLM migrability assessment.
+        AuthenticateUserRequest:
+            required:
+                - email
+                - password
+            type: object
+            properties:
+                email:
+                    example: alice@example.com
+                    type: string
+                    description: Registered email address.
+                    format: email
+                password:
+                    writeOnly: true
+                    example: Str0ngP@ssw0rd!
+                    maxLength: 72
+                    minLength: 8
+                    type: string
+                    description: Plain-text password. Transmitted over TLS only. Never logged or persisted.
+                    format: password
+            description: AuthenticateUserRequest carries the credentials for password-based login.
+        AuthorizationTokens:
+            type: object
+            properties:
+                accessToken:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/Token'
+                    description: Short-lived access token (JWT)
+                refreshToken:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/Token'
+                    description: Long-lived refresh token (JWT)
+                expiresIn:
+                    readOnly: true
+                    example: 3600
+                    type: integer
+                    description: Lifetime in seconds of the access token
+                    format: uint32
+            description: AuthorizationTokens contains the set of tokens returned from a successful authorization grant.
+        BlueprintInfo:
+            title: BlueprintInfo
+            type: object
+            properties:
+                name:
+                    example: users
+                    type: string
+                    description: Blueprint name.
+                file:
+                    example: conduit/users/routes.py
+                    type: string
+                    description: File where Blueprint() was defined.
+                urlPrefix:
+                    example: /users
+                    type: string
+                    description: URL prefix from register_blueprint (empty if not found).
+            description: Flask Blueprint registration metadata.
+        Branch:
+            title: Branch
+            type: object
+            properties:
+                name:
+                    example: main
+                    type: string
+                    description: Short branch name.
+                commitSha:
+                    example: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+                    type: string
+                    description: SHA-1 hash of the HEAD commit on this branch.
+                isDefault:
+                    example: true
+                    type: boolean
+                    description: True if this is the repository's default branch.
+            description: A git branch discovered on the remote repository.
+        CancelMigrationRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier.
+            description: CancelMigrationRequest cancels a non-terminal migration.
+        CrossServiceFk:
+            title: CrossServiceFk
+            type: object
+            properties:
+                ownerService:
+                    example: articles
+                    type: string
+                    description: Service that owns the referencing field.
+                field:
+                    example: author_identifier
+                    type: string
+                    description: AIP proto field name of the referencing field.
+                refTable:
+                    example: usersprofile
+                    type: string
+                    description: SQLAlchemy __tablename__ of the referenced table.
+                refService:
+                    example: user
+                    type: string
+                    description: Service that owns the referenced table.
+                refResource:
+                    example: User
+                    type: string
+                    description: Proto resource name in the referenced service. Empty if not yet resolved.
+                ownerMessage:
+                    example: Article
+                    type: string
+                    description: Proto message name in the owner service that contains this field (e.g. Article, Comment).
+            description: A foreign-key reference that crosses a service boundary.
+        DependencyEdge:
+            title: DependencyEdge
+            type: object
+            properties:
+                fromModule:
+                    example: service/orders
+                    type: string
+                    description: Fully qualified name of the module with the dependency.
+                toModule:
+                    example: service/inventory
+                    type: string
+                    description: Fully qualified name of the module being depended on.
+                weight:
+                    example: 12
+                    type: integer
+                    description: Coupling strength (higher = more coupled).
+                    format: uint32
+            description: Directed edge between two modules in the dependency graph.
+        ExternalDocs:
+            type: object
+            properties:
+                description:
+                    type: string
+                url:
+                    type: string
+                specificationExtension:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/NamedAny'
+            description: Allows referencing an external resource for extended documentation.
+        FileArtifact:
+            title: FileArtifact
+            type: object
+            properties:
+                path:
+                    example: core/services/user/domain/domain.go
+                    type: string
+                    description: Relative path within the monorepo.
+                content:
+                    type: string
+                    description: UTF-8 source content of the generated file.
+            description: A single generated source file produced by the autonomous code generation agent.
+        FileEntry:
+            required:
+                - path
+            type: object
+            properties:
+                path:
+                    type: string
+                    description: Relative path from the repository root.
+                content:
+                    type: string
+                    description: UTF-8 file content.
+            description: FileEntry is a single file for the push operation.
+        GenerationPackage:
+            title: GenerationPackage
+            type: object
+            properties:
+                migrationId:
+                    type: string
+                    description: Migration identifier.
+                outputProfile:
+                    type: string
+                    description: Output profile name (go or python).
+                services:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ServiceGenerationSpec'
+                    description: Per-service generation specs.
+            description: 'Complete generation package for a GENERATING migration: one spec per service.'
+        GetGenerationArtifactsRequest:
+            required:
+                - migrationId
+            type: object
+            properties:
+                migrationId:
+                    example: 10018
+                    type: string
+                    description: Migration identifier.
+                serviceName:
+                    example: user
+                    type: string
+                    description: Service name to filter by. Leave empty to retrieve all services.
+            description: GetGenerationArtifactsRequest identifies which artifacts to retrieve.
+        GetGenerationArtifactsResponse:
+            type: object
+            properties:
+                services:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ServiceGenerationArtifacts'
+                    description: Generated source files per service, sorted by service name.
+            description: GetGenerationArtifactsResponse carries the generated source files grouped by service.
+        GetGenerationPackageRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier.
+            description: GetGenerationPackageRequest identifies the migration whose generation package to retrieve.
+        GoogleProtobufAny:
+            type: object
+            properties:
+                '@type':
+                    type: string
+                    description: The type of the serialized message.
+            additionalProperties: true
+            description: Contains an arbitrary serialized message along with a @type that describes the type of the serialized message.
+        ListAnalysisSummariesResponse:
+            type: object
+            properties:
+                analysisSummaries:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AnalysisSummary'
+                    description: Analysis summaries in this result page.
+                pagination:
+                    allOf:
+                        - $ref: '#/components/schemas/Pagination'
+                    description: Pagination metadata.
+            description: ListAnalysisSummariesResponse carries a page of summaries with pagination metadata.
+        ListArticlesResponse:
+            type: object
+            properties:
+                articles:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Article'
+                    description: Articles in this result page.
+                pagination:
+                    allOf:
+                        - $ref: '#/components/schemas/Pagination'
+                    description: Pagination metadata.
+            description: ListArticlesResponse carries a page of articles with pagination metadata.
+        ListBranchesResponse:
+            type: object
+            properties:
+                branches:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Branch'
+                    description: Remote branches.
+            description: ListBranchesResponse carries the branches discovered on the remote.
+        ListMigrationsResponse:
+            type: object
+            properties:
+                migrations:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Migration'
+                    description: Migrations in this result page.
+                pagination:
+                    allOf:
+                        - $ref: '#/components/schemas/Pagination'
+                    description: Pagination metadata.
+            description: ListMigrationsResponse carries a page of migrations with pagination metadata.
+        ListRepositoriesResponse:
+            type: object
+            properties:
+                repositories:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Repository'
+                    description: Repositories in this result page.
+                pagination:
+                    allOf:
+                        - $ref: '#/components/schemas/Pagination'
+                    description: Pagination metadata.
+            description: ListRepositoriesResponse carries a page of repositories with pagination metadata.
+        ListTagsResponse:
+            type: object
+            properties:
+                tags:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Tag'
+                    description: Tags in this result page.
+                pagination:
+                    allOf:
+                        - $ref: '#/components/schemas/Pagination'
+                    description: Pagination metadata.
+            description: ListTagsResponse carries a page of tags with pagination metadata.
+        ListUsersResponse:
+            type: object
+            properties:
+                users:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/User'
+                    description: Page of user resources matching the applied filter.
+                pagination:
+                    allOf:
+                        - $ref: '#/components/schemas/Pagination'
+                    description: Pagination metadata describing the total result set and current page position.
+            description: ListUsersResponse wraps a page of users with pagination metadata.
+        LogoutRequest:
+            type: object
+            description: LogoutRequest is intentionally empty; session context is read from the bearer token.
+        MigrabilityAssessment:
+            title: MigrabilityAssessment
+            type: object
+            properties:
+                verdict:
+                    example: MIGRABLE
+                    type: string
+                    description: 'Migrability verdict: MIGRABLE, PARTIAL, or NOT_MIGRABLE.'
+                summary:
+                    example: Flask REST API organised in blueprints with clear domain separation.
+                    type: string
+                    description: 1-2 sentence description of the codebase's architectural pattern.
+                reasons:
+                    type: array
+                    items:
+                        type: string
+                    description: Reasons supporting the verdict.
+                blockers:
+                    type: array
+                    items:
+                        type: string
+                    description: Structural blockers preventing decomposition. Empty for MIGRABLE.
+                confidence:
+                    example: HIGH
+                    type: string
+                    description: 'Model confidence: HIGH, MEDIUM, or LOW.'
+                costUsd:
+                    example: 0.003
+                    type: number
+                    description: Estimated API cost in USD.
+                    format: double
+                assessedTime:
+                    readOnly: true
+                    type: string
+                    description: When the assessment was last run.
+                    format: date-time
+            description: LLM-produced migrability verdict. Absent until explicitly requested by the user.
+        Migration:
+            title: Migration
+            required:
+                - repositoryId
+                - ownerUserId
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: System-assigned unique identifier.
+                repositoryId:
+                    example: 42
+                    type: string
+                    description: Identifier of the source repository.
+                ownerUserId:
+                    example: 1
+                    type: string
+                    description: Identifier of the owning user.
+                sourceBranch:
+                    example: main
+                    type: string
+                    description: Source branch to analyse. Defaults to the repository's default branch.
+                state:
+                    example: MIGRATION_STATE_PENDING
+                    enum:
+                        - MIGRATION_STATE_UNSPECIFIED
+                        - MIGRATION_STATE_PENDING
+                        - MIGRATION_STATE_ANALYZING
+                        - MIGRATION_STATE_DESIGNING
+                        - MIGRATION_STATE_AWAITING_APPROVAL
+                        - MIGRATION_STATE_GENERATING
+                        - MIGRATION_STATE_TESTING
+                        - MIGRATION_STATE_READY
+                        - MIGRATION_STATE_PUSHED
+                        - MIGRATION_STATE_FAILED
+                        - MIGRATION_STATE_CANCELLED
+                    type: string
+                    description: Current lifecycle state of the migration.
+                    format: enum
+                target:
+                    allOf:
+                        - $ref: '#/components/schemas/TargetConfig'
+                    description: Target language, database, and transport for the generated microservices.
+                analysisSummaryId:
+                    example: 0
+                    type: string
+                    description: AnalysisSummary identifier; set once analysis completes.
+                plan:
+                    allOf:
+                        - $ref: '#/components/schemas/RestructurePlan'
+                    description: Proposed decomposition plan; requires human approval before generation.
+                output:
+                    allOf:
+                        - $ref: '#/components/schemas/MigrationOutput'
+                    description: Push coordinates set when the migration output is committed.
+                generationRecords:
+                    readOnly: true
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ServiceGenerationRecord'
+                    description: Per-service autonomous generation results. Present when state is GENERATING, READY, or FAILED.
+                createTime:
+                    readOnly: true
+                    example: 2025-01-15T10:30:00Z
+                    type: string
+                    description: Creation timestamp (server-assigned, immutable).
+                    format: date-time
+                updateTime:
+                    readOnly: true
+                    example: 2025-06-01T08:00:00Z
+                    type: string
+                    description: Last modification timestamp (server-assigned).
+                    format: date-time
+                deleteTime:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Soft-delete timestamp. Null while active.
+                    format: date-time
+                purgeTime:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Scheduled purge timestamp after retention window.
+                    format: date-time
+                failureReason:
+                    readOnly: true
+                    type: string
+                    description: Failure reason when state is FAILED. Empty otherwise.
+                repositoryUrl:
+                    readOnly: true
+                    example: https://github.com/org/my-service
+                    type: string
+                    description: Remote URL of the source repository, snapshotted at migration creation.
+                migrabilityAssessment:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/MigrabilityAssessment'
+                    description: Migrability verdict; absent until user runs the assessment.
+                migrabilityOverride:
+                    example: false
+                    type: boolean
+                    description: When true, overrides a NOT_MIGRABLE block and allows generation to proceed.
+            description: A migration run that decomposes a monolith into microservices.
+        MigrationOutput:
+            title: MigrationOutput
+            type: object
+            properties:
+                outputTarget:
+                    example: OUTPUT_TARGET_NEW_BRANCH
+                    enum:
+                        - OUTPUT_TARGET_UNSPECIFIED
+                        - OUTPUT_TARGET_NEW_BRANCH
+                        - OUTPUT_TARGET_NEW_REPOSITORY
+                    type: string
+                    description: Whether the output was pushed to a new branch or a new repository.
+                    format: enum
+                branchName:
+                    example: migration/output-2025
+                    type: string
+                    description: Branch that received the migration output (when pushing to a branch).
+                newRepositoryUrl:
+                    example: https://github.com/org/my-service-migrated
+                    type: string
+                    description: URL of the newly created repository (when pushing to a new repo).
+            description: Push coordinates of the committed migration output.
+        ModuleCard:
+            title: ModuleCard
+            type: object
+            properties:
+                module:
+                    example: conduit.users.routes
+                    type: string
+                    description: Dotted module name (e.g. conduit.users.routes).
+                file:
+                    example: conduit/users/routes.py
+                    type: string
+                    description: Workspace-relative file path.
+                functions:
+                    type: array
+                    items:
+                        type: string
+                    description: Module-level function names.
+                classes:
+                    type: array
+                    items:
+                        type: string
+                    description: Module-level class names.
+                moduleLevelState:
+                    type: array
+                    items:
+                        type: string
+                    description: Mutable module-level variable names.
+                routes:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RouteInfo'
+                    description: HTTP routes found on decorated functions.
+                docstringHead:
+                    example: User authentication routes for the Conduit API.
+                    type: string
+                    description: First 120 characters of the module docstring.
+                loc:
+                    example: 42
+                    type: integer
+                    description: Non-blank non-comment line count.
+                    format: uint32
+            description: Structural summary of a single Python module.
+        NamedAny:
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: Map key
+                value:
+                    allOf:
+                        - $ref: '#/components/schemas/Any'
+                    description: Mapped value
+            description: Automatically-generated message used to represent maps of Any as ordered (name,value) pairs.
+        OperationalCoupling:
+            title: OperationalCoupling
+            type: object
+            properties:
+                fromService:
+                    example: user
+                    type: string
+                    description: Service whose view or controller layer references the other service.
+                toService:
+                    example: profile
+                    type: string
+                    description: Service that is referenced.
+                sourceModule:
+                    example: conduit.user.views
+                    type: string
+                    description: Fully-qualified module name that contains the cross-service import.
+            description: A view-layer import coupling between two services. Becomes an async event or gRPC call after decomposition.
+        Pagination:
+            type: object
+            properties:
+                currentPage:
+                    readOnly: true
+                    example: 1
+                    type: integer
+                    description: Current page number
+                    format: uint32
+                pageSize:
+                    readOnly: true
+                    example: 10
+                    type: integer
+                    description: Entries per page
+                    format: uint32
+                totalSize:
+                    readOnly: true
+                    example: 100
+                    type: string
+                    description: Total number of entries
+                totalPages:
+                    readOnly: true
+                    example: 10
+                    type: string
+                    description: Total number of pages
+            description: Pagination information.
+        ProbeSourceRepositoryRequest:
+            required:
+                - remoteUrl
+            type: object
+            properties:
+                remoteUrl:
+                    example: https://github.com/org/repo
+                    type: string
+                    description: Remote git URL to probe.
+                token:
+                    type: string
+                    description: Optional read token. Supply only for private repositories.
+            description: ProbeSourceRepositoryRequest carries the URL (and optional read token) to probe.
+        ProbeSourceRepositoryResponse:
+            type: object
+            properties:
+                reachable:
+                    type: boolean
+                    description: True if the remote responded.
+                visibility:
+                    example: REPOSITORY_VISIBILITY_PUBLIC
+                    enum:
+                        - REPOSITORY_VISIBILITY_UNSPECIFIED
+                        - REPOSITORY_VISIBILITY_PUBLIC
+                        - REPOSITORY_VISIBILITY_PRIVATE
+                    type: string
+                    description: PUBLIC if the repository is accessible without credentials; PRIVATE otherwise.
+                    format: enum
+                authValid:
+                    type: boolean
+                    description: True when the token is valid or the repo is public.
+                errorMessage:
+                    type: string
+                    description: Explanation when reachable or auth_valid is false.
+            description: ProbeSourceRepositoryResponse describes the probe outcome.
+        ProposedService:
+            title: ProposedService
+            type: object
+            properties:
+                name:
+                    example: order-service
+                    type: string
+                    description: Canonical service name.
+                errorPrefix:
+                    example: ORD
+                    type: string
+                    description: Allocated error prefix for this service (e.g. ORD).
+                ownedResources:
+                    type: array
+                    items:
+                        type: string
+                    description: Domain resources owned exclusively by this service.
+                interServiceDeps:
+                    type: array
+                    items:
+                        type: string
+                    description: Other services this service depends on.
+                crossServiceFks:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/CrossServiceFk'
+                    description: Cross-service foreign keys that the generator will turn into gRPC client stubs.
+            description: A single microservice proposed in the restructure plan.
+        PublishMigrationRequest:
+            required:
+                - migrationId
+                - targetUrl
+            type: object
+            properties:
+                migrationId:
+                    example: 10018
+                    type: string
+                    description: Migration identifier.
+                targetUrl:
+                    example: https://github.com/org/target-repo
+                    type: string
+                    description: Target repository URL. Must exist and be writable.
+                writeToken:
+                    writeOnly: true
+                    type: string
+                    description: Write token for the target. Never stored or returned.
+                commitMessage:
+                    type: string
+                    description: Commit message. Defaults to a generated traceable message.
+            description: PublishMigrationRequest specifies the target for the artifact push.
+        PublishMigrationResponse:
+            type: object
+            properties:
+                migration:
+                    allOf:
+                        - $ref: '#/components/schemas/Migration'
+                    description: Updated migration record. State is PUSHED on success.
+                pushedBranch:
+                    example: main
+                    type: string
+                    description: Branch that received the push.
+            description: PublishMigrationResponse describes the publish outcome.
+        PushResultRequest:
+            required:
+                - targetUrl
+                - files
+            type: object
+            properties:
+                targetUrl:
+                    example: https://github.com/org/target-repo
+                    type: string
+                    description: Target repository URL. Must exist and be writable.
+                writeToken:
+                    writeOnly: true
+                    type: string
+                    description: Write token for the target repository. Never stored or returned.
+                files:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/FileEntry'
+                    description: Files to commit and push.
+                commitMessage:
+                    type: string
+                    description: Commit message. Defaults to a generated traceable message.
+            description: PushResultRequest specifies the files and destination for a git push.
+        PushResultResponse:
+            type: object
+            properties:
+                pushedBranch:
+                    example: main
+                    type: string
+                    description: Name of the branch that received the push.
+            description: PushResultResponse describes the push outcome.
+        RefreshTokenRequest:
+            required:
+                - refreshToken
+            type: object
+            properties:
+                refreshToken:
+                    example: v2.local.QAxIpVe-ECVNI1z4xQbm...
+                    type: string
+                    description: Refresh token previously issued by AuthenticateUser or RefreshToken. Valid for one use; a new pair is issued on success.
+                    format: JWT
+            description: RefreshTokenRequest carries the long-lived refresh token to be rotated.
+        Repository:
+            title: Repository
+            required:
+                - ownerUserId
+                - provider
+                - remoteUrl
+            type: object
+            properties:
+                identifier:
+                    example: 42
+                    type: string
+                    description: System-assigned unique numeric identifier.
+                ownerUserId:
+                    example: 7
+                    type: string
+                    description: Identifier of the user that owns this repository.
+                provider:
+                    example: GIT_PROVIDER_GITHUB
+                    enum:
+                        - GIT_PROVIDER_UNSPECIFIED
+                        - GIT_PROVIDER_GITHUB
+                        - GIT_PROVIDER_GITLAB
+                        - GIT_PROVIDER_BITBUCKET
+                        - GIT_PROVIDER_GENERIC
+                    type: string
+                    description: Git hosting provider (e.g. GitHub, GitLab, Bitbucket).
+                    format: enum
+                remoteUrl:
+                    example: https://github.com/org/my-service
+                    type: string
+                    description: Full remote URL of the git repository.
+                defaultBranch:
+                    example: main
+                    type: string
+                    description: Primary branch used as migration source. Defaults to main.
+                state:
+                    example: REPOSITORY_STATE_CONNECTED
+                    enum:
+                        - REPOSITORY_STATE_UNSPECIFIED
+                        - REPOSITORY_STATE_CONNECTED
+                        - REPOSITORY_STATE_DISCONNECTED
+                        - REPOSITORY_STATE_ERROR
+                    type: string
+                    description: Lifecycle state of the repository connection.
+                    format: enum
+                connectionStatus:
+                    example: CONNECTION_STATUS_OK
+                    enum:
+                        - CONNECTION_STATUS_UNSPECIFIED
+                        - CONNECTION_STATUS_OK
+                        - CONNECTION_STATUS_AUTH_FAILED
+                        - CONNECTION_STATUS_UNREACHABLE
+                    type: string
+                    description: Result of the most recent connectivity probe.
+                    format: enum
+                credentialRef:
+                    writeOnly: true
+                    example: vault:secret/data/repo/42
+                    type: string
+                    description: 'Secret-store reference for git credentials. INPUT_ONLY: never returned.'
+                createTime:
+                    readOnly: true
+                    example: 2025-01-15T10:30:00Z
+                    type: string
+                    description: Creation timestamp (server-assigned, immutable).
+                    format: date-time
+                updateTime:
+                    readOnly: true
+                    example: 2025-06-01T08:00:00Z
+                    type: string
+                    description: Last modification timestamp (server-assigned).
+                    format: date-time
+                deleteTime:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Soft-delete timestamp. Null while active.
+                    format: date-time
+                purgeTime:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Scheduled purge timestamp after retention window.
+                    format: date-time
+            description: A connected git repository registered for migration analysis.
+        RestructurePlan:
+            title: RestructurePlan
+            type: object
+            properties:
+                services:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ProposedService'
+                    description: Proposed microservices in the decomposition.
+                rationale:
+                    example: Orders and inventory are decoupled by domain and have different scaling needs.
+                    type: string
+                    description: Design rationale explaining the proposed service boundaries.
+                operationalCouplings:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/OperationalCoupling'
+                    description: View-layer couplings between services. Candidates for async events or gRPC calls — not hard deployment dependencies.
+                isLowConfidence:
+                    type: boolean
+                    description: True when the decomposition engine's modularity score was below the confidence threshold. Human review is strongly recommended before approving.
+                noServiceBoundaries:
+                    type: boolean
+                    description: True when no service boundaries were found. Approve/Generate is blocked when this is set.
+                boundariesExplanation:
+                    type: string
+                    description: Plain-language explanation of why no service boundaries were found. Empty when no_service_boundaries is false.
+            description: Proposed decomposition of the source monolith into named microservices.
+        RouteInfo:
+            title: RouteInfo
+            type: object
+            properties:
+                method:
+                    example: GET
+                    type: string
+                    description: HTTP method(s), comma-joined when multiple.
+                path:
+                    example: /users/<int:user_id>
+                    type: string
+                    description: URL path pattern.
+                handler:
+                    example: get_user
+                    type: string
+                    description: Name of the handler function.
+            description: HTTP route extracted from a web-framework decorator.
+        RunAnalysisRequest:
+            required:
+                - repositoryId
+            type: object
+            properties:
+                repositoryId:
+                    example: 42
+                    type: string
+                    description: Identifier of the repository to analyse.
+                migrationId:
+                    example: 7
+                    type: string
+                    description: Migration identifier that triggered this run (0 if standalone).
+            description: RunAnalysisRequest initiates a new asynchronous analysis run.
+        ServiceGenerationArtifacts:
+            title: ServiceGenerationArtifacts
+            type: object
+            properties:
+                serviceName:
+                    type: string
+                    description: Service name.
+                files:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/FileArtifact'
+                    description: Generated source files sorted by path.
+                agentRawResult:
+                    type: string
+                    description: Raw agent output for this service. Useful for debugging failures.
+            description: Generated source files and generation metadata for one service.
+        ServiceGenerationRecord:
+            title: ServiceGenerationRecord
+            type: object
+            properties:
+                serviceName:
+                    type: string
+                    description: Service name.
+                status:
+                    type: string
+                    description: 'Generation status: generating, verifying, done, or failed.'
+                gatesPassed:
+                    type: boolean
+                    description: True when all verification gates passed.
+                failureReason:
+                    type: string
+                    description: Failure reason when status is failed. Empty otherwise.
+                totalCostUsd:
+                    type: number
+                    description: Accumulated API cost in USD.
+                    format: double
+                generatedFileCount:
+                    type: integer
+                    description: Number of files emitted.
+                    format: int32
+                agentRawResult:
+                    readOnly: true
+                    type: string
+                    description: Raw agent output (generation report). Useful for debugging; empty while still generating.
+            description: Per-service outcome of autonomous code generation.
+        ServiceGenerationSpec:
+            title: ServiceGenerationSpec
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: Service name.
+                errorPrefix:
+                    type: string
+                    description: Error-code prefix assigned to this service.
+                protoContent:
+                    type: string
+                    description: Proto contract derived by the decomposition engine.
+                boundarySpec:
+                    type: string
+                    description: YAML boundary spec for the service generator.
+                incomplete:
+                    type: boolean
+                    description: True when the contract deriver flagged this service as incomplete.
+                incompleteReason:
+                    type: string
+                    description: Reason the service was flagged incomplete.
+                generatorPromptRef:
+                    type: string
+                    description: Path to the generator prompt document for this service's target profile.
+            description: All artifacts needed to generate one microservice from the decomposition plan.
+        SetMigrabilityOverrideRequest:
+            required:
+                - identifier
+                - override
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier.
+                override:
+                    example: true
+                    type: boolean
+                    description: true lifts the NOT_MIGRABLE block; false reinstates it.
+            description: SetMigrabilityOverrideRequest sets or clears the migrability override flag.
+        StartMigrationRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier.
+            description: StartMigrationRequest initiates the migration pipeline.
+        Status:
+            example: {"message": "the user already has 1 player", "error": "UserAlreadyHasPlayer", "code": "InvalidArgument"}
+            required:
+                - message
+                - code
+                - error
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: The status code, which should be an enum value of MetaXar code errors
+                message:
+                    type: string
+                    description: Human-readable message describing the error.
+                error:
+                    type: string
+                    description: Detailed description of the error.
+            description: Human-readable error response message in response to an invalid request.
+        Tag:
+            type: object
+            properties:
+                name:
+                    type: string
+                description:
+                    type: string
+                externalDocs:
+                    $ref: '#/components/schemas/ExternalDocs'
+                specificationExtension:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/NamedAny'
+            description: Adds metadata to a single tag that is used by the Operation Object. It is not mandatory to have a Tag Object per tag defined in the Operation Object instances.
+        TargetConfig:
+            title: TargetConfig
+            required:
+                - language
+                - database
+            type: object
+            properties:
+                language:
+                    example: TARGET_LANGUAGE_GO
+                    enum:
+                        - TARGET_LANGUAGE_UNSPECIFIED
+                        - TARGET_LANGUAGE_GO
+                        - TARGET_LANGUAGE_RUST
+                        - TARGET_LANGUAGE_PYTHON
+                    type: string
+                    description: Output language. Only TARGET_LANGUAGE_GO is supported in v1.
+                    format: enum
+                database:
+                    example: TARGET_DATABASE_MONGODB
+                    enum:
+                        - TARGET_DATABASE_UNSPECIFIED
+                        - TARGET_DATABASE_MONGODB
+                        - TARGET_DATABASE_POSTGRES
+                        - TARGET_DATABASE_MARIADB
+                    type: string
+                    description: Storage engine. Only TARGET_DATABASE_MONGODB is supported in v1.
+                    format: enum
+                interServiceTransport:
+                    example: TRANSPORT_GRPC
+                    enum:
+                        - TRANSPORT_UNSPECIFIED
+                        - TRANSPORT_GRPC
+                        - TRANSPORT_HTTP
+                        - TRANSPORT_NATS
+                    type: string
+                    description: Inter-service transport. Defaults to TRANSPORT_GRPC (only supported option in v1).
+                    format: enum
+                useApiGateway:
+                    example: true
+                    type: boolean
+                    description: Wrap generated services with an HTTP/gRPC gateway.
+            description: 'Target stack: language, database, and inter-service transport.'
+        Technology:
+            title: Technology
+            type: object
+            properties:
+                name:
+                    example: Go
+                    type: string
+                    description: Display name of the technology.
+                detectedVersion:
+                    example: 1.21.0
+                    type: string
+                    description: Version detected in the repository.
+                latestVersion:
+                    example: 1.25.0
+                    type: string
+                    description: Latest stable release available.
+                status:
+                    example: TECHNOLOGY_STATUS_OUTDATED
+                    enum:
+                        - TECHNOLOGY_STATUS_UNSPECIFIED
+                        - TECHNOLOGY_STATUS_CURRENT
+                        - TECHNOLOGY_STATUS_OUTDATED
+                        - TECHNOLOGY_STATUS_END_OF_LIFE
+                    type: string
+                    description: Recency status of the detected version.
+                    format: enum
+                category:
+                    example: language
+                    type: string
+                    description: 'Broad category: language, framework, database, runtime, or library.'
+            description: A technology (language, framework, library, etc.) detected in the repository.
+        TestConnectionRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 42
+                    type: string
+                    description: Repository identifier.
+            description: TestConnectionRequest identifies the repository to probe.
+        TestConnectionResponse:
+            type: object
+            properties:
+                status:
+                    example: CONNECTION_STATUS_OK
+                    enum:
+                        - CONNECTION_STATUS_UNSPECIFIED
+                        - CONNECTION_STATUS_OK
+                        - CONNECTION_STATUS_AUTH_FAILED
+                        - CONNECTION_STATUS_UNREACHABLE
+                    type: string
+                    description: Connectivity probe outcome.
+                    format: enum
+            description: TestConnectionResponse carries the probe result.
+        Token:
+            type: object
+            properties:
+                value:
+                    readOnly: true
+                    type: string
+                    description: Token value (JWT)
+                    format: JWT
+                expireTime:
+                    readOnly: true
+                    type: string
+                    description: Expiration time of the token
+                    format: date-time
+            description: Token represents a cryptographic token (JWT).
+        User:
+            required:
+                - email
+            type: object
+            properties:
+                identifier:
+                    readOnly: true
+                    example: '100001'
+                    type: string
+                    description: Platform-assigned unique user identifier. Immutable after creation.
+                    format: uint64
+                email:
+                    example: alice@example.com
+                    maxLength: 320
+                    minLength: 5
+                    pattern: ^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$
+                    type: string
+                    description: Primary email address used for authentication and notifications.
+                    format: email
+                displayName:
+                    example: Alice Smith
+                    maxLength: 150
+                    minLength: 1
+                    type: string
+                    description: Human-readable display name shown in the UI.
+                systemUser:
+                    example: false
+                    type: boolean
+                    default: false
+                    description: Indicates whether this account represents an automated service rather than a human user.
+                state:
+                    readOnly: true
+                    example: USER_STATE_ACTIVE
+                    enum:
+                        - USER_STATE_UNSPECIFIED
+                        - USER_STATE_ACTIVE
+                        - USER_STATE_SUSPENDED
+                        - USER_STATE_DELETED
+                    type: string
+                    default: USER_STATE_ACTIVE
+                    description: Current lifecycle state of the user account.
+                    format: enum
+                createTime:
+                    readOnly: true
+                    example: 2024-01-15T08:00:00Z
+                    type: string
+                    description: Timestamp when the user record was created (ISO 8601 / RFC 3339). Set by the server; immutable.
+                    format: date-time
+                updateTime:
+                    readOnly: true
+                    example: 2024-06-01T12:34:56Z
+                    type: string
+                    description: Timestamp of the most recent update to any mutable field (ISO 8601 / RFC 3339).
+                    format: date-time
+                deleteTime:
+                    nullable: true
+                    readOnly: true
+                    example: 2024-07-20T09:00:00Z
+                    type: string
+                    description: Timestamp when the account was soft-deleted (ISO 8601 / RFC 3339). Absent when the account is active.
+                    format: date-time
+                purgeTime:
+                    nullable: true
+                    readOnly: true
+                    example: 2024-08-20T09:00:00Z
+                    type: string
+                    description: Scheduled timestamp for permanent erasure of all user data (ISO 8601 / RFC 3339). Absent until a purge is scheduled.
+                    format: date-time
+            description: |-
+                User is the primary resource of the identity service.
+
+                 It represents a human or service account that can authenticate and interact
+                 with the Milton Prism platform. The lifecycle follows the pattern:
+                 active → suspended → deleted (soft) → purged (hard).
+
+                 Implements [AIP-148](https://google.aip.dev/148) state machine and
+                 [AIP-135](https://google.aip.dev/135) soft-delete with purge.
+        Vulnerability:
+            title: Vulnerability
+            type: object
+            properties:
+                identifierRef:
+                    example: CVE-2024-12345
+                    type: string
+                    description: External vulnerability identifier (e.g. CVE or GHSA ID).
+                severity:
+                    example: SEVERITY_HIGH
+                    enum:
+                        - SEVERITY_UNSPECIFIED
+                        - SEVERITY_LOW
+                        - SEVERITY_MEDIUM
+                        - SEVERITY_HIGH
+                        - SEVERITY_CRITICAL
+                    type: string
+                    description: Severity level.
+                    format: enum
+                component:
+                    example: golang.org/x/net
+                    type: string
+                    description: Name of the affected component or dependency.
+                description:
+                    example: HTTP/2 rapid reset attack allows denial of service.
+                    type: string
+                    description: Human-readable description of the vulnerability.
+                fixedInVersion:
+                    example: 0.20.0
+                    type: string
+                    description: Version in which the vulnerability was fixed.
+            description: A security vulnerability detected in a dependency or the repository source.
+    securitySchemes:
+        Authorization:
+            type: http
+            description: 'JWT Authorization Token. Usage: `Bearer {TOKEN}`.'
+            scheme: bearer
+            bearerFormat: JWT
+        Refresh:
+            type: http
+            description: 'JWT Refresh Token. Usage: `Bearer {TOKEN}`.'
+            scheme: bearer
+            bearerFormat: JWT
+        ApiKey:
+            type: apiKey
+            description: Milton Prism API key passed in the request header.
+            name: MiltonPrismApiKey
+            in: header
+tags:
+    - name: AnalysisService
+      description: |-
+        AnalysisService provides read access to code analysis results and the ability
+         to trigger new analysis runs.
+
+         Analysis runs are asynchronous: RunAnalysis returns immediately with an
+         AnalysisSummary in RUNNING state and enqueues the heavy work to the analysis
+         engine worker. Clients poll GetAnalysisSummary until the state transitions
+         to COMPLETED or FAILED.
+
+         All RPCs require bearer-token authentication.
+         Read methods follow AIP-130 / AIP-132.
+         RunAnalysis follows AIP-136 (custom method).
+    - name: ArticleService
+      description: |-
+        ArticleService manages articles and tags for the Conduit platform.
+
+         Derived from cluster conduit.articles in the decomposition engine output.
+         All RPCs require bearer-token authentication.
+         Standard CRUD methods follow AIP-130 – 135.
+         Custom methods (feed, favorite, comments) are marked TODO — implement as
+         AIP-136 :verbCamelCase custom methods before shipping.
+    - name: IdentityService
+      description: |-
+        IdentityService manages User resources and platform authentication.
+
+         Standard CRUD methods follow [AIP-130 – 135](https://google.aip.dev/130).
+         Authentication and session methods are custom methods per
+         [AIP-136](https://google.aip.dev/136).
+    - name: MigrationService
+      description: |-
+        MigrationService owns the Migration aggregate and enforces valid state
+         transitions through its state machine.
+
+         The actual analysis, design, code generation, and testing work is driven by
+         the orchestrator engine — this service guards the record and valid transitions.
+         All RPCs require bearer-token authentication.
+         Standard CRUD methods follow AIP-130 – 135.
+         Custom state-transition methods follow AIP-136.
+    - name: RepositoryService
+      description: |-
+        RepositoryService manages connected git repositories.
+
+         All RPCs require bearer-token authentication.
+         Standard CRUD methods follow AIP-130 – 135.
+         Custom methods (TestConnection, ListBranches, PushResult) follow AIP-136.

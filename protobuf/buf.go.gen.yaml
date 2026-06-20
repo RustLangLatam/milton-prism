@@ -1,0 +1,26 @@
+version: v2
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/googleapis/googleapis
+    - file_option: go_package
+      module: buf.build/grpc-ecosystem/grpc-gateway
+    - file_option: go_package
+      module: buf.build/bufbuild/protovalidate
+  override:
+    - file_option: go_package_prefix
+      value: milton_prism/pkg/pb/gen
+
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: ../pkg/pb/gen
+    opt: paths=source_relative
+
+  - remote: buf.build/grpc/go
+    out: ../pkg/pb/gen
+    opt: paths=source_relative
+
+  - remote: buf.build/grpc-ecosystem/gateway
+    out: ../pkg/pb/gen
+    opt: paths=source_relative

@@ -1,0 +1,40 @@
+## Milton Prism API Gateway config.
+[gateway]
+name = "Milton Prism api gateway"
+port = 8083
+host = "0.0.0.0"
+apiKey = "dev123"
+
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250
+
+[cors]
+enabled = true
+AllowOrigin = "*"
+allowedMethods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+allowedHeaders = ["Authorization", "Refresh", "Content-Type", "MiltonPrismApiKey"]
+exposeHeaders = ["Authorization", "Refresh", "MiltonPrismApiKey"]
+
+[metrics]
+port = 9000
+
+[[grpcServices]]
+name = "identity"
+host = "localhost"
+port = 50051
+enabled = true
+healthCheck = false
+
+[[grpcServices]]
+name = "repository"
+host = "localhost"
+port = 50052
+enabled = true
+healthCheck = false
+
+[[grpcServices]]
+name = "migration"
+host = "localhost"
+port = 50053
+enabled = true
+healthCheck = false

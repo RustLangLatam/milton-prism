@@ -1,0 +1,261 @@
+---
+# Run from this directory:
+#   docker compose up --build -d
+#
+# Networks are created automatically on first run.
+# Copy .env.example → .env and fill in values.
+
+networks:
+  milton-prism-network:
+  cache-network:
+
+volumes:
+  keydb-data:
+  mongodb-data:
+
+# ── Reusable fragments ────────────────────────────────────────────────────────
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    tag: "{{.Name}}"
+
+x-grpc-env: &grpc-env
+  GRPC_GO_LOG_SEVERITY_LEVEL: info
+  DEPLOYMENT_ENVIRONMENT: dev
+  MILTON_PRISM_METRICS_ENABLED: "false"
+  MILTON_PRISM_TRACES_ENABLED:  "false"
+  MILTON_PRISM_PROFILING_ENABLED: "false"
+  CONFIG_OVERLAY_PATH: /etc/config.overlay.toml
+
+x-grpc-service: &grpc-service
+  environment: *grpc-env
+  networks:
+    - milton-prism-network
+    - cache-network
+  healthcheck:
+    test: ["CMD", "grpc_health_probe", "-addr=:50051", "-connect-timeout=2s"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 15s
+  depends_on:
+    keydb-replica-0:
+      condition: service_healthy
+    mongodb:
+      condition: service_healthy
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *logging
+  security_opt:
+    - no-new-privileges:true
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 256M
+      reservations:
+        memory: 64M
+  ulimits:
+    nofile:
+      soft: 65535
+      hard: 65535
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+services:
+
+  identity-services:
+    <<: *grpc-service
+    ports:
+      - "5100:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: identity_service
+    volumes:
+      - ../../services/identity-services/config.toml:/etc/config.toml:ro
+      - ./overlay/identity-services/config.toml:/etc/config.overlay.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  repository-services:
+    <<: *grpc-service
+    ports:
+      - "5101:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: repository_service
+    volumes:
+      - ../../services/repository-services/config.toml:/etc/config.toml:ro
+      - ./overlay/repository-services/config.toml:/etc/config.overlay.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  migration-services:
+    <<: *grpc-service
+    ports:
+      - "5102:50051"
+    build:
+      context: ../..
+      dockerfile: Dockerfile.service
+      args:
+        SERVICE_BINARY: migration_service
+    volumes:
+      - ../../services/migration-services/config.toml:/etc/config.toml:ro
+      - ./overlay/migration-services/config.toml:/etc/config.overlay.toml:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  # ── Gateway ──────────────────────────────────────────────────────────────────
+
+  milton-prism-gateway:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.gateway
+      args:
+        SERVICE_BINARY: milton_prism_gateway
+    environment:
+      GRPC_GO_LOG_SEVERITY_LEVEL: info
+    volumes:
+      - ../../services/milton-prism-gateway/config.toml:/etc/config.toml:ro
+    ports:
+      - "8083:80"
+      - "9091:9000"
+    networks:
+      - milton-prism-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      identity-services:
+        condition: service_healthy
+      repository-services:
+        condition: service_healthy
+      migration-services:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_API_KEY: "${GATEWAY_API_KEY:-dev123}"
+    ports:
+      - "8080:80"
+    networks:
+      - milton-prism-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      milton-prism-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 10s
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
+        reservations:
+          memory: 16M
+
+  # ── Database ─────────────────────────────────────────────────────────────────
+
+  mongodb:
+    image: mongo:7.0
+    entrypoint:
+      - bash
+      - -c
+      - "openssl rand -base64 756 > /tmp/mongo.key && chmod 400 /tmp/mongo.key && chown 999:999 /tmp/mongo.key && exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile /tmp/mongo.key"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: bimtra654
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - milton-prism-network
+    healthcheck:
+      test: ["CMD", "mongosh", "-u", "admin", "-p", "bimtra654", "--authenticationDatabase", "admin", "--eval",
+             "try { rs.status() } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}) }; db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: "none"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+  # ── Cache ─────────────────────────────────────────────────────────────────────
+
+  keydb-replica-0:
+    image: eqalpha/keydb:latest
+    command: >
+      keydb-server
+        --requirepass "${KEYDB_PASSWORD:?KEYDB_PASSWORD is required}"
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        --save 60 1
+        --loglevel warning
+    healthcheck:
+      test: ["CMD", "keydb-cli", "--no-auth-warning", "-a", "${KEYDB_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - cache-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - keydb-data:/data
+    restart: always
+    logging:
+      driver: "none"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 640M

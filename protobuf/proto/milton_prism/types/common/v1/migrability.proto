@@ -1,0 +1,231 @@
+syntax = "proto3";
+
+package milton_prism.types.common.v1;
+
+import "google/protobuf/timestamp.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Types.Common.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/types/common/v1;commonv1";
+option java_multiple_files = true;
+option java_outer_classname = "MigrabilityProtoV1";
+option java_package = "com.miltonprism.types.common.v1";
+option objc_class_prefix = "MPR";
+
+// ScoreBand is the quality tier derived deterministically from MigrabilityScore.value.
+// Computed at scoring time and stored as part of the score blob.
+// The frontend reads score_band directly — never re-derives the band from the raw value.
+enum ScoreBand {
+  SCORE_BAND_UNSPECIFIED = 0;
+  SCORE_BAND_GOOD = 1; // value >= 70
+  SCORE_BAND_MEDIUM = 2; // value >= 40 && value < 70
+  SCORE_BAND_BAD = 3; // value < 40
+}
+
+// StructuralFinding is one typed structural issue detected by the scorer.
+// Replaces the frontend's computeFindings() for shared_state, god_module, and
+// topology kinds. Cycle findings remain frontend-computed (Tarjan gap — tracked
+// separately). When Tarjan moves to the backend, the scorer adds kind="cycle"
+// entries here with no message shape change.
+message StructuralFinding {
+  option (openapi.v3.schema) = {
+    title: "StructuralFinding"
+    description: "One typed structural issue detected by the scorer."
+  };
+
+  // "shared_state" | "god_module" | "topology" | "cycle" (future — Tarjan gap).
+  string kind = 1 [(openapi.v3.property) = {description: "Finding kind."}];
+
+  // "high" | "medium" | "low" — matches frontend FindingSev type.
+  string severity = 2 [(openapi.v3.property) = {description: "Finding severity: high, medium, or low."}];
+
+  // i18n key for the finding title, e.g. \"finding.shared_state.hub\".
+  string title_key = 3 [(openapi.v3.property) = {description: "i18n key for the finding title."}];
+
+  // Template interpolation params for title_key.
+  map<string, string> params = 4 [(openapi.v3.property) = {description: "Template interpolation params."}];
+
+  // Module names involved in this finding.
+  repeated string modules = 5 [(openapi.v3.property) = {description: "Module names involved in this finding."}];
+}
+
+// TypedBlocker is one structural pre-decomposition blocker detected by the scorer.
+// Authoritative for structural issues. assessment.blockers carries supplemental
+// LLM-identified non-structural blockers (prompt injection prevents duplication).
+message TypedBlocker {
+  option (openapi.v3.schema) = {
+    title: "TypedBlocker"
+    description: "Typed structural blocker emitted by the scorer."
+  };
+
+  // i18n key, e.g. \"blocker.shared_state\".
+  string blocker_key = 1 [(openapi.v3.property) = {description: "i18n key for this blocker."}];
+
+  // Interpolation params, e.g. {count: \"3\"}.
+  map<string, string> params = 2 [(openapi.v3.property) = {description: "Template interpolation params."}];
+}
+
+// TypedRecommendation is one structured next-step item.
+// Populated deterministically post-LLM based on verdict + structural findings.
+// Absent on old assessments — frontend falls back to static hardcoded list.
+message TypedRecommendation {
+  option (openapi.v3.schema) = {
+    title: "TypedRecommendation"
+    description: "Structured next-step recommendation derived from verdict + structural findings."
+  };
+
+  // i18n key, e.g. \"rec.resolve_high_findings\".
+  string rec_key = 1 [(openapi.v3.property) = {description: "i18n key for this recommendation."}];
+
+  // Interpolation params, e.g. {count: \"2\"}.
+  map<string, string> params = 2 [(openapi.v3.property) = {description: "Template interpolation params."}];
+}
+
+// ScoreSignal records one structural signal's contribution to the migrability score.
+message ScoreSignal {
+  option (openapi.v3.schema) = {
+    title: "ScoreSignal"
+    description: "One structural signal and its penalty contribution to the migrability score."
+  };
+
+  // Signal identifier: domain_presence | cluster_count | hub_severity | god_modules | routing_layout.
+  string signal = 1 [(openapi.v3.property) = {description: "Signal identifier."}];
+
+  // Points deducted from 100 by this signal.
+  int32 penalty = 2 [(openapi.v3.property) = {description: "Score penalty (0 = no issue, higher = worse)."}];
+
+  // Human-readable explanation of what was detected and why the penalty was applied.
+  // Kept for backward compatibility. When detail_key is present, prefer t(detail_key, detail_params).
+  string detail = 3 [(openapi.v3.property) = {description: "Human-readable explanation of this signal (legacy prose; use detail_key when present)."}];
+
+  // Structured list of module names implicated by this signal. Populated for
+  // god_modules (the canonical god-module list) and hub_severity (all hubs, not
+  // just the worst). The frontend must read this instead of parsing the detail string.
+  repeated string modules = 4 [(openapi.v3.property) = {description: "Module names implicated by this signal (structured, machine-readable)."}];
+
+  // i18n key for this signal's explanation. When present, the frontend renders
+  // t(detail_key, detail_params) instead of detail. Absent on old analyses.
+  string detail_key = 5 [(openapi.v3.property) = {description: "i18n key replacing the prose detail field. Absent on old analyses."}];
+
+  // Template interpolation params for detail_key, e.g. {ratio: \"62\"}.
+  map<string, string> detail_params = 6 [(openapi.v3.property) = {description: "Interpolation params for detail_key."}];
+}
+
+// MigrabilityScore is the deterministic structural migrability score in [0, 100].
+// Computed from five graph-structural signals without any LLM call.
+// Present on AnalysisSummary when deep analysis data (graph + classification) is available.
+message MigrabilityScore {
+  option (openapi.v3.schema) = {
+    title: "MigrabilityScore"
+    description: "Deterministic structural migrability score 0–100 with per-signal breakdown. Computed without an LLM call."
+  };
+
+  // Score value in [0, 100]. Higher means more decomposable.
+  int32 value = 1 [(openapi.v3.property) = {
+    description: "Structural migrability score 0–100. Higher is more decomposable."
+    example: {yaml: "90"}
+  }];
+
+  // Per-signal breakdown, one entry per structural signal.
+  repeated ScoreSignal signals = 2 [(openapi.v3.property) = {description: "Per-signal breakdown of the migrability score."}];
+
+  // Structural verdict derived deterministically from the score signals.
+  // Present only when the signals unambiguously classify the codebase without
+  // an LLM call. Current values: NO_SERVICE_BOUNDARIES (domain_presence penalty=40).
+  // Absent when migrability_assessment is also present — use that verdict instead.
+  string structural_verdict = 3 [(openapi.v3.property) = {
+    description: "Deterministic structural verdict derived from score signals. NO_SERVICE_BOUNDARIES when no domain layer exists. Absent otherwise — use migrability_assessment.verdict for LLM-produced verdicts."
+    example: {yaml: "NO_SERVICE_BOUNDARIES"}
+  }];
+
+  // Quality tier derived from value. Single source of truth for band-based template
+  // selection (verdictText score label, conclusionBlock C-II sub-variant).
+  // The frontend reads this directly — never re-derives from value.
+  ScoreBand score_band = 4 [(openapi.v3.property) = {description: "Score quality tier: GOOD (≥70), MEDIUM (≥40), or BAD (<40)."}];
+
+  // Typed structural findings from the scorer: shared_state, god_module, topology.
+  // Replaces frontend computeFindings() for non-cycle findings.
+  // Absent on old analyses — frontend falls back to computeFindings() when empty.
+  repeated StructuralFinding structural_findings = 5 [(openapi.v3.property) = {description: "Typed structural findings from the scorer. Absent on old analyses."}];
+
+  // Structural pre-decomposition blockers: no_domain_layer, no_service_boundaries,
+  // shared_state, god_modules. Cycle blocker is a known gap (frontend-injected until
+  // Tarjan moves to the backend).
+  repeated TypedBlocker typed_blockers = 6 [(openapi.v3.property) = {description: "Typed structural blockers. Frontend shows these as the authoritative list."}];
+}
+
+// MigrabilityAssessment holds the LLM-produced migrability verdict.
+// Populated only when the user explicitly triggers the assessment via an AssessMigrability call.
+// Absent until that call is made.
+message MigrabilityAssessment {
+  option (openapi.v3.schema) = {
+    title: "MigrabilityAssessment"
+    description: "LLM-produced migrability verdict. Absent until explicitly requested by the user."
+  };
+
+  // Top-level readiness signal: MIGRABLE, PARTIAL, or NOT_MIGRABLE.
+  string verdict = 1 [(openapi.v3.property) = {
+    description: "Migrability verdict: MIGRABLE, PARTIAL, or NOT_MIGRABLE."
+    example: {yaml: "MIGRABLE"}
+  }];
+
+  // Human-readable description of what the codebase is and its architectural pattern.
+  string summary = 2 [(openapi.v3.property) = {
+    description: "1-2 sentence description of the codebase's architectural pattern."
+    example: {yaml: "Flask REST API organised in blueprints with clear domain separation."}
+  }];
+
+  // Reasons supporting the verdict.
+  repeated string reasons = 3 [(openapi.v3.property) = {description: "Reasons supporting the verdict."}];
+
+  // Supplemental non-structural blockers from the LLM. Empty for MIGRABLE.
+  // Structural blockers (shared state, god-modules, no domain layer, no service
+  // boundaries) are captured in MigrabilityScore.typed_blockers — the LLM is
+  // instructed not to repeat them here. This field carries only non-structural
+  // concerns the static analysis cannot detect (business-logic coupling, data
+  // ownership, external service dependencies).
+  repeated string blockers = 4 [(openapi.v3.property) = {description: "Supplemental non-structural LLM blockers. Structural blockers are in MigrabilityScore.typed_blockers."}];
+
+  // Model's self-assessed confidence given the structural evidence: HIGH, MEDIUM, or LOW.
+  string confidence = 5 [(openapi.v3.property) = {
+    description: "Model confidence: HIGH, MEDIUM, or LOW."
+    example: {yaml: "HIGH"}
+  }];
+
+  // Estimated API cost in USD for this assessment call.
+  double cost_usd = 6 [(openapi.v3.property) = {
+    description: "Estimated API cost in USD."
+    example: {yaml: "0.003"}
+  }];
+
+  // Server-assigned timestamp when the assessment was last run.
+  google.protobuf.Timestamp assessed_time = 7 [(openapi.v3.property) = {description: "When the assessment was last run."}];
+
+  // Deterministic structural migrability score in [0, 100]. Computed from the
+  // five structural signals in the analysis digest. ABSENT (not 0) when the
+  // verdict is INCOMPLETE_NO_STRUCTURAL_DATA: there is no graph to score, so the
+  // field is unset rather than a misleading 0 that would rank as "worst migrable".
+  // Consumers MUST branch on verdict before reading this number.
+  optional int32 migrability_score = 8 [(openapi.v3.property) = {
+    description: "Structural migrability score 0–100. Higher is more decomposable. Absent when verdict is INCOMPLETE_NO_STRUCTURAL_DATA."
+    example: {yaml: "87"}
+  }];
+
+  // Per-signal breakdown of migrability_score. One entry per signal.
+  repeated ScoreSignal score_signals = 9 [(openapi.v3.property) = {description: "Per-signal breakdown of the migrability score."}];
+
+  // Structured next-step items derived deterministically from verdict + structural
+  // findings after the LLM verdict is known. Absent on old assessments — frontend
+  // falls back to static hardcoded lists when empty.
+  repeated TypedRecommendation typed_recommendations = 10 [(openapi.v3.property) = {description: "Typed next-step items derived from verdict + structural findings."}];
+
+  // BCP-47 language tag of the language in which the LLM generated summary, reasons,
+  // and blockers. Always "en" today (the prompt is English-only). Populated for every
+  // new assessment from this version onwards; absent on older records — frontend
+  // treats absent/empty as "en" (historically accurate).
+  string assessment_language = 11 [(openapi.v3.property) = {
+    description: "BCP-47 language tag of the LLM-generated prose fields. Always 'en' until multi-language prompts are introduced. Absent on old records; frontend defaults to 'en'."
+    example: {yaml: "en"}
+  }];
+}

@@ -1,0 +1,228 @@
+syntax = "proto3";
+
+package milton_prism.types.repository.v1;
+
+import "google/api/field_behavior.proto";
+import "google/protobuf/timestamp.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Types.Repository.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/types/repository/v1;repositoryv1";
+option java_multiple_files = true;
+option java_outer_classname = "RepositoryProtoV1";
+option java_package = "com.miltonprism.types.repository.v1";
+option objc_class_prefix = "MPR";
+
+// ========== REPOSITORY TYPES ==========
+
+// GitProvider identifies the upstream git hosting platform.
+enum GitProvider {
+  // Default unspecified — not valid for persistent records.
+  GIT_PROVIDER_UNSPECIFIED = 0;
+  // GitHub cloud or GitHub Enterprise.
+  GIT_PROVIDER_GITHUB = 1;
+  // GitLab.com or self-hosted GitLab.
+  GIT_PROVIDER_GITLAB = 2;
+  // Atlassian Bitbucket.
+  GIT_PROVIDER_BITBUCKET = 3;
+  // Any self-hosted or generic git remote.
+  GIT_PROVIDER_GENERIC = 4;
+}
+
+// RepositoryState tracks the lifecycle of a connected repository.
+enum RepositoryState {
+  // Default unspecified — not valid for persistent records.
+  REPOSITORY_STATE_UNSPECIFIED = 0;
+  // The repository is reachable and credentials are valid.
+  REPOSITORY_STATE_CONNECTED = 1;
+  // The repository is currently unreachable.
+  REPOSITORY_STATE_DISCONNECTED = 2;
+  // A fatal error was encountered (e.g., credential revocation).
+  REPOSITORY_STATE_ERROR = 3;
+}
+
+// RepositoryVisibility indicates whether a repository is publicly accessible.
+enum RepositoryVisibility {
+  // Default unspecified — visibility not yet determined.
+  REPOSITORY_VISIBILITY_UNSPECIFIED = 0;
+  // Repository is publicly readable without credentials.
+  REPOSITORY_VISIBILITY_PUBLIC = 1;
+  // Repository requires credentials to read.
+  REPOSITORY_VISIBILITY_PRIVATE = 2;
+}
+
+// ConnectionStatus is the result of the most recent connectivity probe.
+enum ConnectionStatus {
+  // Default unspecified — probe has not been run yet.
+  CONNECTION_STATUS_UNSPECIFIED = 0;
+  // Credentials and remote URL are valid.
+  CONNECTION_STATUS_OK = 1;
+  // Credentials were rejected by the remote.
+  CONNECTION_STATUS_AUTH_FAILED = 2;
+  // Remote host could not be reached within the timeout.
+  CONNECTION_STATUS_UNREACHABLE = 3;
+}
+
+// Repository represents a connected source-control repository.
+// It is the primary resource owned by the repository service.
+message Repository {
+  option (openapi.v3.schema) = {
+    title: "Repository"
+    description: "A connected git repository registered for migration analysis."
+  };
+
+  // System-assigned monotonically increasing identifier. Required for all
+  // read and mutation operations after creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = IDENTIFIER,
+    (openapi.v3.property) = {
+      description: "System-assigned unique numeric identifier."
+      example: {yaml: "42"}
+    }
+  ];
+
+  // Identifier of the user that owns this repository.
+  uint64 owner_user_id = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Identifier of the user that owns this repository."
+      example: {yaml: "7"}
+    }
+  ];
+
+  // Git hosting provider for the remote URL.
+  GitProvider provider = 3 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Git hosting provider (e.g. GitHub, GitLab, Bitbucket)."
+      example: {yaml: "GIT_PROVIDER_GITHUB"}
+    }
+  ];
+
+  // Full HTTPS or SSH remote URL (e.g. https://github.com/org/repo).
+  string remote_url = 4 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Full remote URL of the git repository."
+      example: {yaml: "https://github.com/org/my-service"}
+    }
+  ];
+
+  // Name of the primary branch. Defaults to main or master if omitted.
+  string default_branch = 5 [(openapi.v3.property) = {
+    description: "Primary branch used as migration source. Defaults to main."
+    example: {yaml: "main"}
+  }];
+
+  // Current lifecycle state of the repository connection.
+  RepositoryState state = 6 [(openapi.v3.property) = {
+    description: "Lifecycle state of the repository connection."
+    example: {yaml: "REPOSITORY_STATE_CONNECTED"}
+  }];
+
+  // Result of the most recent connectivity probe.
+  ConnectionStatus connection_status = 7 [(openapi.v3.property) = {
+    description: "Result of the most recent connectivity probe."
+    example: {yaml: "CONNECTION_STATUS_OK"}
+  }];
+
+  // Reference to the secret store entry that holds the git credentials.
+  // This field travels only as input — it is never included in responses.
+  string credential_ref = 8 [
+    (google.api.field_behavior) = INPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Secret-store reference for git credentials. INPUT_ONLY: never returned."
+      example: {yaml: "vault:secret/data/repo/42"}
+    }
+  ];
+
+  // Server-assigned creation timestamp. Immutable after creation.
+  google.protobuf.Timestamp create_time = 9 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (google.api.field_behavior) = IMMUTABLE,
+    (openapi.v3.property) = {
+      description: "Creation timestamp (server-assigned, immutable)."
+      example: {yaml: "2025-01-15T10:30:00Z"}
+    }
+  ];
+
+  // Server-assigned last modification timestamp.
+  google.protobuf.Timestamp update_time = 10 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Last modification timestamp (server-assigned)."
+      example: {yaml: "2025-06-01T08:00:00Z"}
+    }
+  ];
+
+  // Soft-delete timestamp. Present only for logically deleted repositories.
+  optional google.protobuf.Timestamp delete_time = 11 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Soft-delete timestamp. Null while active."
+      example: {yaml: "null"}
+    }
+  ];
+
+  // Scheduled hard-delete timestamp after the retention window expires.
+  optional google.protobuf.Timestamp purge_time = 12 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Scheduled purge timestamp after retention window."
+      example: {yaml: "null"}
+    }
+  ];
+}
+
+// Branch describes a git branch on the remote.
+message Branch {
+  option (openapi.v3.schema) = {
+    title: "Branch"
+    description: "A git branch discovered on the remote repository."
+  };
+
+  // Short branch name (e.g. main, feature/foo).
+  string name = 1 [(openapi.v3.property) = {
+    description: "Short branch name."
+    example: {yaml: "main"}
+  }];
+
+  // SHA-1 commit hash at the branch tip.
+  string commit_sha = 2 [(openapi.v3.property) = {
+    description: "SHA-1 hash of the HEAD commit on this branch."
+    example: {yaml: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}
+  }];
+
+  // True when this branch is the repository's default branch.
+  bool is_default = 3 [(openapi.v3.property) = {
+    description: "True if this is the repository's default branch."
+    example: {yaml: "true"}
+  }];
+}
+
+// RepositoriesFilter limits results returned by ListRepositories.
+message RepositoriesFilter {
+  option (openapi.v3.schema) = {
+    title: "RepositoriesFilter"
+    description: "Optional filters for listing repositories."
+  };
+
+  // Restrict results to repositories owned by this user.
+  optional uint64 owner_user_id = 1 [(openapi.v3.property) = {
+    description: "Filter by owner user identifier."
+    example: {yaml: "7"}
+  }];
+
+  // Restrict results to repositories in this lifecycle state.
+  optional RepositoryState state = 2 [(openapi.v3.property) = {
+    description: "Filter by repository lifecycle state."
+    example: {yaml: "REPOSITORY_STATE_CONNECTED"}
+  }];
+
+  // Restrict results to repositories on this git provider.
+  optional GitProvider provider = 3 [(openapi.v3.property) = {
+    description: "Filter by git hosting provider."
+    example: {yaml: "GIT_PROVIDER_GITHUB"}
+  }];
+}

@@ -1,0 +1,336 @@
+syntax = "proto3";
+
+package milton_prism.services.repository.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "milton_prism/types/pagination/v1/pagination.proto";
+import "milton_prism/types/query_params/v1/query_params.proto";
+import "milton_prism/types/repository/v1/repository.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Services.Repository.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/services/repository/v1;repositorysvcv1";
+option java_multiple_files = true;
+option java_outer_classname = "RepositoryServiceProtoV1";
+option java_package = "com.miltonprism.services.repository.v1";
+option objc_class_prefix = "MPR";
+
+// RepositoryService manages connected git repositories.
+//
+// All RPCs require bearer-token authentication.
+// Standard CRUD methods follow AIP-130 – 135.
+// Custom methods (TestConnection, ListBranches, PushResult) follow AIP-136.
+service RepositoryService {
+  // CreateRepository registers a new git repository for the authenticated user.
+  //
+  // Validates that the owner_user_id refers to an existing user before persisting.
+  // Returns the created repository record (excluding credential_ref).
+  rpc CreateRepository(CreateRepositoryRequest) returns (milton_prism.types.repository.v1.Repository) {
+    option (google.api.http) = {
+      post: "/v1/repositories"
+      body: "repository"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Register a git repository"
+      description: "Creates a new repository record. The credential_ref field is stored but never returned."
+    };
+  }
+
+  // GetRepository returns a repository by its numeric identifier.
+  //
+  // Only the owner or a system user may retrieve the record.
+  rpc GetRepository(GetRepositoryRequest) returns (milton_prism.types.repository.v1.Repository) {
+    option (google.api.http) = {get: "/v1/repositories/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Get a repository"
+      description: "Returns a repository by numeric identifier. Only the owner or a system user may call this."
+    };
+  }
+
+  // ListRepositories returns a paginated list filtered by the caller's context.
+  //
+  // Non-system callers see only their own repositories.
+  rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse) {
+    option (google.api.http) = {get: "/v1/repositories"};
+    option (openapi.v3.operation) = {
+      summary: "List repositories"
+      description: "Returns a paginated, filtered list. Non-system callers see only their own repositories."
+    };
+  }
+
+  // UpdateRepository applies a FieldMask-bounded partial update.
+  //
+  // Mutable fields: remote_url, default_branch, state, connection_status, credential_ref.
+  // Only the owner or a system user may update the record.
+  rpc UpdateRepository(UpdateRepositoryRequest) returns (milton_prism.types.repository.v1.Repository) {
+    option (google.api.http) = {
+      patch: "/v1/repositories/{repository.identifier}"
+      body: "repository"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Partial update a repository"
+      description: "Applies a FieldMask-bounded update. Only the owner or a system user may update."
+    };
+  }
+
+  // DeleteRepository soft-deletes a repository by identifier.
+  //
+  // The record is retained until the purge window expires. Only the owner or a
+  // system user may delete the record.
+  rpc DeleteRepository(DeleteRepositoryRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/repositories/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Soft-delete a repository"
+      description: "Marks the repository as deleted. Record is retained until the purge window expires."
+    };
+  }
+
+  // TestConnection probes the remote git URL and persists the result.
+  //
+  // The returned ConnectionStatus reflects the live probe outcome and is also
+  // written back to the repository record. Only the owner or a system user may
+  // probe the connection.
+  rpc TestConnection(TestConnectionRequest) returns (TestConnectionResponse) {
+    option (google.api.http) = {
+      post: "/v1/repositories/{identifier}:testConnection"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Probe the git remote"
+      description: "Tests the remote connection and stores the resulting ConnectionStatus on the record."
+    };
+  }
+
+  // ListBranches enumerates the branches available on the remote.
+  //
+  // Only the owner or a system user may enumerate branches.
+  rpc ListBranches(ListBranchesRequest) returns (ListBranchesResponse) {
+    option (google.api.http) = {get: "/v1/repositories/{identifier}:listBranches"};
+    option (openapi.v3.operation) = {
+      summary: "List remote branches"
+      description: "Returns the list of branches currently available on the git remote."
+    };
+  }
+
+  // PushResult commits migration artifacts and pushes to a target git repository.
+  //
+  // Initializes a temporary workspace, writes all files preserving directory
+  // structure, creates a commit with a traceable message, and pushes to
+  // target_url using write_token. The token is used once at push time and is
+  // never stored or logged. Requires bearer-token authentication.
+  rpc PushResult(PushResultRequest) returns (PushResultResponse) {
+    option (google.api.http) = {
+      post: "/v1/repositories:pushResult"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Push migration artifacts to a git repository"
+      description: "Commits migration artifacts and pushes them to a target git repository. The write token is used once and never stored."
+    };
+  }
+
+  // ProbeSourceRepository checks a remote URL without cloning.
+  //
+  // No stored repository record is required or created. Reports whether the URL
+  // is reachable, public or private, and whether a supplied token is valid.
+  // Use this to validate a source URL before creating a migration.
+  rpc ProbeSourceRepository(ProbeSourceRepositoryRequest) returns (ProbeSourceRepositoryResponse) {
+    option (google.api.http) = {
+      post: "/v1/repositories:probeSource"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Probe a source repository"
+      description: "Checks reachability and visibility of a remote git URL without cloning. No repository record is required."
+    };
+  }
+}
+
+// CreateRepositoryRequest carries a fully populated repository for creation.
+message CreateRepositoryRequest {
+  // Repository to create. Must include owner_user_id, provider, and remote_url.
+  milton_prism.types.repository.v1.Repository repository = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Repository resource to create."}
+  ];
+}
+
+// GetRepositoryRequest identifies the repository to retrieve.
+message GetRepositoryRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Repository identifier."
+      example: {yaml: "42"}
+    }
+  ];
+}
+
+// ListRepositoriesRequest parameters for a paginated, filtered list.
+message ListRepositoriesRequest {
+  // Optional filter to narrow results.
+  milton_prism.types.repository.v1.RepositoriesFilter filter = 1 [(openapi.v3.property) = {description: "Optional filter to narrow the repository list."}];
+  // Pagination parameters (page_number, page_size).
+  milton_prism.types.query_params.v1.PageQueryParams page_params = 2 [(openapi.v3.property) = {description: "Page number and page size parameters."}];
+}
+
+// ListRepositoriesResponse carries a page of repositories with pagination metadata.
+message ListRepositoriesResponse {
+  // The repositories on this page.
+  repeated milton_prism.types.repository.v1.Repository repositories = 1 [(openapi.v3.property) = {description: "Repositories in this result page."}];
+  // Pagination metadata for this result page.
+  milton_prism.types.pagination.v1.Pagination pagination = 2 [(openapi.v3.property) = {description: "Pagination metadata."}];
+}
+
+// UpdateRepositoryRequest carries the patched repository and the field mask.
+message UpdateRepositoryRequest {
+  // Repository with updated field values (identifier must be set).
+  milton_prism.types.repository.v1.Repository repository = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Repository with updated fields. identifier must be set."}
+  ];
+  // FieldMask listing the paths to update.
+  google.protobuf.FieldMask update_mask = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Paths of fields to update."
+      example: {yaml: "remote_url,default_branch"}
+    }
+  ];
+}
+
+// DeleteRepositoryRequest identifies the repository to soft-delete.
+message DeleteRepositoryRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Repository identifier."
+      example: {yaml: "42"}
+    }
+  ];
+}
+
+// TestConnectionRequest identifies the repository to probe.
+message TestConnectionRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Repository identifier."
+      example: {yaml: "42"}
+    }
+  ];
+}
+
+// TestConnectionResponse carries the probe result.
+message TestConnectionResponse {
+  // Connectivity probe outcome written to the repository record.
+  milton_prism.types.repository.v1.ConnectionStatus status = 1 [(openapi.v3.property) = {
+    description: "Connectivity probe outcome."
+    example: {yaml: "CONNECTION_STATUS_OK"}
+  }];
+}
+
+// ListBranchesRequest identifies the repository whose branches to enumerate.
+message ListBranchesRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Repository identifier."
+      example: {yaml: "42"}
+    }
+  ];
+}
+
+// ListBranchesResponse carries the branches discovered on the remote.
+message ListBranchesResponse {
+  // Branches currently available on the remote.
+  repeated milton_prism.types.repository.v1.Branch branches = 1 [(openapi.v3.property) = {description: "Remote branches."}];
+}
+
+// PushResultRequest specifies the files and destination for a git push.
+message PushResultRequest {
+  // URL of the target git repository. Must already exist and accept pushes.
+  string target_url = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Target repository URL. Must exist and be writable."
+      example: {yaml: "https://github.com/org/target-repo"}
+    }
+  ];
+  // Write credential for the target. Transmitted to the remote as HTTP Basic
+  // Auth and never stored or logged.
+  string write_token = 2 [
+    (google.api.field_behavior) = INPUT_ONLY,
+    (openapi.v3.property) = {description: "Write token for the target repository. Never stored or returned."}
+  ];
+  // Files to commit. Paths must be relative to the repository root.
+  repeated FileEntry files = 3 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Files to commit and push."}
+  ];
+  // Commit message. A standard traceable message is generated when empty.
+  string commit_message = 4 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {description: "Commit message. Defaults to a generated traceable message."}
+  ];
+}
+
+// FileEntry is a single file for the push operation.
+message FileEntry {
+  // Relative path from the repository root (e.g. "services/user/user.go").
+  string path = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Relative path from the repository root."}
+  ];
+  // UTF-8 text content of the file.
+  string content = 2 [(openapi.v3.property) = {description: "UTF-8 file content."}];
+}
+
+// PushResultResponse describes the push outcome.
+message PushResultResponse {
+  // Branch that received the push.
+  string pushed_branch = 1 [(openapi.v3.property) = {
+    description: "Name of the branch that received the push."
+    example: {yaml: "main"}
+  }];
+}
+
+// ProbeSourceRepositoryRequest carries the URL (and optional read token) to probe.
+message ProbeSourceRepositoryRequest {
+  // Remote git URL to probe.
+  string remote_url = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Remote git URL to probe."
+      example: {yaml: "https://github.com/org/repo"}
+    }
+  ];
+  // Optional read token for private repositories.
+  string token = 2 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {description: "Optional read token. Supply only for private repositories."}
+  ];
+}
+
+// ProbeSourceRepositoryResponse describes the probe outcome.
+message ProbeSourceRepositoryResponse {
+  // Whether the remote URL was reachable.
+  bool reachable = 1 [(openapi.v3.property) = {description: "True if the remote responded."}];
+  // Visibility of the repository — public means no credentials needed.
+  milton_prism.types.repository.v1.RepositoryVisibility visibility = 2 [(openapi.v3.property) = {
+    description: "PUBLIC if the repository is accessible without credentials; PRIVATE otherwise."
+    example: {yaml: "REPOSITORY_VISIBILITY_PUBLIC"}
+  }];
+  // Whether the supplied token grants read access. Always true for public repos.
+  bool auth_valid = 3 [(openapi.v3.property) = {description: "True when the token is valid or the repo is public."}];
+  // Human-readable error when reachable is false or auth_valid is false.
+  string error_message = 4 [(openapi.v3.property) = {description: "Explanation when reachable or auth_valid is false."}];
+}

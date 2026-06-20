@@ -1,0 +1,18 @@
+# ── Stage 1: git (needed for GitSourceAcquirer) ───────────────────────────────
+FROM alpine:3.20 AS base
+RUN apk add --no-cache git
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+FROM alpine:3.20
+ARG WORKER_BINARY
+
+LABEL org.opencontainers.image.description="milton-prism analysis worker · ${WORKER_BINARY}"
+
+WORKDIR /
+
+RUN apk add --no-cache git ca-certificates
+
+COPY --chmod=0755 ./bin/${WORKER_BINARY} /worker
+
+ENTRYPOINT ["/worker"]
+CMD ["--config-file-path=/etc/config.toml"]

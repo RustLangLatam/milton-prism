@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	analysisports "milton_prism/core/worker/analysis/ports"
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	"milton_prism/core/worker/decomposition/ports"
-	analysisports "milton_prism/core/worker/analysis/ports"
 	applog "milton_prism/pkg/log"
 )
 

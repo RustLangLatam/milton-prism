@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	workerdomain "milton_prism/core/worker/decomposition/domain"
 	analysisports "milton_prism/core/worker/analysis/ports"
+	workerdomain "milton_prism/core/worker/decomposition/domain"
 )
 
 // Assessor produces a MigrabilityVerdict from an AnalysisDigest via a single

@@ -90,7 +90,7 @@ func ToWorkerSummaryCards(
 // type to the shared commonv1.MigrabilityScore proto message.
 func ToProtoMigrabilityScore(score *workerdomain.MigrabilityScore) *commonv1.MigrabilityScore {
 	out := &commonv1.MigrabilityScore{
-		Value:    int32(score.Value),
+		Value:     int32(score.Value),
 		ScoreBand: scoreBandToProto(score.ScoreBand),
 	}
 	for _, c := range score.Breakdown {

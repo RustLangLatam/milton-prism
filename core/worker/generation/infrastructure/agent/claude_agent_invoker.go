@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	applog "milton_prism/pkg/log"
 	"milton_prism/core/worker/generation/ports"
+	applog "milton_prism/pkg/log"
 )
 
 const (
@@ -160,12 +160,12 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 
 	parsed, _ := parseClaudeOutput(runResult.Stdout)
 	if parsed != nil {
-		out.RawResult                 = parsed.Result
-		out.TotalCostUSD              = parsed.TotalCostUSD
-		out.InputTokens               = parsed.Usage.InputTokens
-		out.CacheCreationInputTokens  = parsed.Usage.CacheCreationInputTokens
-		out.CacheReadInputTokens      = parsed.Usage.CacheReadInputTokens
-		out.OutputTokens              = parsed.Usage.OutputTokens
+		out.RawResult = parsed.Result
+		out.TotalCostUSD = parsed.TotalCostUSD
+		out.InputTokens = parsed.Usage.InputTokens
+		out.CacheCreationInputTokens = parsed.Usage.CacheCreationInputTokens
+		out.CacheReadInputTokens = parsed.Usage.CacheReadInputTokens
+		out.OutputTokens = parsed.Usage.OutputTokens
 	}
 
 	if !out.Success {
@@ -188,14 +188,16 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 //
 // API key path (production): --bare mode, ANTHROPIC_API_KEY env var, no creds mount.
 // Session credentials path (subscription): no --bare, the HOST ~/.claude directory
-//   is bind-mounted read-write at /home/prism/.claude so Claude Code always sees the
-//   live token state maintained by the host. Refreshed tokens written by the agent
-//   are visible to subsequent containers through the shared directory.
+//
+//	is bind-mounted read-write at /home/prism/.claude so Claude Code always sees the
+//	live token state maintained by the host. Refreshed tokens written by the agent
+//	are visible to subsequent containers through the shared directory.
 //
 // CONCURRENCY NOTE: the directory bind-mount is safe with cap=1. With cap>1
-//   concurrent agents share the same ~/.claude directory; simultaneous token
-//   refreshes can corrupt each other's in-flight credentials. Raise the cap only
-//   after implementing an OAuth pre-refresh step in the worker.
+//
+//	concurrent agents share the same ~/.claude directory; simultaneous token
+//	refreshes can corrupt each other's in-flight credentials. Raise the cap only
+//	after implementing an OAuth pre-refresh step in the worker.
 //
 // Returns the RunRequest, a noop cleanup func, and an error.
 func (a *ClaudeAgentInvoker) buildRunRequest(workspaceDir string, req ports.InvokeRequest) (ports.RunRequest, func(), error) {
@@ -259,4 +261,3 @@ func (a *ClaudeAgentInvoker) buildRunRequest(workspaceDir string, req ports.Invo
 		Timeout:     a.timeout,
 	}, noop, nil
 }
-

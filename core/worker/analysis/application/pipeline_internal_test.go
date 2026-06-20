@@ -22,7 +22,7 @@ func TestIsTestModuleByName(t *testing.T) {
 		`BookStack\Tests\Feature\AuthTest`,
 		`BookStack\Tests\Unit\PermissionTest`,
 		`App\Tests\Feature\UserTest`,
-		`BookStack\test\SomeClass`,        // lowercase "test" component
+		`BookStack\test\SomeClass`, // lowercase "test" component
 		`App\Modules\spec\SpecRunner`,
 		`App\test_helpers\Bootstrap`,
 		`App\Models\models_test`,
@@ -32,8 +32,8 @@ func TestIsTestModuleByName(t *testing.T) {
 		// Real domain/infra modules — must NOT be flagged
 		"app.models",
 		"app.views",
-		"app.contestant",     // "test" is a substring inside a word, not a full component
-		`App\Contestant`,     // PHP equivalent — backslash, but "Contestant" ≠ "test"
+		"app.contestant", // "test" is a substring inside a word, not a full component
+		`App\Contestant`, // PHP equivalent — backslash, but "Contestant" ≠ "test"
 		`App\Entities\User`,
 		`App\Exceptions\NotFoundException`,
 		`BookStack\Services\BookService`,

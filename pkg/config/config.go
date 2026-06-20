@@ -3,8 +3,8 @@ package config
 import (
 	"flag"
 	"fmt"
-	"os"
 	"milton_prism/pkg/log"
+	"os"
 
 	"github.com/BurntSushi/toml"
 )

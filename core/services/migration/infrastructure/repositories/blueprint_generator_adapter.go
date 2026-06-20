@@ -99,9 +99,9 @@ func (a *BlueprintGeneratorAdapter) Generate(ctx context.Context, analysisSummar
 	}
 
 	type blueprintServiceJSON struct {
-		Name      string `json:"name"`
+		Name      string   `json:"name"`
 		Modules   []string `json:"modules"`
-		Rationale string `json:"rationale"`
+		Rationale string   `json:"rationale"`
 	}
 	type blueprintResponseJSON struct {
 		Services         []blueprintServiceJSON `json:"services"`

@@ -76,4 +76,3 @@ func TestBuildBoundarySpecYAML_User(t *testing.T) {
 		t.Error("should not have cross_service_fks when none exist")
 	}
 }
-

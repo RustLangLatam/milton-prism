@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	analysisports "milton_prism/core/worker/analysis/ports"
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	"milton_prism/core/worker/decomposition/mocks"
 	"milton_prism/core/worker/decomposition/ports"
-	analysisports "milton_prism/core/worker/analysis/ports"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

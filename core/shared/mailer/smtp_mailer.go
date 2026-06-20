@@ -2,8 +2,8 @@ package mailer
 
 import (
 	"fmt"
-	"net/smtp"
 	"milton_prism/pkg/log"
+	"net/smtp"
 	"time"
 
 	"golang.org/x/net/context"

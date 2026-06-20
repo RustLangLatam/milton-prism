@@ -9,8 +9,8 @@ import (
 
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	"milton_prism/core/worker/decomposition/ports"
-	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 	applog "milton_prism/pkg/log"
+	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

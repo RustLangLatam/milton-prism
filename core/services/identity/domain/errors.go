@@ -31,9 +31,9 @@ const (
 	ErrCodeInvalidSession     = "IDN207"
 
 	// Internal errors (IDN5xx)
-	ErrCodeInternal         = "IDN500"
-	ErrCodeTokenGeneration  = "IDN501"
-	ErrCodeTokenRefresh     = "IDN502"
+	ErrCodeInternal        = "IDN500"
+	ErrCodeTokenGeneration = "IDN501"
+	ErrCodeTokenRefresh    = "IDN502"
 )
 
 var (

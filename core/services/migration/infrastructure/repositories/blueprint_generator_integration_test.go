@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	analysisadapters "milton_prism/core/worker/analysis/infrastructure/adapters"
 	"milton_prism/core/services/migration/domain"
+	analysisadapters "milton_prism/core/worker/analysis/infrastructure/adapters"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 
 	"github.com/stretchr/testify/assert"

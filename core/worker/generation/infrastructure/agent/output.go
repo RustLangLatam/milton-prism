@@ -18,9 +18,9 @@ func credentialEnv(cred string) string {
 
 // claudeJSON is the JSON envelope that Claude Code emits with --output-format json.
 type claudeJSON struct {
-	Result       string       `json:"result"`
-	TotalCostUSD float64      `json:"total_cost_usd"`
-	Usage        claudeUsage  `json:"usage"`
+	Result       string      `json:"result"`
+	TotalCostUSD float64     `json:"total_cost_usd"`
+	Usage        claudeUsage `json:"usage"`
 }
 
 type claudeUsage struct {

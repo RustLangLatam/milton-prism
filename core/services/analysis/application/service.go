@@ -8,8 +8,8 @@ import (
 
 	"milton_prism/core/services/analysis/domain"
 	"milton_prism/core/services/analysis/ports"
-	analysissvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
 	applog "milton_prism/pkg/log"
+	analysissvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
 	paginationv1 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
 	queryparamsv1 "milton_prism/pkg/pb/gen/milton_prism/types/query_params/v1"
 )

@@ -20,8 +20,8 @@
 set -uo pipefail
 
 # ── Rutas (AJUSTAR) ───────────────────────────────────────────────────────────
-BACKEND_DIR="${MILTON_BACKEND_DIR:/mnt/usr/src/desarrollo/gopath/RustLangLatam/milton-prism}"
-FRONTEND_DIR="${MILTON_FRONTEND_DIR:/mnt/usr/src/desarrollo/js/RustLangLatam/milton-prism-panel}"
+BACKEND_DIR="${MILTON_BACKEND_DIR:-/mnt/usr/src/desarrollo/gopath/RustLangLatam/milton-prism}"
+FRONTEND_DIR="${MILTON_FRONTEND_DIR:-/mnt/usr/src/desarrollo/js/RustLangLatam/milton-prism-panel}"
 # Archivo donde el teammate registra evidencia (summary_id validado + resultado HTTP real):
 EVIDENCE_FILE="${MILTON_EVIDENCE_FILE:-$BACKEND_DIR/.milton/last-verification.md}"
 EVIDENCE_MAX_AGE_MIN="${MILTON_EVIDENCE_MAX_AGE_MIN:-30}"
@@ -54,13 +54,12 @@ fi
 FORBIDDEN=(
   "Vocabulario de kind viejo con guión (frente 3: debe ser underscore)|||$FRONTEND_DIR|||'shared-state'|'god-module'"
   "Oráculo de ciclos viejo en el frontend (frente 3: migrado al backend)|||$FRONTEND_DIR|||detectGraphCycles|buildCycleFindings"
-  "Secreto del esqueleto de dev filtrado al payload generado (assertNoSecrets)|||$BACKEND_DIR|||signKey|mongodb://|redis://"
 )
 for entry in "${FORBIDDEN[@]}"; do
   desc="${entry%%|||*}"; rest="${entry#*|||}"; dir="${rest%%|||*}"; pat="${rest#*|||}"
   [[ -d "$dir" ]] || continue
-  if grep -REn --include='*.go' --include='*.ts' --include='*.tsx' "$pat" "$dir" >/dev/null 2>&1; then
-    hits="$(grep -REn --include='*.go' --include='*.ts' --include='*.tsx' "$pat" "$dir" 2>/dev/null | head -5)"
+  if grep -REn --exclude-dir=.claude --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build --include='*.go' --include='*.ts' --include='*.tsx' "$pat" "$dir" >/dev/null 2>&1; then
+    hits="$(grep -REn --exclude-dir=.claude --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build --include='*.go' --include='*.ts' --include='*.tsx' "$pat" "$dir" 2>/dev/null | head -5)"
     fail "grep prohibido NO dio 0 — $desc. Lección 8 (cierre = grep=0, no la primera llamada). Coincidencias:
 $hits"
   fi

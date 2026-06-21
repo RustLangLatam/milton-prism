@@ -694,7 +694,7 @@ func enrichModuleCards(
 	for _, c := range cards {
 		fi := fanIn[c.GetModule()]
 		fo := fanOut[c.GetModule()]
-		isHub := len(c.GetModuleLevelState()) > 0 && fi >= 2
+		isHub := isSharedStateHubCard(c, fi)
 		// Clone the card to avoid mutating the caller's slice.
 		ec := &analysisdomain.ModuleCard{
 			Module:              c.GetModule(),
@@ -726,6 +726,28 @@ func enrichModuleCards(
 		}
 	}
 	return enriched, hubs
+}
+
+// isSharedStateHubCard is the canonical (proto-side) hub predicate. It mirrors the
+// distiller's isSharedStateHub so the persisted IsSharedStateHub flag and the
+// SharedStateHubs list agree with the score the distiller computes.
+//
+//   - PSR-4 / Python: extracted module-level mutable state + fan-in >= 2.
+//   - Convention-routed (CodeIgniter 3): no module-level mutable state is
+//     extractable, so a high fan-in alone (a base class everything extends or a
+//     model everything loads) is the honest structural coupling signal. CI3 cards
+//     are recognised by Module == File ending in .php (extractCI3Cards sets both to
+//     the workspace-relative path; Python dotted names and PSR-4 backslash FQNs
+//     never equal their file path).
+func isSharedStateHubCard(c *analysisdomain.ModuleCard, fanIn uint32) bool {
+	if fanIn < 2 {
+		return false
+	}
+	if len(c.GetModuleLevelState()) > 0 {
+		return true
+	}
+	file := c.GetFile()
+	return file != "" && c.GetModule() == file && strings.HasSuffix(strings.ToLower(file), ".php")
 }
 
 // inventoryTechnologies converts go-enry DetectedLanguage output to Technology

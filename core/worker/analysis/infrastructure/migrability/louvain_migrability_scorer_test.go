@@ -90,3 +90,96 @@ func TestScore_NoGuardrailForRealDomain(t *testing.T) {
 	assert.GreaterOrEqual(t, score.GetValue(), int32(70), "Conduit must score well")
 	assert.Equal(t, origDomain, cls.DomainModules, "DomainModules must be unchanged when guardrail does not fire")
 }
+
+// ci3MethodNames returns n synthetic method names for a CI3 god-model card.
+func ci3MethodNames(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = "method"
+	}
+	return out
+}
+
+// TestScore_CI3_AssessorPathScoresHubsAndGod is the assessor-path gate.
+//
+// The migrability assessor (AnalysisMigrabilityAssessorAdapter.Assess) loads the
+// persisted cards via MongoGraphLoader.LoadCards — a proto round-trip that
+// preserves Module and File verbatim — and feeds them through the SAME
+// decomposition Distill→Score this scorer drives. CodeIgniter 3 cards carry
+// Module == File ending in .php and NO extractable module-level state, so the
+// only honest coupling signal is structural fan-in. This test feeds CI3-shaped
+// *analysisdomain.ModuleCard (exactly what LoadCards produces) and asserts the
+// god-model and base class surface as hubs, pulling the score below a perfect
+// 100 — i.e. the assessor cannot re-score a CI3 monolith back up to 100.
+//
+// Regression guard for: eurofunding evaluateMigrability previously persisted 100
+// because the CI3 hub predicate did not fire on the assessor's loaded cards.
+func TestScore_CI3_AssessorPathScoresHubsAndGod(t *testing.T) {
+	// Six controllers each load the Users_model god-model and extend MY_Controller.
+	controllers := []string{
+		"application/controllers/Admin.php",
+		"application/controllers/Users.php",
+		"application/controllers/Memo.php",
+		"application/controllers/Workers.php",
+		"application/controllers/Reports.php",
+		"application/controllers/Auth.php",
+	}
+	var edges []*analysisdomain.DependencyEdge
+	for _, ctl := range controllers {
+		edges = append(edges,
+			&analysisdomain.DependencyEdge{FromModule: ctl, ToModule: "application/models/Users_model.php", Weight: 1},
+			&analysisdomain.DependencyEdge{FromModule: ctl, ToModule: "application/core/MY_Controller.php", Weight: 1},
+		)
+	}
+
+	cls := &analysisdomain.ModuleClassification{
+		// CI3 convention modules fall through to the structural-fallback infra bucket.
+		InfraModules: append([]string{
+			"application/models/Users_model.php",
+			"application/core/MY_Controller.php",
+		}, controllers...),
+		StructuralFallback: true,
+	}
+
+	// CI3 cards: Module == File == workspace-relative .php path, NO ModuleLevelState.
+	cards := []*analysisdomain.ModuleCard{
+		{
+			Module:    "application/models/Users_model.php",
+			File:      "application/models/Users_model.php",
+			Functions: ci3MethodNames(51), // god-model: >= 20 functions
+			Classes:   []string{"Users_model"},
+			Loc:       900,
+		},
+		{
+			Module:    "application/core/MY_Controller.php",
+			File:      "application/core/MY_Controller.php",
+			Functions: ci3MethodNames(8),
+			Classes:   []string{"MY_Controller"},
+			Loc:       300,
+		},
+	}
+	for _, ctl := range controllers {
+		cards = append(cards, &analysisdomain.ModuleCard{
+			Module:    ctl,
+			File:      ctl,
+			Functions: ci3MethodNames(10),
+			Classes:   []string{"Controller"},
+			Loc:       150,
+		})
+	}
+
+	s := NewLouvainMigrabilityScorer()
+	score, err := s.Score(context.Background(), edges, cls, cards, nil)
+	require.NoError(t, err)
+
+	bySignal := make(map[string]int32, len(score.GetSignals()))
+	for _, sig := range score.GetSignals() {
+		bySignal[sig.GetSignal()] = sig.GetPenalty()
+	}
+	assert.Greater(t, bySignal["hub_severity"], int32(0),
+		"CI3 high-fan-in hub (Module==File .php, no State) must penalise hub_severity on the assessor path")
+	assert.Greater(t, bySignal["god_modules"], int32(0),
+		"CI3 god-model (51 methods, high fan-in) must penalise god_modules on the assessor path")
+	assert.Less(t, score.GetValue(), int32(100),
+		"the assessor path must not re-score a CI3 monolith back to a perfect 100")
+}

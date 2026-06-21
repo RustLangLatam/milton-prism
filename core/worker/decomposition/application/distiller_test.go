@@ -183,6 +183,87 @@ func makeNames(prefix string, n int) []string {
 	return out
 }
 
+// ── CodeIgniter 3 fixtures ──────────────────────────────────────────────────────
+//
+// CI3 application classes carry no namespace and no module-level mutable state:
+// the analyzer cannot extract State. The honest, extractable coupling signal is
+// structural fan-in. A CI3 card is recognised by Module == File ending in .php
+// (extractCI3Cards sets both to the workspace-relative path). These fixtures model
+// a god-model loaded by many controllers (Users_model, 51 methods) and a base
+// class everyone extends (MY_Controller).
+
+// ci3Graph mirrors a CodeIgniter 3 dependency graph keyed by .php file paths:
+// many controllers load application/models/Users_model.php (fan-in 6) and extend
+// application/core/MY_Controller.php (fan-in 6).
+func ci3Graph() *workerdomain.Graph {
+	var edges []workerdomain.Edge
+	controllers := []string{
+		"application/controllers/Admin.php",
+		"application/controllers/Users.php",
+		"application/controllers/Memo.php",
+		"application/controllers/Workers.php",
+		"application/controllers/Reports.php",
+		"application/controllers/Auth.php",
+	}
+	for _, ctl := range controllers {
+		edges = append(edges,
+			workerdomain.Edge{From: workerdomain.Module(ctl), To: "application/models/Users_model.php", Weight: 1},
+			workerdomain.Edge{From: workerdomain.Module(ctl), To: "application/core/MY_Controller.php", Weight: 1},
+		)
+	}
+	return &workerdomain.Graph{Edges: edges}
+}
+
+func ci3Classification() *workerdomain.Classification {
+	return &workerdomain.Classification{
+		// CI3 convention modules fall through to the structural-fallback infra bucket
+		// (no namespace heuristics apply); domain stays empty as in the real run.
+		Infra: []workerdomain.Module{
+			"application/models/Users_model.php",
+			"application/core/MY_Controller.php",
+			"application/controllers/Admin.php",
+		},
+		StructuralFallback: true,
+	}
+}
+
+func ci3ClusterResult() *workerdomain.ClusteringResult {
+	return &workerdomain.ClusteringResult{Clusters: nil, LowConfidence: true}
+}
+
+// ci3SummaryCards models the extracted CI3 cards: Users_model with 51 methods and
+// NO module-level state (State is empty — unextractable for CI3), plus the
+// MY_Controller base class. Module == File for every card, the CI3 marker.
+func ci3SummaryCards() *workerdomain.SummaryCards {
+	return &workerdomain.SummaryCards{
+		Technologies: []string{"PHP", "CodeIgniter"},
+		Framework:    "CodeIgniter",
+		ModuleCards: []workerdomain.SummaryModuleCard{
+			{
+				Module:    "application/models/Users_model.php",
+				File:      "application/models/Users_model.php",
+				Functions: makeNames("method", 51),
+				Classes:   []string{"class:Users_model"},
+				LOC:       900,
+			},
+			{
+				Module:    "application/core/MY_Controller.php",
+				File:      "application/core/MY_Controller.php",
+				Functions: makeNames("method", 8),
+				Classes:   []string{"class:MY_Controller"},
+				LOC:       300,
+			},
+			{
+				Module:    "application/controllers/Admin.php",
+				File:      "application/controllers/Admin.php",
+				Functions: makeNames("action", 12),
+				Classes:   []string{"class:Admin"},
+				LOC:       200,
+			},
+		},
+	}
+}
+
 // ── conduitWithHub fixtures ────────────────────────────────────────────────────
 //
 // These fixtures extend the base Conduit case with a shared-state hub
@@ -402,4 +483,52 @@ func TestDistill_Deterministic(t *testing.T) {
 	require.Equal(t, d1.ModuleCards, d2.ModuleCards)
 	require.Equal(t, d1.SharedStateHubs, d2.SharedStateHubs)
 	require.Equal(t, d1.Classification, d2.Classification)
+}
+
+// ── CI3 hub/god-module distillation ─────────────────────────────────────────────
+
+func TestDistill_CI3_StructuralHubsByFanIn(t *testing.T) {
+	// CI3 cards carry no module-level State, yet the god-model (fan-in 6) and the
+	// MY_Controller base class (fan-in 6) must surface as shared-state hubs by their
+	// structural fan-in alone (the convention-routed regime).
+	t.Parallel()
+	d := Distill(ci3Graph(), ci3Classification(), ci3ClusterResult(), ci3SummaryCards(), 0)
+
+	require.NotEmpty(t, d.SharedStateHubs, "CI3 high-fan-in modules must become hubs despite empty State")
+	byModule := make(map[string]workerdomain.DigestSharedStateHub, len(d.SharedStateHubs))
+	for _, h := range d.SharedStateHubs {
+		byModule[h.Module] = h
+	}
+	usersHub, ok := byModule["application/models/Users_model.php"]
+	require.True(t, ok, "Users_model must be a structural hub")
+	assert.GreaterOrEqual(t, usersHub.FanIn, uint32(2))
+	assert.Empty(t, usersHub.State, "CI3 hub carries no extracted mutable state — honest empty")
+
+	_, ok = byModule["application/core/MY_Controller.php"]
+	assert.True(t, ok, "MY_Controller base class must be a structural hub")
+}
+
+func TestDistill_CI3_GodModuleHubFlag(t *testing.T) {
+	// Users_model has 51 methods AND high fan-in → must carry IsSharedStateHub so
+	// the scorer's god-module gate (>=20 funcs AND IsSharedStateHub) fires.
+	t.Parallel()
+	d := Distill(ci3Graph(), ci3Classification(), ci3ClusterResult(), ci3SummaryCards(), 0)
+	var users workerdomain.DigestModuleCard
+	for _, c := range d.ModuleCards {
+		if c.Module == "application/models/Users_model.php" {
+			users = c
+		}
+	}
+	require.Equal(t, "application/models/Users_model.php", users.Module)
+	assert.GreaterOrEqual(t, len(users.Functions), godFunctionThreshold)
+	assert.True(t, users.IsSharedStateHub, "CI3 god-model must be flagged as shared-state hub")
+}
+
+func TestDistill_NonCI3_NoStructuralHubFromFanIn(t *testing.T) {
+	// Guard: a Python/PSR-4 module with high fan-in but no State must NOT become a
+	// hub. Only the convention-routed (Module==File .php) regime relaxes the State
+	// requirement; Conduit (dotted names, no State) keeps zero hubs.
+	t.Parallel()
+	d := Distill(conduitGraph(), conduitClassification(), conduitClusterResult(), conduitSummaryCards(), 0)
+	assert.Empty(t, d.SharedStateHubs, "non-CI3 high-fan-in modules without State must not become hubs")
 }

@@ -2,6 +2,7 @@ package application
 
 import (
 	"sort"
+	"strings"
 
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 )
@@ -9,6 +10,46 @@ import (
 // defaultTopK is the maximum number of module cards included in full detail.
 // Modules beyond this threshold are collapsed into AggregateCard.
 const defaultTopK = 250
+
+// sharedStateHubFanIn is the weighted fan-in floor at which an importable module
+// counts as a shared-state hub. Two or more importers means extracting the module
+// into its own service forces solving the shared-state problem first.
+const sharedStateHubFanIn = 2
+
+// isSharedStateHub reports whether a module card is a shared-state hub at the
+// given weighted fan-in.
+//
+// Two regimes:
+//   - PSR-4 / Python (the default): a hub MUST expose extracted module-level
+//     mutable state (c.State) AND meet the fan-in floor. This is unchanged.
+//   - Convention-routed (CodeIgniter 3): the analyzer cannot extract module-level
+//     mutable state — CI3 application classes hold no module-scoped mutable vars,
+//     only constants, methods, and per-request $this-> instance state. There the
+//     honest, extractable coupling signal is structural: a base class everything
+//     `extends` (MY_Controller / MY_Model) or a model everything loads concentrates
+//     incoming coupling, so a high fan-in alone qualifies it as a hub. See
+//     isConventionRoutedCard for how the regime is recognised.
+func isSharedStateHub(c workerdomain.SummaryModuleCard, fanIn uint32) bool {
+	if fanIn < sharedStateHubFanIn {
+		return false
+	}
+	if len(c.State) > 0 {
+		return true
+	}
+	return isConventionRoutedCard(c)
+}
+
+// isConventionRoutedCard reports whether a card was produced by the CodeIgniter 3
+// convention resolver. CI3 cards are the only ones whose module identity is the
+// workspace-relative .php file path itself (Module == File): the PHP PSR-4 path
+// uses backslash FQNs (NS\Class) and Python uses dotted names, both distinct from
+// the file path. This intrinsic, deterministic marker (set by extractCI3Cards,
+// which assigns Module = File = relPath) survives proto round-trips, so it is the
+// regime signal without threading a new flag through the ports, the proto, and
+// both card converters.
+func isConventionRoutedCard(c workerdomain.SummaryModuleCard) bool {
+	return c.File != "" && c.Module == c.File && strings.HasSuffix(strings.ToLower(c.File), ".php")
+}
 
 // Distill computes an AnalysisDigest from the outputs of pipeline stages 1–3
 // and the module-level data loaded from the analysis summary. It is a pure,
@@ -107,7 +148,7 @@ func Distill(
 	for _, c := range sampled {
 		fi := fanIn[c.Module]
 		fo := fanOut[c.Module]
-		isHub := len(c.State) > 0 && fi >= 2
+		isHub := isSharedStateHub(c, fi)
 
 		routes := make([]workerdomain.DigestRoute, 0, len(c.Routes))
 		for _, r := range c.Routes {
@@ -158,7 +199,7 @@ func Distill(
 	}
 	// Also check overflow modules (they might be hubs even if not in sampled set).
 	for _, c := range overflow {
-		if len(c.State) > 0 && fanIn[c.Module] >= 2 {
+		if isSharedStateHub(c, fanIn[c.Module]) {
 			hubs = append(hubs, workerdomain.DigestSharedStateHub{
 				Module: c.Module,
 				State:  c.State,

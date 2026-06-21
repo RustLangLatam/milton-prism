@@ -163,6 +163,41 @@ func TestScore_ConduitWithHub(t *testing.T) {
 	assert.Equal(t, 68, s.Value, "total after ramp recalibration (was 65 pre-ramp; band unchanged)")
 }
 
+// TestScore_CI3GodModuleAndHub is the CI3 gate: a convention-routed digest with a
+// god-model (51 methods, fan-in ≥2, no extractable State) must now penalise both
+// god_modules and hub_severity — the signals that were previously blind to CI3
+// because they required extracted module-level mutable state.
+func TestScore_CI3GodModuleAndHub(t *testing.T) {
+	t.Parallel()
+	d := Distill(ci3Graph(), ci3Classification(), ci3ClusterResult(), ci3SummaryCards(), 0)
+	s := Score(d)
+
+	t.Log("CI3 score breakdown:")
+	for _, sig := range s.Breakdown {
+		t.Logf("  %-20s penalty=%-3d %s", sig.Signal, sig.Penalty, sig.Detail)
+	}
+	t.Logf("  %-20s value=%d band=%s", "TOTAL", s.Value, s.ScoreBand)
+
+	bySignal := make(map[string]int, len(s.Breakdown))
+	for _, c := range s.Breakdown {
+		bySignal[c.Signal] = c.Penalty
+	}
+	assert.Greater(t, bySignal["god_modules"], 0, "CI3 god-model must penalise god_modules")
+	assert.Greater(t, bySignal["hub_severity"], 0, "CI3 high-fan-in hub must penalise hub_severity")
+
+	// The whole point: a CI3 repo with a god-model can no longer score a perfect 100.
+	assert.Less(t, s.Value, 100, "CI3 god-model/hub must pull the score below a perfect 100")
+
+	// god_modules names Users_model.
+	var godSignal workerdomain.ScoreComponent
+	for _, c := range s.Breakdown {
+		if c.Signal == "god_modules" {
+			godSignal = c
+		}
+	}
+	assert.Contains(t, godSignal.Modules, "application/models/Users_model.php")
+}
+
 // TestScore_Deterministic confirms identical inputs produce identical output.
 func TestScore_Deterministic(t *testing.T) {
 	t.Parallel()

@@ -1,8 +1,0 @@
-{
-  "shared/tests/test_logger.py::test_infof_logs_to_correct_level": true,
-  "shared/tests/test_logger.py::test_warningf_logs_at_warning": true,
-  "shared/tests/test_logger.py::test_errorf_logs_at_error": true,
-  "shared/tests/test_logger.py::test_infof_writes_to_stdout": true,
-  "shared/tests/test_logger.py::test_warningf_writes_to_stdout": true,
-  "shared/tests/test_logger.py::test_errorf_writes_to_stdout": true
-}

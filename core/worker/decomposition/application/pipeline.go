@@ -14,8 +14,8 @@ import (
 
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	"milton_prism/core/worker/decomposition/ports"
-	applog "milton_prism/pkg/log"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
+	applog "milton_prism/pkg/log"
 )
 
 // Pipeline orchestrates the decomposition pipeline stages for a single job.
@@ -477,18 +477,30 @@ func serviceNameFromBlueprint(blueprintGroup string) string {
 // tableNameRe matches Python __tablename__ assignments in SQLAlchemy model classes.
 var tableNameRe = regexp.MustCompile(`__tablename__\s*=\s*['"]([^'"]+)['"]`)
 
-// buildTableServiceMap scans all clusters' .models files for __tablename__
-// declarations and returns a map from SQLAlchemy table name to service name.
-// This map is passed to ContractDeriver so FK annotations carry the target service.
+// eloquentTableRe matches a PHP `protected $table = 'name';` declaration.
+var eloquentTableRe = regexp.MustCompile(`\$table\s*=\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]`)
+
+// buildTableServiceMap scans all clusters' model modules for table declarations
+// and returns a map from table name to service name. This map is passed to
+// ContractDeriver so FK annotations carry the target service. Python clusters
+// use __tablename__ in .models files; PHP/Laravel clusters use $table (or the
+// pluralised class-name convention) in Eloquent model classes.
 func buildTableServiceMap(workspacePath string, clusters []workerdomain.Cluster) map[string]string {
 	result := make(map[string]string)
 	for _, c := range clusters {
 		svcName := serviceNameFromBlueprint(c.BlueprintGroup)
 		for _, m := range c.Modules {
-			if !strings.HasSuffix(string(m), ".models") {
+			module := string(m)
+			if strings.Contains(module, `\`) {
+				if table, ok := eloquentTableForModule(workspacePath, module); ok {
+					result[table] = svcName
+				}
 				continue
 			}
-			parts := strings.Split(string(m), ".")
+			if !strings.HasSuffix(module, ".models") {
+				continue
+			}
+			parts := strings.Split(module, ".")
 			relPath := filepath.Join(parts...) + ".py"
 			data, err := os.ReadFile(filepath.Join(workspacePath, relPath))
 			if err != nil {
@@ -500,6 +512,102 @@ func buildTableServiceMap(workspacePath string, clusters []workerdomain.Cluster)
 		}
 	}
 	return result
+}
+
+// laravelModelModuleRe reports whether a PHP FQN sits under a Models namespace.
+var laravelModelModuleRe = regexp.MustCompile(`(^|\\)Models?\\`)
+
+// eloquentTableForModule resolves a PHP Eloquent model FQN to its table name:
+// the explicit $table when declared, otherwise the pluralised snake_case of the
+// class name (Laravel's convention). Returns false for non-model modules or
+// when the file cannot be located.
+func eloquentTableForModule(workspacePath, fqn string) (string, bool) {
+	if !laravelModelModuleRe.MatchString(fqn) {
+		return "", false
+	}
+	psr4 := loadComposerPSR4(workspacePath)
+	path, ok := resolveLaravelClassPath(workspacePath, fqn, psr4)
+	if ok {
+		if data, err := os.ReadFile(path); err == nil {
+			if m := eloquentTableRe.FindSubmatch(data); m != nil {
+				return string(m[1]), true
+			}
+		}
+	}
+	// Convention fallback: plural snake_case of the class name.
+	className := fqn
+	if i := strings.LastIndex(fqn, `\`); i >= 0 {
+		className = fqn[i+1:]
+	}
+	return pluralizeSnake(className), true
+}
+
+// composerPSR4Re matches a PSR-4 prefix→dir entry in composer.json.
+var composerPSR4Re = regexp.MustCompile(`"((?:[A-Za-z0-9_]+\\\\)*[A-Za-z0-9_]+\\\\)"\s*:\s*"([^"]*)"`)
+
+// loadComposerPSR4 returns the PSR-4 prefix→directory map from composer.json.
+func loadComposerPSR4(workspacePath string) map[string]string {
+	out := make(map[string]string)
+	data, err := os.ReadFile(filepath.Join(workspacePath, "composer.json"))
+	if err != nil {
+		return out
+	}
+	for _, m := range composerPSR4Re.FindAllStringSubmatch(string(data), -1) {
+		prefix := strings.ReplaceAll(m[1], `\\`, `\`)
+		out[prefix] = strings.TrimSuffix(m[2], "/")
+	}
+	return out
+}
+
+// resolveLaravelClassPath maps a PHP FQN to a file path via the PSR-4 map.
+func resolveLaravelClassPath(workspacePath, fqn string, psr4 map[string]string) (string, bool) {
+	bestPrefix, bestDir := "", ""
+	for prefix, dir := range psr4 {
+		if strings.HasPrefix(fqn, prefix) && len(prefix) > len(bestPrefix) {
+			bestPrefix, bestDir = prefix, dir
+		}
+	}
+	if bestPrefix == "" {
+		return "", false
+	}
+	rest := strings.TrimPrefix(fqn, bestPrefix)
+	rel := filepath.Join(strings.Split(rest, `\`)...) + ".php"
+	full := filepath.Join(workspacePath, bestDir, rel)
+	if _, err := os.Stat(full); err == nil {
+		return full, true
+	}
+	return "", false
+}
+
+// pluralizeSnake converts a PascalCase class name to Laravel's default plural
+// snake_case table name (Book → books, Category → categories).
+func pluralizeSnake(name string) string {
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		ch := name[i]
+		if i > 0 && ch >= 'A' && ch <= 'Z' {
+			b.WriteByte('_')
+		}
+		if ch >= 'A' && ch <= 'Z' {
+			b.WriteByte(ch + 32)
+		} else {
+			b.WriteByte(ch)
+		}
+	}
+	snake := b.String()
+	switch {
+	case strings.HasSuffix(snake, "y") && len(snake) > 1 && !strings.ContainsRune("aeiou", rune(snake[len(snake)-2])):
+		return snake[:len(snake)-1] + "ies"
+	case strings.HasSuffix(snake, "fe"):
+		return snake[:len(snake)-2] + "ves"
+	case strings.HasSuffix(snake, "f"):
+		return snake[:len(snake)-1] + "ves"
+	case strings.HasSuffix(snake, "s"), strings.HasSuffix(snake, "x"),
+		strings.HasSuffix(snake, "ch"), strings.HasSuffix(snake, "sh"):
+		return snake + "es"
+	default:
+		return snake + "s"
+	}
 }
 
 // analyzeDataOwnership builds the DataOwnership struct from characterised candidates

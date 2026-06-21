@@ -18,10 +18,10 @@ import (
 	"os"
 	"testing"
 
-	workeradapters "milton_prism/core/worker/analysis/infrastructure/adapters"
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	decompadapters "milton_prism/core/worker/decomposition/infrastructure/adapters"
 	"milton_prism/core/worker/decomposition/ports"
+	workeradapters "milton_prism/core/worker/analysis/infrastructure/adapters"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

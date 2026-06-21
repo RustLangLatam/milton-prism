@@ -26,9 +26,9 @@ func writeComposerJSON(t *testing.T, dir string, psr4 map[string]string) {
 func TestPHPResolver_IsInternal(t *testing.T) {
 	dir := t.TempDir()
 	writeComposerJSON(t, dir, map[string]string{
-		`BookStack\`:          "app/",
-		`Database\Factories\`: "database/factories/",
-		`Database\Seeders\`:   "database/seeders/",
+		`BookStack\`:            "app/",
+		`Database\Factories\`:  "database/factories/",
+		`Database\Seeders\`:    "database/seeders/",
 	})
 
 	r, err := NewPHPModuleResolver(dir)

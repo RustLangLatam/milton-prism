@@ -57,12 +57,35 @@ func NewAnalysisMigrabilityAssessorAdapter(
 // Assess loads the analysis data, runs the scoring pipeline + LLM assessor,
 // persists the result, and returns the MigrabilityAssessment.
 func (a *AnalysisMigrabilityAssessorAdapter) Assess(ctx context.Context, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error) {
+	// Honest-degrade gate. Read the EXPLICIT deep-analysis-availability signal the
+	// analysis pipeline set, mirroring the migration assessor twin. When deep
+	// analysis was unavailable there is nothing to reason over, so short-circuit
+	// BEFORE Detect / Cluster / Distill / Score / LLM with an INCOMPLETE verdict:
+	// no score, no prose, no confidence, no token spend. This replaces the prior
+	// len(graph.Edges)==0 → ErrNoDeepData short-circuit, which surfaced to the
+	// caller as a 400 FailedPrecondition instead of an honest degrade.
+	available, err := a.graphLoader.LoadDeepAnalysisAvailable(ctx, analysisSummaryID)
+	if err != nil {
+		return nil, fmt.Errorf("analysis migrability assessor: load availability: %w", err)
+	}
+	if !available {
+		lang := language
+		if lang == "" {
+			lang = "en"
+		}
+		return &commonv1.MigrabilityAssessment{
+			Verdict:            workerdomain.VerdictIncompleteNoStructuralData,
+			Reasons:            []string{workerdomain.ReasonNoStructuralData},
+			AssessedTime:       timestamppb.New(time.Now().UTC()),
+			AssessmentLanguage: lang,
+			// No MigrabilityScore, ScoreSignals, Summary, Blockers, Confidence,
+			// or CostUsd — this is a degrade, not a judgement.
+		}, nil
+	}
+
 	graph, err := a.graphLoader.Load(ctx, analysisSummaryID)
 	if err != nil {
 		return nil, fmt.Errorf("analysis migrability assessor: load graph: %w", err)
-	}
-	if len(graph.Edges) == 0 {
-		return nil, domain.ErrNoDeepData
 	}
 
 	cls, err := a.detector.Detect(ctx, graph)

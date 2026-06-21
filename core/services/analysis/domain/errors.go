@@ -20,7 +20,7 @@ func newError(code, message string) *Error {
 // ── Validation errors (ANL1xx) ────────────────────────────────────────────────
 
 const (
-	ErrCodeMissingIdentifier   = "ANL101"
+	ErrCodeMissingIdentifier  = "ANL101"
 	ErrCodeMissingRepositoryID = "ANL102"
 )
 

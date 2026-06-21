@@ -20,10 +20,10 @@ type MigrabilityScore struct {
 
 // ScoreComponent records one structural signal's contribution to the score.
 type ScoreComponent struct {
-	Signal  string   // e.g. "domain_presence", "cluster_count"
-	Penalty int      // 0–N subtracted from 100
-	Detail  string   // legacy prose explanation (kept for backward compat)
-	Modules []string // structured module names (god_modules, hub_severity)
+	Signal   string   // e.g. "domain_presence", "cluster_count"
+	Penalty  int      // 0–N subtracted from 100
+	Detail   string   // legacy prose explanation (kept for backward compat)
+	Modules  []string // structured module names (god_modules, hub_severity)
 	// Structured i18n key replacing Detail. When present, frontend renders
 	// t(DetailKey, DetailParams) instead of Detail.
 	DetailKey    string

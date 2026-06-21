@@ -144,8 +144,8 @@ func extractDevGemNames(path string) (map[string]bool, error) {
 	defer f.Close()
 
 	devGems := make(map[string]bool)
-	depth := 0    // overall block depth (do...end)
-	devDepth := 0 // depth at which the outermost dev group was opened
+	depth := 0      // overall block depth (do...end)
+	devDepth := 0   // depth at which the outermost dev group was opened
 	inDev := false
 
 	scanner := bufio.NewScanner(f)

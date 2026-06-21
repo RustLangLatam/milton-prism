@@ -113,7 +113,7 @@ func TestPHPLayerOf_Tests(t *testing.T) {
 		`Tests\Unit\UserServiceTest`,
 		`Tests\Feature\BookControllerTest`,
 		`Test\Api\AuthTest`,
-		`App\Services\UserServiceTest`, // class name ends with Test
+		`App\Services\UserServiceTest`,  // class name ends with Test
 		`App\Http\Controllers\UserControllerTestCase`,
 	}
 	for _, fqn := range cases {

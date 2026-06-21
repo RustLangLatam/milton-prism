@@ -757,13 +757,13 @@ func generateProto(svcName, blueprintGroup string, messages []workerdomain.Proto
 	b.WriteString("option go_package = \"" + goPackage + "\";\n\n")
 
 	// Messages + enums.
-	b.WriteString("// ---- Resources (derived from SQLAlchemy models) ----\n\n")
+	b.WriteString("// ---- Resources (derived from ORM model classes) ----\n\n")
 	for _, msg := range messages {
 		writeMessage(&b, msg)
 	}
 
 	// Service block.
-	b.WriteString("// ---- Service (derived from Flask routes) ----\n\n")
+	b.WriteString("// ---- Service (derived from framework routes) ----\n\n")
 	b.WriteString("service " + serviceTitleCase + "Service {\n")
 
 	// Deduplicate CRUD RPCs (same name may appear from overlapping route patterns).

@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	workerdomain "milton_prism/core/worker/decomposition/domain"
@@ -10,6 +11,55 @@ import (
 // godFunctionThreshold is the minimum number of functions a module must export
 // before it qualifies as a god-module candidate (combined with shared state).
 const godFunctionThreshold = 20
+
+// clamp01 bounds x to [0, 1].
+func clamp01(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+	if x > 1 {
+		return 1
+	}
+	return x
+}
+
+// domainPresencePenalty maps a domain-to-(domain+infra) ratio to its penalty as a
+// continuous ramp: ratio≥0.30 → 0 (no penalty), ratio→0 → 40 (full penalty). The
+// ramp is linear in the gap below the 0.30 threshold, so improving the ratio while
+// still below 0.30 strictly lowers the penalty (raises the score) instead of
+// snapping between fixed steps. The DomainEmpty case (penalty 40) is handled
+// separately by the caller and never reaches this function.
+func domainPresencePenalty(ratio float64) int {
+	return int(math.Round(40 * clamp01((0.30-ratio)/0.30)))
+}
+
+// hubSeverityPenalty maps the worst hub's normalised fan-in (hubRatio =
+// fanIn/(totalNodes+fanIn), in [0,1)) to its penalty as a continuous, bounded ramp
+// that preserves the historical step anchors:
+//
+//	hubRatio ≥ 0.50 → 20 (severe, capped)
+//	hubRatio = 0.30 → 12 (moderate anchor)
+//	hubRatio → 0.00 →  0 (no coupling)
+//
+// Between the anchors the penalty interpolates linearly (two segments), so lowering
+// the worst hub's relative fan-in moves the penalty instead of jumping between three
+// fixed values. Sign note: because hubRatio = fanIn/(N+fanIn), resolving more edges
+// (fanIn up, but N up more) LOWERS hubRatio → LOWERS this penalty → RAISES the score,
+// which is the desired, non-perverse direction.
+func hubSeverityPenalty(hubRatio float64) int {
+	var p float64
+	switch {
+	case hubRatio >= 0.5:
+		p = 20
+	case hubRatio >= 0.3:
+		// [0.3, 0.5] → [12, 20]
+		p = 12 + (hubRatio-0.3)/(0.5-0.3)*(20-12)
+	default:
+		// [0.0, 0.3) → [0, 12]
+		p = hubRatio / 0.3 * 12
+	}
+	return int(math.Round(p))
+}
 
 // Score computes a deterministic migrability score in [0, 100] from the five
 // structural signals in the digest. Higher means more migrable.
@@ -51,14 +101,17 @@ func Score(d *workerdomain.AnalysisDigest) *workerdomain.MigrabilityScore {
 			if n > 0 {
 				ratio := float64(len(d.Classification.DomainModules)) / float64(n)
 				ratioStr := fmt.Sprintf("%.0f", ratio*100)
+				// Continuous ramp: ratio≥0.30 → 0, ratio→0 → 40. The detail key still
+				// reflects the severity band (very_low/low/ok) for stable i18n + UX
+				// copy, but the numeric penalty now interpolates so that an improving
+				// (but still-below-threshold) ratio strictly raises the score.
+				p = domainPresencePenalty(ratio)
 				switch {
 				case ratio < 0.15:
-					p = 25
 					detail = fmt.Sprintf("domain ratio %.0f%% — very few domain modules relative to infrastructure", ratio*100)
 					detailKey = "signal.domain_presence.very_low"
 					detailParams = map[string]string{"ratio": ratioStr}
 				case ratio < 0.30:
-					p = 10
 					detail = fmt.Sprintf("domain ratio %.0f%% — low domain-to-infra ratio", ratio*100)
 					detailKey = "signal.domain_presence.low"
 					detailParams = map[string]string{"ratio": ratioStr}
@@ -130,9 +183,13 @@ func Score(d *workerdomain.AnalysisDigest) *workerdomain.MigrabilityScore {
 			}
 			hubRatio := float64(worst.FanIn) / float64(uint32(totalNodes)+worst.FanIn)
 			fanInStr := strconv.Itoa(int(worst.FanIn))
+			// Continuous ramp anchored at the historical steps (≥0.5→20, 0.3→12,
+			// →0→0). Lowering the worst hub's relative fan-in now moves the penalty
+			// instead of snapping between three fixed values; the detail key still
+			// names the severity band for stable i18n + UX copy.
+			p = hubSeverityPenalty(hubRatio)
 			switch {
 			case hubRatio >= 0.5:
-				p = 20
 				detail = fmt.Sprintf("%s fan-in=%d — severe shared-state hub (concentrates %.0f%% of incoming coupling)", worst.Module, worst.FanIn, hubRatio*100)
 				detailKey = "signal.hub_severity.severe"
 				detailParams = map[string]string{
@@ -141,12 +198,10 @@ func Score(d *workerdomain.AnalysisDigest) *workerdomain.MigrabilityScore {
 					"pct":    fmt.Sprintf("%.0f", hubRatio*100),
 				}
 			case hubRatio >= 0.3:
-				p = 12
 				detail = fmt.Sprintf("%s fan-in=%d — moderate shared-state hub", worst.Module, worst.FanIn)
 				detailKey = "signal.hub_severity.moderate"
 				detailParams = map[string]string{"module": worst.Module, "fan_in": fanInStr}
 			default:
-				p = 5
 				detail = fmt.Sprintf("%s fan-in=%d — shared-state hub present", worst.Module, worst.FanIn)
 				detailKey = "signal.hub_severity.minor"
 				detailParams = map[string]string{"module": worst.Module, "fan_in": fanInStr}

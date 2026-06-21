@@ -3,8 +3,8 @@
 package domain
 
 import (
-	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
+	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 )
 
 type (
@@ -27,17 +27,17 @@ type (
 )
 
 const (
-	AnalysisStateUnspecified    = analysisv1.AnalysisState_ANALYSIS_STATE_UNSPECIFIED
-	AnalysisStateRunning        = analysisv1.AnalysisState_ANALYSIS_STATE_RUNNING
-	AnalysisStateCompleted      = analysisv1.AnalysisState_ANALYSIS_STATE_COMPLETED
-	AnalysisStateFailed         = analysisv1.AnalysisState_ANALYSIS_STATE_FAILED
+	AnalysisStateUnspecified  = analysisv1.AnalysisState_ANALYSIS_STATE_UNSPECIFIED
+	AnalysisStateRunning      = analysisv1.AnalysisState_ANALYSIS_STATE_RUNNING
+	AnalysisStateCompleted    = analysisv1.AnalysisState_ANALYSIS_STATE_COMPLETED
+	AnalysisStateFailed       = analysisv1.AnalysisState_ANALYSIS_STATE_FAILED
 	TechnologyStatusUnspecified = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_UNSPECIFIED
-	TechnologyStatusCurrent     = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_CURRENT
-	TechnologyStatusOutdated    = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_OUTDATED
-	TechnologyStatusEndOfLife   = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_END_OF_LIFE
-	SeverityUnspecified         = analysisv1.Severity_SEVERITY_UNSPECIFIED
-	SeverityLow                 = analysisv1.Severity_SEVERITY_LOW
-	SeverityMedium              = analysisv1.Severity_SEVERITY_MEDIUM
-	SeverityHigh                = analysisv1.Severity_SEVERITY_HIGH
-	SeverityCritical            = analysisv1.Severity_SEVERITY_CRITICAL
+	TechnologyStatusCurrent   = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_CURRENT
+	TechnologyStatusOutdated  = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_OUTDATED
+	TechnologyStatusEndOfLife = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_END_OF_LIFE
+	SeverityUnspecified       = analysisv1.Severity_SEVERITY_UNSPECIFIED
+	SeverityLow               = analysisv1.Severity_SEVERITY_LOW
+	SeverityMedium            = analysisv1.Severity_SEVERITY_MEDIUM
+	SeverityHigh              = analysisv1.Severity_SEVERITY_HIGH
+	SeverityCritical          = analysisv1.Severity_SEVERITY_CRITICAL
 )

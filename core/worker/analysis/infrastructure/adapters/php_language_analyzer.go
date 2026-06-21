@@ -54,6 +54,14 @@ func (a *PHPLanguageAnalyzer) ResolveImports(ctx context.Context, workspacePath 
 		return nil, nil
 	}
 
+	// Fork A: a CodeIgniter 3 workspace declares no PSR-4 autoload, so its
+	// application classes are namespace-less and the PSR-4 resolver gates them
+	// all out. Delegate to the convention resolver, which is a fully parallel
+	// path — PSR-4 projects (BookStack/Laravel) never enter it.
+	if isCI3Workspace(workspacePath) {
+		return a.resolveCI3(files, workspacePath), nil
+	}
+
 	resolver, err := NewPHPModuleResolver(workspacePath)
 	if err != nil {
 		// Missing composer.json is not an error — the repo may be a bare PHP
@@ -100,6 +108,13 @@ func (a *PHPLanguageAnalyzer) ExtractCards(ctx context.Context, workspacePath st
 		return nil, nil, err
 	}
 
+	// Fork A: CI3 modules carry no namespace; their identity is the file under
+	// application/{controllers,models,libraries,core}. Emit those cards via the
+	// convention path so they are not dropped by the PSR-4 f.NS=="" gate.
+	if isCI3Workspace(workspacePath) {
+		return a.extractCI3Cards(files, workspacePath), nil, nil
+	}
+
 	cards := make([]*analysisdomain.ModuleCard, 0, len(files))
 	for _, f := range files {
 		if f.NS == "" {
@@ -131,4 +146,49 @@ func (a *PHPLanguageAnalyzer) ExtractCards(ctx context.Context, workspacePath st
 		return cards[i].Module < cards[j].Module
 	})
 	return cards, nil, nil
+}
+
+// resolveCI3 builds the convention dependency edges for a CodeIgniter 3
+// workspace. The node identifier is the module's workspace-relative path so
+// downstream stages (live-set partition, unreachable report) carry file:line.
+func (a *PHPLanguageAnalyzer) resolveCI3(files []phpRawFile, workspacePath string) []*analysisdomain.DependencyEdge {
+	raw, _ := ci3ResolvedEdges(files, workspacePath)
+	if len(raw) == 0 {
+		return nil
+	}
+	edges := make([]*analysisdomain.DependencyEdge, 0, len(raw))
+	for _, r := range raw {
+		edges = append(edges, &analysisdomain.DependencyEdge{
+			FromModule: r.FromModule,
+			ToModule:   r.ToModule,
+			Weight:     1,
+		})
+	}
+	return edges
+}
+
+// extractCI3Cards emits one ModuleCard per CI3 convention module. Module and
+// File are both the workspace-relative path: the path IS the identity here (no
+// namespace exists), and keeping File set means every island reported as
+// unreachable carries its file:line, never a fabricated edge.
+func (a *PHPLanguageAnalyzer) extractCI3Cards(files []phpRawFile, workspacePath string) []*analysisdomain.ModuleCard {
+	mods := ci3DiscoverModules(files)
+	cards := make([]*analysisdomain.ModuleCard, 0, len(mods))
+	for _, m := range mods {
+		card := &analysisdomain.ModuleCard{
+			Module:           ci3moduleID(m),
+			File:             m.relPath,
+			Functions:        m.methods,
+			ModuleLevelState: m.state,
+			Loc:              m.loc,
+		}
+		if m.className != "" {
+			card.Classes = []string{"class:" + m.className}
+		}
+		cards = append(cards, card)
+	}
+	sort.Slice(cards, func(i, j int) bool {
+		return cards[i].Module < cards[j].Module
+	})
+	return cards
 }

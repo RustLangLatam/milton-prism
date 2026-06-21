@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"milton_prism/core/shared/phpclassify"
-	workerdomain "milton_prism/core/worker/decomposition/domain"
 	adapters "milton_prism/core/worker/decomposition/infrastructure/adapters"
+	workerdomain "milton_prism/core/worker/decomposition/domain"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"

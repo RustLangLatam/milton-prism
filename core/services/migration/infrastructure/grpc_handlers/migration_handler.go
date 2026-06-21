@@ -36,6 +36,25 @@ func NewMigrationHandler(svc *application.Service, authExtract AuthExtractor) *M
 	return &MigrationHandler{svc: svc, authExtract: authExtract}
 }
 
+// suppressOrphanRoadmap drops the restructuring roadmap from the served response
+// when the migration's current verdict is INCOMPLETE_NO_STRUCTURAL_DATA. That
+// verdict has no score signals, so a current-verdict roadmap carries no structural
+// problems or action plan; any roadmap present is a stale blob persisted under an
+// earlier verdict (e.g. a previous NOT_MIGRABLE generation) and serving it would
+// expose a stale migrability_score and mismatched problems.
+//
+// This mutates only the in-memory response object; the persisted blob in Mongo is
+// left intact. The normal path (MIGRABLE/PARTIAL/NOT_MIGRABLE) is untouched and
+// still serves its roadmap.
+func suppressOrphanRoadmap(m *migrationv1.Migration) {
+	if m == nil || m.GetRestructuringRoadmap() == nil {
+		return
+	}
+	if m.GetMigrabilityAssessment().GetVerdict() == domain.MigrabilityVerdictIncompleteNoStructuralData {
+		m.RestructuringRoadmap = nil
+	}
+}
+
 func (h *MigrationHandler) CreateMigration(ctx context.Context, req *migsvcv1.CreateMigrationRequest) (*migrationv1.Migration, error) {
 	callerID, isSystem, err := h.authExtract(ctx)
 	if err != nil {
@@ -72,6 +91,7 @@ func (h *MigrationHandler) GetMigration(ctx context.Context, req *migsvcv1.GetMi
 	if m.GetOwnerUserId() != callerID && !isSystem {
 		return nil, coreerror.NewPermissionDeniedError(domain.ErrCodeForbiddenAccess, domain.ErrForbiddenAccess.Message)
 	}
+	suppressOrphanRoadmap(m)
 	return m, nil
 }
 
@@ -91,6 +111,9 @@ func (h *MigrationHandler) ListMigrations(ctx context.Context, req *migsvcv1.Lis
 	items, pag, err := h.svc.ListMigrations(ctx, filter, req.GetPageParams())
 	if err != nil {
 		return nil, h.mapError(err)
+	}
+	for _, m := range items {
+		suppressOrphanRoadmap(m)
 	}
 	return &migsvcv1.ListMigrationsResponse{
 		Migrations: items,
@@ -308,6 +331,7 @@ func (h *MigrationHandler) AssessMigrability(ctx context.Context, req *migsvcv1.
 	if err != nil {
 		return nil, h.mapError(err)
 	}
+	suppressOrphanRoadmap(out)
 	return out, nil
 }
 

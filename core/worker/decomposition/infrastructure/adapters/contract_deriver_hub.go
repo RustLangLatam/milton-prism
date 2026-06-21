@@ -15,22 +15,30 @@ import (
 var _ ports.ContractDeriver = (*ContractDeriverHub)(nil)
 
 // ErrContractDeriverNotImplemented is returned for frameworks without a live
-// ContractDeriver adapter (non-Flask/SQLAlchemy stacks in v1).
-var ErrContractDeriverNotImplemented = errors.New("contract deriver: not implemented for this framework (v1 supports Flask/SQLAlchemy only)")
+// ContractDeriver adapter (non-Flask/SQLAlchemy, non-Laravel/Eloquent stacks in v1).
+var ErrContractDeriverNotImplemented = errors.New("contract deriver: not implemented for this framework (v1 supports Flask/SQLAlchemy and Laravel/Eloquent)")
 
 // ContractDeriverHub detects the framework used in the workspace and dispatches
-// to the appropriate ContractDeriver adapter. In v1 Flask/SQLAlchemy is the
-// only live adapter; all other frameworks return ErrContractDeriverNotImplemented.
+// to the appropriate ContractDeriver adapter. In v1 Flask/SQLAlchemy and
+// Laravel/Eloquent are the live adapters; all other frameworks return
+// ErrContractDeriverNotImplemented.
 type ContractDeriverHub struct {
-	flaskAdapter *FlaskSQLAlchemyDeriver
+	flaskAdapter    *FlaskSQLAlchemyDeriver
+	eloquentAdapter *EloquentDeriver
 }
 
-// NewContractDeriverHub returns a ContractDeriverHub with the Flask/SQLAlchemy adapter wired.
+// NewContractDeriverHub returns a ContractDeriverHub with the Flask/SQLAlchemy
+// and Laravel/Eloquent adapters wired.
 func NewContractDeriverHub() *ContractDeriverHub {
-	return &ContractDeriverHub{flaskAdapter: NewFlaskSQLAlchemyDeriver()}
+	return &ContractDeriverHub{
+		flaskAdapter:    NewFlaskSQLAlchemyDeriver(),
+		eloquentAdapter: NewEloquentDeriver(),
+	}
 }
 
 // Derive detects the framework from the workspace and delegates accordingly.
+// The Flask/SQLAlchemy path is checked first and is byte-identical to its prior
+// behaviour; Laravel is only consulted when the workspace is not Flask.
 func (h *ContractDeriverHub) Derive(
 	ctx context.Context,
 	cluster workerdomain.Cluster,
@@ -40,9 +48,27 @@ func (h *ContractDeriverHub) Derive(
 	if isFlaskWorkspace(workspacePath) {
 		return h.flaskAdapter.Derive(ctx, cluster, workspacePath, tableServiceMap)
 	}
-	applog.Warningf("decomposition-worker: contract deriver: no adapter for workspace %s (not Flask/SQLAlchemy) — skipping cluster %s",
+	if isLaravelWorkspace(workspacePath) {
+		return h.eloquentAdapter.Derive(ctx, cluster, workspacePath, tableServiceMap)
+	}
+	applog.Warningf("decomposition-worker: contract deriver: no adapter for workspace %s (not Flask/SQLAlchemy, not Laravel/Eloquent) — skipping cluster %s",
 		workspacePath, cluster.BlueprintGroup)
 	return nil, ErrContractDeriverNotImplemented
+}
+
+// isLaravelWorkspace returns true when the workspace looks like a Laravel
+// project. Heuristic: composer.json declares laravel/framework, or an `artisan`
+// console script sits at the workspace root.
+func isLaravelWorkspace(workspacePath string) bool {
+	if data, err := os.ReadFile(filepath.Join(workspacePath, "composer.json")); err == nil {
+		if strings.Contains(string(data), "laravel/framework") {
+			return true
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workspacePath, "artisan")); err == nil {
+		return true
+	}
+	return false
 }
 
 // isFlaskWorkspace returns true when the workspace looks like a Flask/SQLAlchemy project.

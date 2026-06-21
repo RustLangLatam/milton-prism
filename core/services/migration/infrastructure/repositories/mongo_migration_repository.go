@@ -30,28 +30,28 @@ var _ ports.MigrationRepository = (*MongoMigrationRepository)(nil)
 // mongoMigrationDoc is the BSON representation of a Migration record.
 // Nested proto messages are serialised as bytes to avoid maintaining parallel structs.
 type mongoMigrationDoc struct {
-	ID                      primitive.ObjectID  `bson:"_id,omitempty"`
-	Identifier              uint64              `bson:"identifier"`
-	RepositoryID            uint64              `bson:"repository_id"`
-	RepositoryURL           string              `bson:"repository_url,omitempty"`
-	OwnerUserID             uint64              `bson:"owner_user_id"`
-	SourceBranch            string              `bson:"source_branch,omitempty"`
-	State                   int32               `bson:"state"`
-	TargetBytes             []byte              `bson:"target_bytes,omitempty"`
-	AnalysisSummaryID       uint64              `bson:"analysis_summary_id,omitempty"`
-	SourceAnalysisSummaryID uint64              `bson:"source_analysis_summary_id,omitempty"`
-	PlanBytes               []byte              `bson:"plan_bytes,omitempty"`
-	OutputBytes             []byte              `bson:"output_bytes,omitempty"`
-	AssessmentBytes         []byte              `bson:"assessment_bytes,omitempty"`
-	MigrabilityOverride     bool                `bson:"migrability_override,omitempty"`
-	AnalysisReused          bool                `bson:"analysis_reused,omitempty"`
-	RoadmapBytes            []byte              `bson:"roadmap_bytes,omitempty"`
-	EnrichmentBytes         []byte              `bson:"enrichment_bytes,omitempty"`
-	BlueprintBytes          []byte              `bson:"blueprint_bytes,omitempty"`
-	CreateTime              primitive.DateTime  `bson:"create_time"`
-	UpdateTime              *primitive.DateTime `bson:"update_time,omitempty"`
-	DeleteTime              *primitive.DateTime `bson:"delete_time,omitempty"`
-	PurgeTime               *primitive.DateTime `bson:"purge_time,omitempty"`
+	ID                       primitive.ObjectID  `bson:"_id,omitempty"`
+	Identifier               uint64              `bson:"identifier"`
+	RepositoryID             uint64              `bson:"repository_id"`
+	RepositoryURL            string              `bson:"repository_url,omitempty"`
+	OwnerUserID              uint64              `bson:"owner_user_id"`
+	SourceBranch             string              `bson:"source_branch,omitempty"`
+	State                    int32               `bson:"state"`
+	TargetBytes              []byte              `bson:"target_bytes,omitempty"`
+	AnalysisSummaryID        uint64              `bson:"analysis_summary_id,omitempty"`
+	SourceAnalysisSummaryID  uint64              `bson:"source_analysis_summary_id,omitempty"`
+	PlanBytes                []byte              `bson:"plan_bytes,omitempty"`
+	OutputBytes              []byte              `bson:"output_bytes,omitempty"`
+	AssessmentBytes          []byte              `bson:"assessment_bytes,omitempty"`
+	MigrabilityOverride      bool                `bson:"migrability_override,omitempty"`
+	AnalysisReused           bool                `bson:"analysis_reused,omitempty"`
+	RoadmapBytes             []byte              `bson:"roadmap_bytes,omitempty"`
+	EnrichmentBytes          []byte              `bson:"enrichment_bytes,omitempty"`
+	BlueprintBytes           []byte              `bson:"blueprint_bytes,omitempty"`
+	CreateTime               primitive.DateTime  `bson:"create_time"`
+	UpdateTime               *primitive.DateTime `bson:"update_time,omitempty"`
+	DeleteTime               *primitive.DateTime `bson:"delete_time,omitempty"`
+	PurgeTime                *primitive.DateTime `bson:"purge_time,omitempty"`
 }
 
 // MongoMigrationRepository persists Migration records in MongoDB.

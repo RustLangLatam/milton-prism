@@ -10,6 +10,7 @@ import (
 	"milton_prism/core/services/migration/mocks"
 	"milton_prism/core/services/migration/ports"
 	migsvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/migration/v1"
+	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 
 	"github.com/stretchr/testify/assert"
@@ -112,6 +113,46 @@ func TestHandlerGetMigration_ForbiddenAccess(t *testing.T) {
 	repo.On("GetByID", mock.Anything, migID, false).Return(m, nil)
 	_, err := h.GetMigration(context.Background(), &migsvcv1.GetMigrationRequest{Identifier: migID})
 	assertGRPCCode(t, err, codes.PermissionDenied)
+}
+
+// migrationWithRoadmap returns an owned migration carrying both an assessment of
+// the given verdict and a non-nil restructuring roadmap with a stale score.
+func migrationWithRoadmap(verdict string) *domain.Migration {
+	score := int32(35)
+	return &domain.Migration{
+		Identifier:  migID,
+		OwnerUserId: callerID,
+		State:       domain.MigrationStateRestructuringReady,
+		MigrabilityAssessment: &commonv1.MigrabilityAssessment{
+			Verdict: verdict,
+		},
+		RestructuringRoadmap: &migrationv1.RestructuringRoadmap{
+			Diagnosis: &migrationv1.RoadmapDiagnosis{
+				Verdict:          domain.MigrabilityVerdictNotMigrable,
+				MigrabilityScore: &score,
+			},
+		},
+	}
+}
+
+func TestHandlerGetMigration_IncompleteVerdict_OmitsOrphanRoadmap(t *testing.T) {
+	h, repo, _, _, _ := newHandler(t)
+	repo.On("GetByID", mock.Anything, migID, false).
+		Return(migrationWithRoadmap(domain.MigrabilityVerdictIncompleteNoStructuralData), nil)
+	out, err := h.GetMigration(context.Background(), &migsvcv1.GetMigrationRequest{Identifier: migID})
+	require.NoError(t, err)
+	assert.Nil(t, out.GetRestructuringRoadmap(), "orphan roadmap must be suppressed on INCOMPLETE verdict")
+	assert.Equal(t, domain.MigrabilityVerdictIncompleteNoStructuralData, out.GetMigrabilityAssessment().GetVerdict())
+}
+
+func TestHandlerGetMigration_NotMigrableVerdict_KeepsRoadmap(t *testing.T) {
+	h, repo, _, _, _ := newHandler(t)
+	repo.On("GetByID", mock.Anything, migID, false).
+		Return(migrationWithRoadmap(domain.MigrabilityVerdictNotMigrable), nil)
+	out, err := h.GetMigration(context.Background(), &migsvcv1.GetMigrationRequest{Identifier: migID})
+	require.NoError(t, err)
+	require.NotNil(t, out.GetRestructuringRoadmap(), "normal path must still serve its roadmap")
+	assert.Equal(t, int32(35), out.GetRestructuringRoadmap().GetDiagnosis().GetMigrabilityScore())
 }
 
 // ── StartMigration ────────────────────────────────────────────────────────────

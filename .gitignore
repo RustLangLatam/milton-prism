@@ -2,10 +2,6 @@
 .idea
 api-gateway/bin/*
 core/bin/*
-CLAUDE.md
 infra/bin/*
+CLAUDE.md
 
-# Environment files carry real secrets — never commit them. Track only .env.example.
-.env
-**/.env
-!**/.env.example

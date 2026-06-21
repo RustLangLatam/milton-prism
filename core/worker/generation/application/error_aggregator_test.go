@@ -52,10 +52,10 @@ func TestExtractErrorVarNames_NoVars(t *testing.T) {
 func TestBuildMessageErrorGo_ContainsAllVars(t *testing.T) {
 	t.Parallel()
 	varNames := map[string]struct{}{
-		"authErrorMessages":      {},
-		"articlesErrorMessages":  {},
-		"profileErrorMessages":   {},
-		"migrationErrorMessages": {},
+		"authErrorMessages":       {},
+		"articlesErrorMessages":   {},
+		"profileErrorMessages":    {},
+		"migrationErrorMessages":  {},
 	}
 	got := application.BuildMessageErrorGo(varNames)
 
@@ -140,9 +140,9 @@ func TestAssembleErrorAggregator_NoMIG211(t *testing.T) {
 	monorepoRoot := t.TempDir()
 	errorDir := filepath.Join(monorepoRoot, "pkg", "gateway", "common", "error")
 	require.NoError(t, os.MkdirAll(errorDir, 0755))
-	writeErrorFile(t, errorDir, "auth_errors.go", "package message_error\nvar authErrorMessages = map[string]string{}\n")
-	writeErrorFile(t, errorDir, "common_errors.go", "package message_error\nvar dbErrorMessages = map[string]string{}\nvar commonErrorMessages = map[string]string{}\n")
-	writeErrorFile(t, errorDir, "identity_errors.go", "package message_error\nvar identityErrorMessages = map[string]string{}\n")
+	writeErrorFile(t, errorDir, "auth_errors.go",    "package message_error\nvar authErrorMessages = map[string]string{}\n")
+	writeErrorFile(t, errorDir, "common_errors.go",  "package message_error\nvar dbErrorMessages = map[string]string{}\nvar commonErrorMessages = map[string]string{}\n")
+	writeErrorFile(t, errorDir, "identity_errors.go","package message_error\nvar identityErrorMessages = map[string]string{}\n")
 
 	// Two services — pre-populated as done so the invoker is never called.
 	// Their artifacts include *_errors.go only (no message_error.go).

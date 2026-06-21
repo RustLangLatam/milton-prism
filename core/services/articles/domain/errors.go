@@ -16,8 +16,8 @@ func newError(code, message string) *Error { return &Error{Code: code, Message: 
 // ── Validation errors (ART1xx) ───────────────────────────────────────────────
 
 const (
-	ErrCodeMissingIdentifier       = "ART101"
-	ErrCodeMissingPayload          = "ART102"
+	ErrCodeMissingIdentifier      = "ART101"
+	ErrCodeMissingPayload         = "ART102"
 	ErrCodeMissingAuthorIdentifier = "ART103"
 )
 

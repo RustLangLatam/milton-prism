@@ -11,10 +11,10 @@ import (
 // knownSecrets lists real credential values that must never appear in generated
 // config templates. The set is checked after generation; a match returns an error.
 var knownSecrets = []string{
-	"bimtra654", // MongoDB dev password
+	"bimtra654",                                                          // MongoDB dev password
 	"cce81c0e198c6a7e88a96bb7a39b3bc11912fdde5021e98d3bb63a7bff6bd7e8", // JWT signKey (dev, lowercase)
-	"1qaz2WSX", // Redis/KeyDB dev password
-	"dev123",   // gateway API key
+	"1qaz2WSX",                                                          // Redis/KeyDB dev password
+	"dev123",                                                            // gateway API key
 	"5A6C3D9BA08CB65DC1E3ED455C7115460F2DF5B9EC923E8CCF39AE88F624EB0A", // Ed25519 public key (dev, uppercase)
 	"5a6c3d9ba08cb65dc1e3ed455c7115460f2df5b9ec923e8ccf39ae88f624eb0a", // Ed25519 public key (dev, lowercase)
 }
@@ -299,6 +299,22 @@ func assertNoSecrets(content, label string) error {
 	for _, secret := range knownSecrets {
 		if strings.Contains(content, secret) {
 			return fmt.Errorf("assembler: secret leak detected in %s template: found known credential value", label)
+		}
+	}
+	return nil
+}
+
+// AssertPayloadNoSecrets runs the same known-credential check that guards the
+// synthesised config templates over an ENTIRE push payload — every generated
+// file that would leave the system on a git push. It is the write-side gate: the
+// deliverable must contain zero known dev credentials before any push. The first
+// offending file short-circuits with a labelled error; nil means grep=0 across
+// the whole payload. The label carries the file path so a leak is locatable
+// without logging file content.
+func AssertPayloadNoSecrets(files []File) error {
+	for _, f := range files {
+		if err := assertNoSecrets(string(f.Content), f.Path); err != nil {
+			return err
 		}
 	}
 	return nil

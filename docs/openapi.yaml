@@ -2085,8 +2085,13 @@ components:
             properties:
                 verdict:
                     example: MIGRABLE
+                    enum:
+                        - MIGRABLE
+                        - PARTIAL
+                        - NOT_MIGRABLE
+                        - INCOMPLETE_NO_STRUCTURAL_DATA
                     type: string
-                    description: 'Migrability verdict: MIGRABLE, PARTIAL, or NOT_MIGRABLE.'
+                    description: 'Migrability verdict: MIGRABLE, PARTIAL, NOT_MIGRABLE, or INCOMPLETE_NO_STRUCTURAL_DATA. INCOMPLETE_NO_STRUCTURAL_DATA is an honest degrade (deep structural analysis produced no graph); when present, migrabilityScore is absent and consumers MUST branch on verdict before reading the score.'
                 summary:
                     example: Flask REST API organised in blueprints with clear domain separation.
                     type: string
@@ -2115,6 +2120,12 @@ components:
                     type: string
                     description: When the assessment was last run.
                     format: date-time
+                migrabilityScore:
+                    example: 87
+                    type: integer
+                    nullable: true
+                    description: Structural migrability score 0–100. Higher is more decomposable. Optional and nullable&#58; ABSENT (not 0) when verdict is INCOMPLETE_NO_STRUCTURAL_DATA, because there is no graph to score. Consumers MUST branch on verdict before reading this number.
+                    format: int32
             description: LLM-produced migrability verdict. Absent until explicitly requested by the user.
         Migration:
             title: Migration

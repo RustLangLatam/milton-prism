@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
-	commonerr "milton_prism/pkg/gateway/common/error"
 	"net/http"
+	commonerr "milton_prism/pkg/gateway/common/error"
 
 	"github.com/unrolled/secure"
 )

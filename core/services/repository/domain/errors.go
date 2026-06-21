@@ -44,6 +44,7 @@ const (
 	ErrCodePushAuthFailed          = "REPO206"
 	ErrCodePushConflict            = "REPO207"
 	ErrCodePushNetworkError        = "REPO208"
+	ErrCodeTargetNotEmpty          = "REPO209"
 )
 
 var (
@@ -58,6 +59,9 @@ var (
 	ErrPushConflict = newError(ErrCodePushConflict, "Failure_Push_Rejected")
 	// ErrPushNetworkError: could not reach the remote during push.
 	ErrPushNetworkError = newError(ErrCodePushNetworkError, "Failure_Push_Network_Error")
+	// ErrTargetNotEmpty: the push destination already contains refs/commits.
+	// A.3 requires a freshly created, empty target repository for v1.
+	ErrTargetNotEmpty = newError(ErrCodeTargetNotEmpty, "Failure_Target_Not_Empty")
 )
 
 // ── Internal errors (REPO5xx) ────────────────────────────────────────────────

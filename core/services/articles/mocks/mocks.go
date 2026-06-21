@@ -15,10 +15,10 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ ports.ArticleRepository  = (*MockArticleRepository)(nil)
-	_ ports.TagRepository      = (*MockTagRepository)(nil)
+	_ ports.ArticleRepository = (*MockArticleRepository)(nil)
+	_ ports.TagRepository     = (*MockTagRepository)(nil)
 	_ ports.TransactionManager = (*MockTransactionManager)(nil)
-	_ ports.ProfileClient      = (*MockProfileClient)(nil)
+	_ ports.ProfileClient     = (*MockProfileClient)(nil)
 )
 
 // MockArticleRepository is a testify mock for ports.ArticleRepository.

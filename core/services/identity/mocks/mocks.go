@@ -16,11 +16,11 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ ports.UserRepository     = (*MockUserRepository)(nil)
+	_ ports.UserRepository  = (*MockUserRepository)(nil)
 	_ ports.TransactionManager = (*MockTransactionManager)(nil)
-	_ ports.PasswordHasher     = (*MockPasswordHasher)(nil)
-	_ ports.TokenManager       = (*MockTokenManager)(nil)
-	_ ports.SessionStore       = (*MockSessionStore)(nil)
+	_ ports.PasswordHasher  = (*MockPasswordHasher)(nil)
+	_ ports.TokenManager    = (*MockTokenManager)(nil)
+	_ ports.SessionStore    = (*MockSessionStore)(nil)
 )
 
 // MockUserRepository is a testify mock for ports.UserRepository.

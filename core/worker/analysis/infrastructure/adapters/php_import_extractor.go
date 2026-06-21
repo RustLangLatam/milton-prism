@@ -39,6 +39,20 @@ type phpRawFile struct {
 	Props       []string          // all property names declared in Class ($ stripped)
 	StaticProps []string          // subset of Props that carry static modifier (state signals)
 	Loc         uint32            // non-blank, non-comment line count
+
+	// CI3 convention fields — populated for every file regardless of namespace,
+	// since CodeIgniter 3 classes declare none. They are unused by the PSR-4
+	// resolver (which gates on f.NS != "") and consumed only by the CI3 path.
+	CI3Extends []string  // parent class name(s) written in `extends` (verbatim)
+	CI3Loads   []ci3Load // $this->load->model/library('literal') calls in the body
+}
+
+// ci3Load is one CodeIgniter loader call with a string-literal argument:
+// $this->load->model('foo') or $this->load->library('bar'). Calls with a
+// variable/array/dynamic argument are not captured (out of v1 scope).
+type ci3Load struct {
+	kind string // "model" | "library"
+	name string // the literal argument, quotes stripped
 }
 
 // ExtractFiles walks workspacePath for .php files, parses each with tree-sitter,
@@ -114,6 +128,7 @@ func extractPHPFile(root *sitter.Node, src []byte, relPath string) phpRawFile {
 				f.Kind = "class"
 				f.Methods, f.Props, f.StaticProps = phpExtractClassMembers(child, src)
 				f.Refs = phpCollectRefs(child, src)
+				f.CI3Extends = phpExtendsNames(child, src)
 			}
 		case "interface_declaration":
 			if f.Class == "" {
@@ -135,7 +150,108 @@ func extractPHPFile(root *sitter.Node, src []byte, relPath string) phpRawFile {
 			}
 		}
 	}
+	// CI3 loader calls can appear anywhere in any method body, so collect them by
+	// walking the whole program once. Cheap and only consumed by the CI3 path.
+	f.CI3Loads = phpCollectCI3Loads(root, src)
 	return f
+}
+
+// phpExtendsNames returns the parent class name(s) written in the base_clause of
+// a class_declaration (the `extends X` clause). Used by the CI3 convention
+// resolver, where classes carry no namespace and extends is the primary lineage
+// signal (extends MY_Foo / extends Foo). PHP single inheritance means at most
+// one entry, but the walk is list-tolerant.
+func phpExtendsNames(classNode *sitter.Node, src []byte) []string {
+	var names []string
+	for i := 0; i < int(classNode.ChildCount()); i++ {
+		c := classNode.Child(i)
+		if c.Type() != "base_clause" {
+			continue
+		}
+		for j := 0; j < int(c.ChildCount()); j++ {
+			if g := c.Child(j); g.Type() == "name" || g.Type() == "qualified_name" {
+				names = append(names, phpText(g, src))
+			}
+		}
+	}
+	return names
+}
+
+// phpCollectCI3Loads walks the program for CodeIgniter loader calls of the form
+// $this->load->model('literal') and $this->load->library('literal'), returning
+// one ci3Load per call with a string-literal argument. The tree-sitter shape is
+// a member_call_expression whose object is itself a member access ending in the
+// `load` property, whose method name is `model`/`library`, and whose first
+// argument is a string. Variable/array/dynamic arguments produce no entry.
+func phpCollectCI3Loads(root *sitter.Node, src []byte) []ci3Load {
+	var loads []ci3Load
+	var walk func(n *sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n.Type() == "member_call_expression" {
+			if ld, ok := phpMatchCI3Load(n, src); ok {
+				loads = append(loads, ld)
+			}
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return loads
+}
+
+// phpMatchCI3Load tests one member_call_expression for the loader shape and
+// extracts (kind, literal-name) when it matches. It does not require the object
+// chain to literally be $this->load — matching the method name (model|library)
+// on a `load`-rooted access is enough and keeps the matcher resilient to
+// get_instance()->load and $CI->load variants, which still denote a CI3 load.
+func phpMatchCI3Load(call *sitter.Node, src []byte) (ci3Load, bool) {
+	method := phpChildText(call, src, "name")
+	if method != "model" && method != "library" {
+		return ci3Load{}, false
+	}
+	// The object must be a `->load` member access (the CodeIgniter loader handle).
+	obj := call.ChildByFieldName("object")
+	if obj == nil || obj.Type() != "member_access_expression" {
+		return ci3Load{}, false
+	}
+	if phpChildText(obj, src, "name") != "load" {
+		return ci3Load{}, false
+	}
+	// First string-literal argument is the loaded module name.
+	args := call.ChildByFieldName("arguments")
+	if args == nil {
+		return ci3Load{}, false
+	}
+	for i := 0; i < int(args.ChildCount()); i++ {
+		a := args.Child(i)
+		if a.Type() != "argument" {
+			continue
+		}
+		for j := 0; j < int(a.ChildCount()); j++ {
+			lit := a.Child(j)
+			switch lit.Type() {
+			case "string", "encapsed_string":
+				return ci3Load{kind: method, name: phpStringLiteralValue(lit, src)}, true
+			}
+		}
+		// A non-string first argument (variable, array) is out of v1 scope.
+		return ci3Load{}, false
+	}
+	return ci3Load{}, false
+}
+
+// phpStringLiteralValue returns the inner text of a PHP string literal node,
+// stripping the surrounding single/double quotes. tree-sitter exposes the raw
+// span including quotes; the inner string_content child carries the value.
+func phpStringLiteralValue(node *sitter.Node, src []byte) string {
+	for i := 0; i < int(node.ChildCount()); i++ {
+		if c := node.Child(i); c.Type() == "string_content" {
+			return phpText(c, src)
+		}
+	}
+	raw := phpText(node, src)
+	return strings.Trim(raw, "'\"")
 }
 
 // phpUseEntry is one resolved use clause: its canonical FQN and the alias under

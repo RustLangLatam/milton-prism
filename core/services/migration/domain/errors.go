@@ -20,9 +20,9 @@ func newError(code, message string) *Error {
 // ── Validation errors (MIG1xx) ────────────────────────────────────────────────
 
 const (
-	ErrCodeMissingIdentifier   = "MIG101"
-	ErrCodeMissingPayload      = "MIG102"
-	ErrCodeMissingOwnerUserID  = "MIG103"
+	ErrCodeMissingIdentifier  = "MIG101"
+	ErrCodeMissingPayload     = "MIG102"
+	ErrCodeMissingOwnerUserID = "MIG103"
 	ErrCodeMissingRepositoryID = "MIG104"
 	ErrCodeInvalidTargetConfig = "MIG105"
 )
@@ -104,14 +104,14 @@ var (
 	ErrNoArtifacts            = newError(ErrCodeNoArtifacts, "Failure_No_Artifacts")
 	ErrNotMigrableBlocked     = newError(ErrCodeNotMigrableBlocked, "Failure_Not_Migrable_Override_Required")
 	ErrNoAnalysisSummary      = newError(ErrCodeNoAnalysisSummary, "Failure_No_Analysis_Summary")
-	ErrRepoAuthFailed         = newError(ErrCodeRepoAuthFailed, "Failure_Repository_Auth_Failed")
-	ErrRepoUnreachable        = newError(ErrCodeRepoUnreachable, "Failure_Repository_Unreachable")
-	ErrRoadmapUnavailable     = newError(ErrCodeRoadmapUnavailable, "Failure_Roadmap_Unavailable")
-	ErrSourceAnalysisNotFound = newError(ErrCodeSourceAnalysisNotFound, "Failure_Source_Analysis_Not_Found")
-	ErrSourceAnalysisInvalid  = newError(ErrCodeSourceAnalysisInvalid, "Failure_Source_Analysis_Invalid")
-	ErrNoRoadmap              = newError(ErrCodeNoRoadmap, "Failure_No_Roadmap")
-	ErrNoBlueprintAnalysis    = newError(ErrCodeNoBlueprintAnalysis, "Failure_No_Blueprint_Analysis")
-	ErrNoActionPlan           = newError(ErrCodeNoActionPlan, "Failure_No_Action_Plan")
+	ErrRepoAuthFailed             = newError(ErrCodeRepoAuthFailed, "Failure_Repository_Auth_Failed")
+	ErrRepoUnreachable            = newError(ErrCodeRepoUnreachable, "Failure_Repository_Unreachable")
+	ErrRoadmapUnavailable         = newError(ErrCodeRoadmapUnavailable, "Failure_Roadmap_Unavailable")
+	ErrSourceAnalysisNotFound     = newError(ErrCodeSourceAnalysisNotFound, "Failure_Source_Analysis_Not_Found")
+	ErrSourceAnalysisInvalid      = newError(ErrCodeSourceAnalysisInvalid, "Failure_Source_Analysis_Invalid")
+	ErrNoRoadmap                  = newError(ErrCodeNoRoadmap, "Failure_No_Roadmap")
+	ErrNoBlueprintAnalysis        = newError(ErrCodeNoBlueprintAnalysis, "Failure_No_Blueprint_Analysis")
+	ErrNoActionPlan               = newError(ErrCodeNoActionPlan, "Failure_No_Action_Plan")
 )
 
 // NewErrArtifactConflict builds a conflict error that names the paths whose

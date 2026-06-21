@@ -99,13 +99,13 @@ func (a *PythonLanguageAnalyzer) ExtractCards(ctx context.Context, workspacePath
 	cards := make([]*analysisdomain.ModuleCard, 0, len(rawCards))
 	for _, rc := range rawCards {
 		card := &analysisdomain.ModuleCard{
-			Module:           rc.Module,
-			File:             rc.File,
-			Functions:        rc.Functions,
-			Classes:          rc.Classes,
+			Module:          rc.Module,
+			File:            rc.File,
+			Functions:       rc.Functions,
+			Classes:         rc.Classes,
 			ModuleLevelState: rc.State,
-			DocstringHead:    rc.Docstring,
-			Loc:              rc.Loc,
+			DocstringHead:   rc.Docstring,
+			Loc:             rc.Loc,
 		}
 		for _, r := range rc.Routes {
 			card.Routes = append(card.Routes, &analysisdomain.RouteInfo{
@@ -119,3 +119,4 @@ func (a *PythonLanguageAnalyzer) ExtractCards(ctx context.Context, workspacePath
 
 	return cards, blueprints, nil
 }
+

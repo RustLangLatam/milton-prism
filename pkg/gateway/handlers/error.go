@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"context"
-	commonerr "milton_prism/pkg/gateway/common/error"
 	"net/http"
+	commonerr "milton_prism/pkg/gateway/common/error"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/grpclog"

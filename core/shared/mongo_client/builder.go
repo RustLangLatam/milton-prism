@@ -5,9 +5,9 @@ package mongo_client
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"milton_prism/pkg/config"
 	"milton_prism/pkg/log"
-	"net/url"
 	"strings"
 	"sync"
 

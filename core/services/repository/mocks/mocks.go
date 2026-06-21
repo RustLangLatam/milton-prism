@@ -102,6 +102,12 @@ func (m *MockGitClient) ListBranches(ctx context.Context, remoteURL, credentialR
 	return branches, args.Error(1)
 }
 
+func (m *MockGitClient) PreflightTarget(ctx context.Context, targetURL, writeToken string) (*domain.TargetPreflightResult, error) {
+	args := m.Called(ctx, targetURL, writeToken)
+	v, _ := args.Get(0).(*domain.TargetPreflightResult)
+	return v, args.Error(1)
+}
+
 func (m *MockGitClient) PushResult(ctx context.Context, targetURL, writeToken string, files []*domain.PushFile, commitMessage string) (string, error) {
 	args := m.Called(ctx, targetURL, writeToken, files, commitMessage)
 	return args.String(0), args.Error(1)

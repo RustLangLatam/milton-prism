@@ -21,6 +21,14 @@ type GitClient interface {
 	// ListBranches returns the branches available on the remote.
 	ListBranches(ctx context.Context, remoteURL, credentialRef string) ([]*domain.Branch, error)
 
+	// PreflightTarget validates a push destination WITHOUT pushing anything.
+	// It probes the git smart-HTTP receive-pack (write) endpoint to determine
+	// reachability and whether writeToken grants push access, and lists the
+	// remote refs to determine whether the target repository is empty (A.3).
+	// No commit, no ref update, no clone is performed. writeToken is supplied as
+	// HTTP Basic Auth only — never logged or embedded in any URL or error message.
+	PreflightTarget(ctx context.Context, targetURL, writeToken string) (*domain.TargetPreflightResult, error)
+
 	// PushResult initializes a temporary workspace, writes files preserving
 	// directory structure, commits them with commitMessage (a default traceable
 	// message is used when empty), and pushes to targetURL.

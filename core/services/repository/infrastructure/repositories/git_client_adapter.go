@@ -17,6 +17,7 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	gogitplumbing "github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
@@ -127,6 +128,111 @@ func (c *NoOpGitClient) ProbeSource(ctx context.Context, remoteURL, token string
 			ErrorMessage: fmt.Sprintf("Unexpected response from the remote (HTTP %d).", status),
 		}, nil
 	}
+}
+
+// PreflightTarget validates a push destination WITHOUT pushing. It performs two
+// read-only checks against the remote:
+//
+//  1. Reachability + write permission — a GET on the git smart-HTTP receive-pack
+//     discovery endpoint (info/refs?service=git-receive-pack). This is the
+//     write-side equivalent of the read-side upload-pack probe: a 200 means the
+//     supplied token is accepted for push; 401/403 means it lacks push access.
+//     No ref is created or updated — discovery is a read of the server's
+//     advertised capabilities.
+//  2. Emptiness — a ref listing (git ls-remote). Zero refs means the target is a
+//     fresh, empty repository, which A.3 requires for v1.
+//
+// writeToken is supplied exclusively as HTTP Basic Auth and is never embedded in
+// any URL, log entry, or error string. Nothing is committed, pushed, or cloned.
+func (c *NoOpGitClient) PreflightTarget(ctx context.Context, targetURL, writeToken string) (*domain.TargetPreflightResult, error) {
+	receivePackURL, err := buildReceivePackURL(targetURL)
+	if err != nil {
+		return &domain.TargetPreflightResult{
+			Reachable:    false,
+			ErrorMessage: "Invalid target repository URL.",
+		}, nil
+	}
+
+	status, connErr := c.httpProbe(ctx, receivePackURL, writeToken)
+	if connErr != nil {
+		return &domain.TargetPreflightResult{
+			Reachable:    false,
+			ErrorMessage: friendlyHTTPError(connErr),
+		}, nil
+	}
+
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		// Reachable, but the write token cannot push.
+		return &domain.TargetPreflightResult{
+			Reachable:    true,
+			CanPush:      false,
+			ErrorMessage: "The write token was rejected for push. Verify it has write/push access to the target.",
+		}, nil
+	case http.StatusNotFound:
+		// A.3: the target repo must be pre-created. A 404 means it does not exist
+		// (or the token cannot see it).
+		return &domain.TargetPreflightResult{
+			Reachable:    false,
+			ErrorMessage: "Target repository not found. Create the empty repository first, or check the URL and token.",
+		}, nil
+	case http.StatusOK:
+		// Push capability confirmed. Now check emptiness via a ref listing.
+	default:
+		return &domain.TargetPreflightResult{
+			Reachable:    false,
+			ErrorMessage: fmt.Sprintf("Unexpected response from the target (HTTP %d).", status),
+		}, nil
+	}
+
+	// Emptiness check: list refs. An empty repo advertises zero refs.
+	empty, listErr := c.targetIsEmpty(targetURL, writeToken)
+	if listErr != nil {
+		// Push capability is confirmed; we just could not confirm emptiness.
+		// Report reachable+canPush and surface the listing problem, but do NOT
+		// claim emptiness either way (Empty stays false, ErrorMessage explains).
+		return &domain.TargetPreflightResult{
+			Reachable:    true,
+			CanPush:      true,
+			Empty:        false,
+			ErrorMessage: "Could not list target refs to confirm the repository is empty.",
+		}, nil
+	}
+
+	return &domain.TargetPreflightResult{
+		Reachable: true,
+		CanPush:   true,
+		Empty:     empty,
+	}, nil
+}
+
+// targetIsEmpty reports whether the remote advertises zero refs (an empty repo).
+// A bare, freshly created repository has no refs. The token is supplied as HTTP
+// Basic Auth only.
+func (c *NoOpGitClient) targetIsEmpty(targetURL, token string) (bool, error) {
+	opts := &git.ListOptions{}
+	if token != "" {
+		opts.Auth = &githttp.BasicAuth{Username: token, Password: "x-oauth-basic"}
+	}
+	rem := git.NewRemote(nil, &config.RemoteConfig{Name: "origin", URLs: []string{targetURL}})
+	refs, err := rem.List(opts)
+	if err != nil {
+		// go-git surfaces an empty remote as ErrEmptyRemoteRepository — that is a
+		// success for our purposes: the target exists and has no refs.
+		if err == transport.ErrEmptyRemoteRepository {
+			return true, nil
+		}
+		return false, err
+	}
+	// Count only real refs (HEAD on an empty repo may still be advertised as a
+	// dangling symref; branches/tags are what indicate content).
+	for _, ref := range refs {
+		name := ref.Name().String()
+		if strings.HasPrefix(name, "refs/heads/") || strings.HasPrefix(name, "refs/tags/") {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // PushResult commits files to a temporary git repository and pushes to targetURL.
@@ -364,6 +470,20 @@ func buildInfoRefsURL(remoteURL string) (string, error) {
 	}
 	base := strings.TrimSuffix(u.String(), "/")
 	return base + "/info/refs?service=git-upload-pack", nil
+}
+
+// buildReceivePackURL appends the git smart-HTTP receive-pack (write) discovery
+// path to remoteURL. This is the write-side counterpart of buildInfoRefsURL.
+func buildReceivePackURL(remoteURL string) (string, error) {
+	u, err := url.Parse(remoteURL)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("unsupported scheme: %s", u.Scheme)
+	}
+	base := strings.TrimSuffix(u.String(), "/")
+	return base + "/info/refs?service=git-receive-pack", nil
 }
 
 // httpProbe sends a GET to infoRefsURL and returns the HTTP status code.

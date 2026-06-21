@@ -41,9 +41,9 @@ func TestCaptureArtifacts_AllSmallFiles(t *testing.T) {
 	dir := t.TempDir()
 
 	files := map[string][]byte{
-		"domain.go":  []byte("package domain"),
-		"service.go": []byte("package application"),
-		"wire.go":    []byte("package user"),
+		"domain.go":   []byte("package domain"),
+		"service.go":  []byte("package application"),
+		"wire.go":     []byte("package user"),
 	}
 	for name, content := range files {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), content, 0644))

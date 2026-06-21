@@ -238,7 +238,7 @@ var notiplanLikeEdges = func() []workerdomain.Edge {
 	// NOTE: none of these names end in a domainIndicatorSuffix (models/views/etc.)
 	// so no blueprint groups are found and the structural fallback activates.
 	modules := []string{
-		"backend.adapter", // replaces "backend.api" — "api" is a domain suffix
+		"backend.adapter",     // replaces "backend.api" — "api" is a domain suffix
 		"backend.config",
 		"backend.create_tables",
 		"backend.dispatcher",
@@ -361,21 +361,21 @@ func TestDeterministicInfraDetector_NestedTestModules(t *testing.T) {
 // path component, not just the first one.
 func TestIsTestModule(t *testing.T) {
 	yes := []string{
-		"tests.test_models",      // first component
-		"test.helpers",           // first component alt
-		"spec.user",              // spec first component
-		"backend.tests.conftest", // nested — first="backend"
-		"backend.tests.test_agrupaciones_state_mapping", // nested test_* suffix
-		"backend.tests.test_sync_servidor",              // nested test_* suffix
-		"myapp.test_helpers",                            // test_ prefix mid-path
-		"myapp.models_test",                             // _test suffix mid-path
+		"tests.test_models",                              // first component
+		"test.helpers",                                   // first component alt
+		"spec.user",                                      // spec first component
+		"backend.tests.conftest",                         // nested — first="backend"
+		"backend.tests.test_agrupaciones_state_mapping",  // nested test_* suffix
+		"backend.tests.test_sync_servidor",               // nested test_* suffix
+		"myapp.test_helpers",                             // test_ prefix mid-path
+		"myapp.models_test",                              // _test suffix mid-path
 	}
 	no := []string{
-		"backend.contestant", // "test" is a substring, not a whole component
-		"backend.context",    // "test" substring
+		"backend.contestant",    // "test" is a substring, not a whole component
+		"backend.context",       // "test" substring
 		"backend.funcs",
 		"conduit.articles",
-		"myapp.attestation", // "test" substring inside "attestation"
+		"myapp.attestation",     // "test" substring inside "attestation"
 		`BookStack\Entities\Models\Page`,
 	}
 	for _, m := range yes {

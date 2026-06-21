@@ -3,8 +3,8 @@
 package handlers
 
 import (
-	"milton_prism/pkg/config" // Adjust as needed
 	"net/http"
+	"milton_prism/pkg/config" // Adjust as needed
 	"strings"
 )
 

@@ -14,8 +14,8 @@ import (
 	"os"
 	"testing"
 
-	"milton_prism/core/services/migration/domain"
 	repositories "milton_prism/core/services/migration/infrastructure/repositories"
+	"milton_prism/core/services/migration/domain"
 	workerapp "milton_prism/core/worker/decomposition/application"
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"

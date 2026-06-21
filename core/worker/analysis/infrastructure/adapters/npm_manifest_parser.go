@@ -46,9 +46,9 @@ func (p *NpmManifestParser) Parse(_ context.Context, workspacePath string, _ wor
 // ── package-lock.json parsing ─────────────────────────────────────────────────
 
 type rawPackageLock struct {
-	LockfileVersion int                  `json:"lockfileVersion"`
-	Packages        map[string]lockPkgV2 `json:"packages"`     // v2/v3
-	Dependencies    map[string]lockDepV1 `json:"dependencies"` // v1
+	LockfileVersion int                   `json:"lockfileVersion"`
+	Packages        map[string]lockPkgV2  `json:"packages"`    // v2/v3
+	Dependencies    map[string]lockDepV1  `json:"dependencies"` // v1
 }
 
 type lockPkgV2 struct {

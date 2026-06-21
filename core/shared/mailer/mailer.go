@@ -6,10 +6,10 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"milton_prism/pkg/log"
 	"net/smtp"
 	"os"
 	"path/filepath"
+	"milton_prism/pkg/log"
 
 	"golang.org/x/time/rate"
 )

@@ -19,9 +19,9 @@ import (
 // ── mock AgentInvoker ─────────────────────────────────────────────────────────
 
 type mockInvoker struct {
-	mu        sync.Mutex
-	results   map[string]ports.InvokeResult
-	invokeErr map[string]error
+	mu           sync.Mutex
+	results      map[string]ports.InvokeResult
+	invokeErr    map[string]error
 	// invokeErrSeq lets tests inject a sequence of errors per service — the first
 	// call dequeues seq[0], the second seq[1], etc. A nil entry means "succeed,
 	// fall through to results". Once the sequence is exhausted the mock falls
@@ -80,8 +80,8 @@ func (m *mockInvoker) Invoke(_ context.Context, _ string, req ports.InvokeReques
 // ── mock GenerationStore ──────────────────────────────────────────────────────
 
 type mockStore struct {
-	mu      sync.Mutex
-	records map[string]workerdomain.ServiceGenerationRecord
+	mu        sync.Mutex
+	records   map[string]workerdomain.ServiceGenerationRecord
 	// artifacts is keyed by serviceName → path → artifact (upsert semantics).
 	artifacts map[string]map[string]workerdomain.FileArtifact
 }

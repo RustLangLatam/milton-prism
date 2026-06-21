@@ -129,16 +129,16 @@ func conduitSummaryCards() *workerdomain.SummaryCards {
 				LOC: 200,
 			},
 			{
-				Module:  "conduit.profile.models",
-				File:    "conduit/profile/models.py",
-				Classes: []string{"UserProfile"},
-				LOC:     60,
+				Module:    "conduit.profile.models",
+				File:      "conduit/profile/models.py",
+				Classes:   []string{"UserProfile"},
+				LOC:       60,
 			},
 			{
-				Module:  "conduit.user.models",
-				File:    "conduit/user/models.py",
-				Classes: []string{"User"},
-				LOC:     80,
+				Module:    "conduit.user.models",
+				File:      "conduit/user/models.py",
+				Classes:   []string{"User"},
+				LOC:       80,
 			},
 		},
 		Blueprints: []workerdomain.SummaryBlueprint{
@@ -191,8 +191,10 @@ func makeNames(prefix string, n int) []string {
 // "MIGRABLE with typed_blockers=[blocker.shared_state]" — the regression case for
 // the frontend guard that must NOT display structural blockers in the MIGRABLE panel.
 //
-// Score design: domain_presence low (10) + hub_severity severe (20) +
-// routing_layout single_blueprint (5) = 35 → score=65 → band=MEDIUM.
+// Score design (post-ramp): domain_presence low (7, ramp from ratio 25%) +
+// hub_severity severe (20, hubRatio≈0.63 capped) + routing_layout single_blueprint
+// (5) = 32 → score=68 → band=MEDIUM. (Pre-ramp the domain step was 10 → score=65;
+// the ramp moved the intermediate penalty but kept the band MEDIUM.)
 
 // conduitWithHubGraph extends conduitGraph() with 6 directed edges into conduit.database
 // (weight 2 each), giving FanIn=12. The 7-node graph produces hubRatio=12/19≈0.63

@@ -48,3 +48,15 @@ type PushFile struct {
 	Path    string // relative to repository root, e.g. "services/user/user.go"
 	Content string // UTF-8 text content
 }
+
+// TargetPreflightResult is the outcome of a stateless write-side pre-flight
+// against a push destination. It validates the destination WITHOUT pushing:
+// reachability, whether the write token grants push (receive-pack) access, and
+// whether the target repository is empty (A.3 expects a pre-created empty repo).
+// The write token is used only for the probe call and is never stored or logged.
+type TargetPreflightResult struct {
+	Reachable    bool // the receive-pack discovery endpoint answered
+	CanPush      bool // the supplied write token was accepted for receive-pack
+	Empty        bool // the target has zero refs (a fresh, empty repo)
+	ErrorMessage string
+}

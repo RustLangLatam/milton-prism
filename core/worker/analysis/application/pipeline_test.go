@@ -1121,6 +1121,66 @@ func TestPipeline_Graph_SkippedWhenNoGraphBuilder(t *testing.T) {
 	assert.Empty(t, captured.GetDependencyGraph())
 }
 
+// fixtureCI3 is the reduced CodeIgniter 3 project (convention-based, no PSR-4).
+const fixtureCI3 = "../infrastructure/adapters/testdata/fixture-ci3"
+
+// TestPipeline_Inventory_CI3_DeepAnalysis wires the full Tier-2 stack against the
+// CI3 fixture and asserts the convention path produced real structural data:
+// DeepAnalysisAvailable, cards, edges, and at least one unreachable island that
+// carries its file:line (the Admin controller, whose loads are all traps).
+func TestPipeline_Inventory_CI3_DeepAnalysis(t *testing.T) {
+	t.Parallel()
+	writer := &mocks.MockSummaryWriter{}
+	var captured *analysisdomain.AnalysisSummary
+	writer.On("Write", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*analysisdomain.AnalysisSummary) }).
+		Return(nil)
+
+	reg := application.NewLanguageAnalyzerRegistry()
+	reg.Register(adapters.NewPHPLanguageAnalyzer())
+
+	p := application.NewPipeline(writer).
+		WithAcquirer(&mockAcquirer{workspace: fixtureCI3}).
+		WithDetector(adapters.NewEnryLanguageDetector()).
+		WithFrameworkDetector(adapters.NewFileSystemFrameworkDetector()).
+		WithGraphBuilder(reg).
+		WithCardProvider(reg).
+		WithClassifier(adapters.NewLanguageAwareClassifier())
+
+	require.NoError(t, p.Run(context.Background(), workerdomain.JobPayload{SummaryID: 6001, RepositoryID: 1}))
+
+	assert.True(t, captured.GetDeepAnalysisAvailable(), "deep_analysis_available must be true for CI3")
+	assert.NotEmpty(t, captured.GetDependencyGraph(), "CI3 convention edges must be present")
+	assert.NotEmpty(t, captured.GetModuleCards(), "CI3 module cards must be present")
+
+	// CodeIgniter 3.x must be reported as the framework.
+	m := techsByName(captured.GetTechnologies())
+	require.Contains(t, m, "CodeIgniter")
+	assert.Equal(t, "3.x", m["CodeIgniter"].GetDetectedVersion())
+
+	// Admin.php is an honest island: all its loads are traps (dynamic / subfolder /
+	// nonexistent / helper) and nothing imports it. It must appear in the
+	// unreachable report with its file:line, never as a fabricated edge.
+	var adminUnreachable *analysisdomain.UnreachableModule
+	for _, u := range captured.GetUnreachableModules() {
+		if u.GetModule() == "application/controllers/Admin.php" {
+			adminUnreachable = u
+		}
+	}
+	require.NotNil(t, adminUnreachable, "Admin.php must be reported unreachable")
+	assert.Equal(t, "application/controllers/Admin.php", adminUnreachable.GetFile(),
+		"unreachable module must carry its file path")
+	assert.Greater(t, adminUnreachable.GetLoc(), uint32(0), "unreachable module must carry its LOC")
+
+	// No fabricated edge may originate from or target the trap controller.
+	for _, e := range captured.GetDependencyGraph() {
+		assert.NotEqual(t, "application/controllers/Admin.php", e.GetFromModule(),
+			"Admin.php must produce no outgoing edge (all loads are traps)")
+		assert.NotEqual(t, "application/controllers/Admin.php", e.GetToModule(),
+			"nothing imports Admin.php")
+	}
+}
+
 // ── Stage 3b — structural framework detection ─────────────────────────────────
 
 // TestPipeline_FrameworkDetector_AddsTechnology verifies that the structural

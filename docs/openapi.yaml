@@ -1663,7 +1663,181 @@ components:
                     items:
                         $ref: '#/components/schemas/BlueprintInfo'
                     description: Flask Blueprint registrations (name, file, url_prefix).
+                databaseDetection:
+                    $ref: '#/components/schemas/DatabaseDetection'
+                    description: Deterministically detected database engine(s) with the evidence behind the detection. Honest 'unknown' when no signal.
+                architecturalPattern:
+                    $ref: '#/components/schemas/ArchitecturalPattern'
+                    description: Deterministically classified architectural pattern (Clean/Hexagonal/Layered/MVC/Modular monolith/Spaghetti) with confidence and the evidence used.
+                intakeAssessment:
+                    $ref: '#/components/schemas/IntakeAssessment'
+                    description: 'Deterministic intake gate: is this a migratable backend in a supported language? Carries codebase_kind, language support, migratable flag, and honest warnings. Non-blocking.'
+                securityFindings:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/SecurityFinding'
+                    description: 'Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.'
             description: 'Output of a code analysis run: technologies, vulnerabilities, and dependency graph.'
+        DatabaseDetection:
+            title: DatabaseDetection
+            type: object
+            properties:
+                engines:
+                    type: array
+                    items:
+                        enum:
+                            - DATABASE_ENGINE_UNSPECIFIED
+                            - DATABASE_ENGINE_POSTGRESQL
+                            - DATABASE_ENGINE_MYSQL
+                            - DATABASE_ENGINE_MONGODB
+                            - DATABASE_ENGINE_SQLITE
+                            - DATABASE_ENGINE_SQLSERVER
+                            - DATABASE_ENGINE_ORACLE
+                            - DATABASE_ENGINE_REDIS
+                        type: string
+                        format: enum
+                    description: Detected database engines (deduplicated, sorted). Empty when unknown.
+                engineNames:
+                    type: array
+                    items:
+                        type: string
+                    description: Display names of the detected engines, aligned with engines.
+                unknown:
+                    example: false
+                    type: boolean
+                    description: True when no database engine signal was found (engines empty).
+                evidence:
+                    type: array
+                    items:
+                        type: string
+                    description: Deterministic evidence strings behind the detection (driver/config/ORM).
+            description: Deterministically detected database engine(s) and the evidence behind the detection.
+        ArchitecturalPattern:
+            title: ArchitecturalPattern
+            type: object
+            properties:
+                kind:
+                    enum:
+                        - ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED
+                        - ARCHITECTURAL_PATTERN_KIND_CLEAN
+                        - ARCHITECTURAL_PATTERN_KIND_HEXAGONAL
+                        - ARCHITECTURAL_PATTERN_KIND_LAYERED
+                        - ARCHITECTURAL_PATTERN_KIND_MVC
+                        - ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH
+                        - ARCHITECTURAL_PATTERN_KIND_SPAGHETTI
+                    type: string
+                    description: Canonical architectural pattern kind.
+                    format: enum
+                name:
+                    example: MVC
+                    type: string
+                    description: Display name of the classified pattern.
+                confidence:
+                    example: 0.82
+                    type: number
+                    description: Classifier confidence in [0,1].
+                    format: float
+                evidence:
+                    type: array
+                    items:
+                        type: string
+                    description: Structural evidence strings the classifier used to reach this pattern.
+            description: Deterministically classified architectural pattern with confidence and the evidence used.
+        IntakeAssessment:
+            title: IntakeAssessment
+            type: object
+            properties:
+                codebaseKind:
+                    enum:
+                        - CODEBASE_KIND_UNSPECIFIED
+                        - CODEBASE_KIND_BACKEND
+                        - CODEBASE_KIND_FRONTEND
+                        - CODEBASE_KIND_LIBRARY
+                        - CODEBASE_KIND_CLI
+                        - CODEBASE_KIND_MOBILE
+                    type: string
+                    description: The platform migrates BACKEND today.
+                    format: enum
+                kindConfidence:
+                    example: 0.9
+                    type: number
+                    description: Confidence in the codebase_kind classification, in [0,1].
+                    format: float
+                primaryLanguage:
+                    example: PHP
+                    type: string
+                    description: Primary language detected (go-enry), e.g. PHP, Python, Java.
+                languageSupported:
+                    example: true
+                    type: boolean
+                    description: 'True when the primary language has a Tier-2 analyzer (PHP/Python today).'
+                supportedLanguages:
+                    type: array
+                    items:
+                        type: string
+                    description: 'Languages with a Tier-2 analyzer at run time (e.g. PHP, Python).'
+                migratable:
+                    example: true
+                    type: boolean
+                    description: True iff this is a backend in a supported language (platform can migrate it).
+                warnings:
+                    type: array
+                    items:
+                        type: string
+                    description: Specific human-readable warnings explaining any intake failure. Empty when migratable.
+                evidence:
+                    type: array
+                    items:
+                        type: string
+                    description: Deterministic evidence strings behind the codebase_kind classification.
+            description: 'Deterministic intake gate: codebase kind, primary-language support, migratable flag, and honest warnings.'
+        SecurityFinding:
+            title: SecurityFinding
+            type: object
+            properties:
+                type:
+                    enum:
+                        - SECURITY_FINDING_TYPE_UNSPECIFIED
+                        - SECURITY_FINDING_TYPE_HARDCODED_SECRET
+                    type: string
+                    description: Class of the security finding.
+                    format: enum
+                severity:
+                    enum:
+                        - SECURITY_SEVERITY_UNSPECIFIED
+                        - SECURITY_SEVERITY_LOW
+                        - SECURITY_SEVERITY_MEDIUM
+                        - SECURITY_SEVERITY_HIGH
+                    type: string
+                    description: Severity of the finding (LOW/MEDIUM/HIGH).
+                    format: enum
+                file:
+                    example: config/database.php
+                    type: string
+                    description: Workspace-relative file path of the finding.
+                line:
+                    example: 42
+                    type: integer
+                    description: 1-based line number of the finding.
+                    format: uint32
+                description:
+                    example: Hardcoded AWS secret access key
+                    type: string
+                    description: Human-readable description of the finding.
+                snippet:
+                    example: aws_secret_access_key = "AKIA****REDACTED****"
+                    type: string
+                    description: The matched line with the secret value redacted.
+                rule:
+                    example: aws-secret-key
+                    type: string
+                    description: Identifier of the detector rule that fired.
+                confidence:
+                    example: 0.95
+                    type: number
+                    description: Confidence in [0,1] that this is a real secret (not a placeholder).
+                    format: float
+            description: 'A deterministic code-level security finding (e.g. a hardcoded secret) with file:line, severity, and confidence.'
         Any:
             type: object
             properties:

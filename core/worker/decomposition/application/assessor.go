@@ -178,6 +178,16 @@ func buildAssessmentPrompt(d *workerdomain.AnalysisDigest, score *workerdomain.M
 	b.WriteString(fmt.Sprintf("- Dependency graph: %d modules, %d directed dependency edges\n",
 		len(d.Graph.Nodes), len(d.Graph.Edges)))
 
+	// Deterministic anchor facts (database engine, architectural pattern) produced
+	// by the analysis classifiers. The LLM must confirm/name these, not invent its
+	// own — they are ground truth, not free interpretation.
+	if len(d.AnchorFacts) > 0 {
+		b.WriteString("\n## Deterministic classification (anchor your prose to these — do NOT contradict them)\n")
+		for _, f := range d.AnchorFacts {
+			b.WriteString("- " + f + "\n")
+		}
+	}
+
 	b.WriteString("\n## Service Boundary Analysis\n")
 	if d.NoServiceBoundaries {
 		b.WriteString("No service boundaries were detected. All modules were classified as infrastructure — " +

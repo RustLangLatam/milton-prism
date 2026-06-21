@@ -132,6 +132,34 @@ func (w *MongoSummaryWriter) Write(ctx context.Context, summary *analysisdomain.
 		}
 		setDoc["unreachable_modules_bytes"] = unreachableBytes
 	}
+	if dd := summary.GetDatabaseDetection(); dd != nil {
+		ddBytes, err := proto.Marshal(&analysisdomain.AnalysisSummary{DatabaseDetection: dd})
+		if err != nil {
+			return err
+		}
+		setDoc["database_detection_bytes"] = ddBytes
+	}
+	if ap := summary.GetArchitecturalPattern(); ap != nil {
+		apBytes, err := proto.Marshal(&analysisdomain.AnalysisSummary{ArchitecturalPattern: ap})
+		if err != nil {
+			return err
+		}
+		setDoc["architectural_pattern_bytes"] = apBytes
+	}
+	if ia := summary.GetIntakeAssessment(); ia != nil {
+		iaBytes, err := proto.Marshal(&analysisdomain.AnalysisSummary{IntakeAssessment: ia})
+		if err != nil {
+			return err
+		}
+		setDoc["intake_assessment_bytes"] = iaBytes
+	}
+	if sf := summary.GetSecurityFindings(); len(sf) > 0 {
+		sfBytes, err := proto.Marshal(&analysisdomain.AnalysisSummary{SecurityFindings: sf})
+		if err != nil {
+			return err
+		}
+		setDoc["security_findings_bytes"] = sfBytes
+	}
 
 	res, err := w.analysisColl.UpdateOne(
 		ctx,

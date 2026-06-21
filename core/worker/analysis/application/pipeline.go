@@ -71,6 +71,22 @@ type Pipeline struct {
 	// Runs after manifest parsing so it can skip frameworks already identified
 	// by a package manager. Nil = structural detection disabled.
 	frameworkDetector ports.StructuralFrameworkDetector
+
+	// dbDetector deterministically identifies the database engine(s) the analysed
+	// code uses (stage 3c). Runs after manifest + framework detection so it can use
+	// both the dependency list and the detected framework. Nil = DB detection disabled.
+	dbDetector ports.DatabaseDetector
+
+	// securityScanner deterministically detects code-level security findings IN the
+	// analysed source (stage 3d): hardcoded secrets/credentials in cleartext. Walks
+	// the workspace; distinct from the dependency CVE scan. Nil = scan disabled.
+	securityScanner ports.SecurityScanner
+
+	// supportedLanguages is the set of languages that have a registered Tier-2
+	// analyzer (PHP, Python today). Fed to the intake gate (stage 7-intake) so the
+	// language-support guard reflects the actually-wired registry rather than a
+	// hardcoded list. Empty/nil ⇒ every language reports unsupported.
+	supportedLanguages map[string]struct{}
 }
 
 // NewPipeline constructs a Pipeline. Only writer is required; all other ports
@@ -163,6 +179,39 @@ func (p *Pipeline) WithCredentialReader(r ports.RepositoryCredentialReader) *Pip
 // vendored into the workspace rather than declared as dependencies.
 func (p *Pipeline) WithFrameworkDetector(f ports.StructuralFrameworkDetector) *Pipeline {
 	p.frameworkDetector = f
+	return p
+}
+
+// WithDatabaseDetector wires the DatabaseDetector (stage 3c). When set, it runs
+// after framework detection and persists the detected database engine(s) on the
+// AnalysisSummary. Returns p for chaining.
+func (p *Pipeline) WithDatabaseDetector(d ports.DatabaseDetector) *Pipeline {
+	p.dbDetector = d
+	return p
+}
+
+// WithSecurityScanner wires the SecurityScanner (stage 3d). When set, it walks the
+// workspace for hardcoded secrets/credentials and persists the findings on the
+// AnalysisSummary (security_findings). Distinct from the dependency CVE scan; additive
+// — it does not affect scores or verdicts. Returns p for chaining.
+func (p *Pipeline) WithSecurityScanner(s ports.SecurityScanner) *Pipeline {
+	p.securityScanner = s
+	return p
+}
+
+// WithSupportedLanguages declares the languages that have a registered Tier-2
+// analyzer. The intake gate's language-support guard checks the primary detected
+// language against this set, so the "unsupported language" warning always reflects
+// the actually-wired analyzers (today: PHP, Python). Returns p for chaining.
+func (p *Pipeline) WithSupportedLanguages(langs ...string) *Pipeline {
+	if p.supportedLanguages == nil {
+		p.supportedLanguages = make(map[string]struct{}, len(langs))
+	}
+	for _, l := range langs {
+		if l != "" {
+			p.supportedLanguages[l] = struct{}{}
+		}
+	}
 	return p
 }
 
@@ -341,6 +390,52 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		} else if len(detected) > 0 {
 			technologies = MergeTechnologies(technologies, detected)
 			applog.Infof("analysis-worker: structural framework stage done detected=%d", len(detected))
+		}
+	}
+
+	// Stage 3c — database engine detection. Deterministically identifies the
+	// database engine(s) the analysed code uses from drivers/ORM packages, config
+	// files (.env, config/database.php, Django settings), and the framework default.
+	// Runs after framework detection so the framework-default tie-break can fire.
+	// Non-fatal: a detection error leaves the field nil and the job still completes.
+	var databaseDetection *analysisdomain.DatabaseDetection
+	if p.dbDetector != nil && workspacePath != "" {
+		dd, ddErr := p.dbDetector.Detect(ctx, workspacePath, manifestDeps, technologies)
+		if ddErr != nil {
+			applog.Warningf("analysis-worker: stage 3c (database detection) failed summary_id=%d: %v", job.SummaryID, ddErr)
+		} else {
+			databaseDetection = dd
+			applog.Infof("analysis-worker: database detection done summary_id=%d engines=%v unknown=%v",
+				job.SummaryID, dd.GetEngineNames(), dd.GetUnknown())
+		}
+	}
+
+	// Stage 3d — code-level security scan. Deterministically detects hardcoded
+	// secrets/credentials IN the analysed source (API keys, passwords, tokens,
+	// private keys, JWTs, connection strings with embedded credentials) by walking
+	// the workspace with a pattern + entropy scanner. Distinct from the dependency
+	// CVE scan (stage 5). Conservative (placeholders suppressed, confidence carried);
+	// additive — does not affect scores/verdicts. Non-fatal: a scan error leaves the
+	// field empty and the job still completes.
+	var securityFindings []*analysisdomain.SecurityFinding
+	if p.securityScanner != nil && workspacePath != "" {
+		sf, sfErr := p.securityScanner.Scan(ctx, workspacePath)
+		if sfErr != nil {
+			applog.Warningf("analysis-worker: stage 3d (security scan) failed summary_id=%d: %v", job.SummaryID, sfErr)
+		} else {
+			// Cap the persisted set (top-N by severity/confidence) and sanitise every
+			// string field to valid UTF-8 so the summary always proto.Marshals. Without
+			// the UTF-8 pass, a single invalid byte in a snippet makes proto.Marshal
+			// fail and the write hangs/loops forever; without the cap, a noisy repo
+			// bloats the document. capSecurityFindings does both.
+			capped, dropped := capSecurityFindings(sf)
+			securityFindings = capped
+			if dropped > 0 {
+				applog.Infof("analysis-worker: security scan done summary_id=%d findings=%d (capped from %d, dropped=%d)",
+					job.SummaryID, len(capped), len(sf), dropped)
+			} else {
+				applog.Infof("analysis-worker: security scan done summary_id=%d findings=%d", job.SummaryID, len(capped))
+			}
 		}
 	}
 
@@ -613,6 +708,48 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		moduleCountProduction++
 	}
 
+	deepAnalysisAvailable := len(dependencyGraph) > 0 || len(allCards) > 0
+
+	// Stage 6f — architectural pattern classification. A deterministic, rules-based
+	// classifier maps the structural signals already computed above (domain/infra
+	// ratio, layers present, framework, routing topology, cluster count) to one
+	// canonical pattern with a confidence and the evidence used. No LLM call, no
+	// I/O — a pure function of in-memory pipeline data. Runs only when module
+	// classification exists; without it there is no structural basis to classify.
+	var architecturalPattern *analysisdomain.ArchitecturalPattern
+	if moduleClassification != nil {
+		architecturalPattern = classifyArchitecturalPattern(patternInput{
+			classification: moduleClassification,
+			score:          migrabilityScore,
+			cards:          moduleCards,
+			blueprints:     blueprints,
+			technologies:   technologies,
+			edges:          dependencyGraph,
+			deepAvailable:  deepAnalysisAvailable,
+		})
+		applog.Infof("analysis-worker: architectural pattern summary_id=%d pattern=%q confidence=%.2f",
+			job.SummaryID, architecturalPattern.GetName(), architecturalPattern.GetConfidence())
+	}
+
+	// Stage 7-intake — intake gate. A deterministic, no-I/O, no-LLM verdict on whether
+	// the platform can migrate this repository at all: (5) is it a backend? and (7) is
+	// its primary language supported? Built from signals already in memory. Always runs
+	// (independent of deep analysis) so even a Tier-1-only or non-backend repo gets an
+	// honest verdict. Honest degradation: when a check fails the assessment carries
+	// migratable=false plus a specific warning — the analysis still completes and Tier-1
+	// facts are preserved; downstream gates the migrability report on Migratable.
+	intakeAssessment := assessIntake(intakeInput{
+		detectedLangs:      detectedLangs,
+		technologies:       technologies,
+		manifestDeps:       manifestDeps,
+		cards:              allCards,
+		blueprints:         blueprints,
+		supportedLanguages: p.supportedLanguages,
+	})
+	applog.Infof("analysis-worker: intake gate summary_id=%d kind=%s lang=%q supported=%v migratable=%v warnings=%d",
+		job.SummaryID, intakeAssessment.GetCodebaseKind(), intakeAssessment.GetPrimaryLanguage(),
+		intakeAssessment.GetLanguageSupported(), intakeAssessment.GetMigratable(), len(intakeAssessment.GetWarnings()))
+
 	summary := &analysisdomain.AnalysisSummary{
 		Identifier:            job.SummaryID,
 		RepositoryId:          job.RepositoryID,
@@ -626,6 +763,10 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		ModuleClassification:  moduleClassification,
 		MigrabilityScore:      migrabilityScore,
 		SharedStateHubs:       sharedStateHubs,
+		DatabaseDetection:     databaseDetection,
+		ArchitecturalPattern:  architecturalPattern,
+		IntakeAssessment:      intakeAssessment,
+		SecurityFindings:      securityFindings,
 		TotalFiles:            totalFiles,
 		TotalLines:            totalLines,
 		CommitSha:             commitSHA,
@@ -637,7 +778,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		// allCards is the full pre-B₂ card universe, so this is independent of the
 		// B₂ live-set filter. Downstream (migrability assessment, UI) reads this to
 		// degrade honestly instead of mistaking an analyzer hole for "no domain".
-		DeepAnalysisAvailable: len(dependencyGraph) > 0 || len(allCards) > 0,
+		DeepAnalysisAvailable: deepAnalysisAvailable,
 	}
 
 	if err := p.writer.Write(ctx, summary); err != nil {

@@ -173,3 +173,37 @@ type MigrabilityScorer interface {
 type StructuralFrameworkDetector interface {
 	Detect(ctx context.Context, workspacePath string, existing []*analysisdomain.Technology) ([]*analysisdomain.Technology, error)
 }
+
+// DatabaseDetector deterministically identifies the database engine(s) the
+// analysed code uses. It draws on three signal sources, in order of authority:
+//
+//   - drivers/ORM packages from the parsed manifests (psycopg2, pg, mysqli,
+//     pdo_mysql, mysql2, mongo*, sqlite3, …);
+//   - config files in the workspace (.env DB_CONNECTION, Laravel config/database.php
+//     default, DATABASE_URL, Django settings DATABASES engine);
+//   - framework defaults (e.g. Laravel default connection MySQL) as a last resort.
+//
+// It never guesses: when no signal exists the result has Unknown=true and an empty
+// engine list. technologies carries the frameworks already detected so the
+// framework-default rule can fire without re-deriving them.
+type DatabaseDetector interface {
+	Detect(
+		ctx context.Context,
+		workspacePath string,
+		deps []workerdomain.Dependency,
+		technologies []*analysisdomain.Technology,
+	) (*analysisdomain.DatabaseDetection, error)
+}
+
+// SecurityScanner deterministically detects code-level security issues IN the
+// analysed source — today, hardcoded credentials/secrets in cleartext (API keys,
+// passwords, tokens, private keys, JWTs, connection strings with embedded
+// credentials). It walks the workspace and matches a fixed table of patterns plus
+// an entropy heuristic. It is intentionally conservative (Canon Lesson 11): a
+// finding is recorded only when a concrete secret-shaped value surfaces, obvious
+// placeholders/examples are suppressed, and every finding carries a confidence.
+// It NEVER uses an LLM and NEVER executes the source. Distinct from the dependency
+// CVE scan (VulnerabilityScanner); the two never overlap.
+type SecurityScanner interface {
+	Scan(ctx context.Context, workspacePath string) ([]*analysisdomain.SecurityFinding, error)
+}

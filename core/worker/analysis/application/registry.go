@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"sort"
 
 	analysisdomain "milton_prism/core/services/analysis/domain"
 	"milton_prism/core/worker/analysis/ports"
@@ -26,6 +27,18 @@ func NewLanguageAnalyzerRegistry() *LanguageAnalyzerRegistry {
 // Registering a second analyzer for the same language replaces the first.
 func (r *LanguageAnalyzerRegistry) Register(a ports.LanguageAnalyzer) {
 	r.analyzers[a.Language()] = a
+}
+
+// Languages returns the names of every registered analyzer's language, sorted
+// ascending. The pipeline feeds this to the intake gate so the language-support
+// guard always reflects the actually-wired analyzers (no hardcoded list).
+func (r *LanguageAnalyzerRegistry) Languages() []string {
+	langs := make([]string, 0, len(r.analyzers))
+	for lang := range r.analyzers {
+		langs = append(langs, lang)
+	}
+	sort.Strings(langs)
+	return langs
 }
 
 // Build implements ports.DependencyGraphBuilder. It delegates to the registered

@@ -177,6 +177,65 @@ func TestPipeline_Inventory_PopulatesTechnologiesAndTotals(t *testing.T) {
 	assert.Equal(t, analysisdomain.AnalysisStateCompleted, captured.GetState())
 }
 
+// TestPipeline_SecurityScan_PopulatesSecurityFindings wires a real SecurityScanner
+// over a temp workspace that contains a hardcoded secret and a placeholder, and
+// asserts the worker carries exactly the real finding through to the summary
+// (additive field; placeholder ignored). Runtime verification by pipeline, no demo.
+func TestPipeline_SecurityScan_PopulatesSecurityFindings(t *testing.T) {
+	ws := t.TempDir()
+	// Real secret in app config (detected) + a placeholder (NOT detected).
+	require.NoError(t, os.WriteFile(filepath.Join(ws, ".env"),
+		[]byte("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY1\nAPP_PASSWORD=changeme\n"), 0o644))
+
+	writer := &mocks.MockSummaryWriter{}
+	var captured *analysisdomain.AnalysisSummary
+	writer.On("Write", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			captured = args.Get(1).(*analysisdomain.AnalysisSummary)
+		}).
+		Return(nil)
+
+	p := application.NewPipeline(writer).
+		WithAcquirer(&mockAcquirer{workspace: ws}).
+		WithSecurityScanner(adapters.NewSecurityScanner())
+
+	require.NoError(t, p.Run(context.Background(), workerdomain.JobPayload{SummaryID: 777, RepositoryID: 1}))
+	require.NotNil(t, captured)
+
+	findings := captured.GetSecurityFindings()
+	require.Len(t, findings, 1, "exactly one real finding (placeholder suppressed)")
+	f := findings[0]
+	assert.Equal(t, analysisdomain.SecurityFindingTypeHardcodedSecret, f.GetType())
+	assert.Equal(t, analysisdomain.SecuritySeverityHigh, f.GetSeverity())
+	assert.Equal(t, ".env", f.GetFile())
+	assert.NotContains(t, f.GetSnippet(), "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY1", "secret must be redacted")
+	assert.Greater(t, f.GetConfidence(), float32(0))
+}
+
+// TestPipeline_SecurityScan_CleanWorkspace_NoFindings confirms an honest zero: a
+// workspace with no secrets yields an empty security_findings slice (additive,
+// non-blocking — the summary is still COMPLETED).
+func TestPipeline_SecurityScan_CleanWorkspace_NoFindings(t *testing.T) {
+	ws := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "main.go"),
+		[]byte("package main\nfunc main() {}\n"), 0o644))
+
+	writer := &mocks.MockSummaryWriter{}
+	var captured *analysisdomain.AnalysisSummary
+	writer.On("Write", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*analysisdomain.AnalysisSummary) }).
+		Return(nil)
+
+	p := application.NewPipeline(writer).
+		WithAcquirer(&mockAcquirer{workspace: ws}).
+		WithSecurityScanner(adapters.NewSecurityScanner())
+
+	require.NoError(t, p.Run(context.Background(), workerdomain.JobPayload{SummaryID: 778, RepositoryID: 1}))
+	require.NotNil(t, captured)
+	assert.Empty(t, captured.GetSecurityFindings(), "clean workspace yields no findings")
+	assert.Equal(t, analysisdomain.AnalysisStateCompleted, captured.GetState())
+}
+
 // TestPipeline_Inventory_AcquirerError propagates a workspace acquisition failure.
 func TestPipeline_Inventory_AcquirerError(t *testing.T) {
 	writer := &mocks.MockSummaryWriter{}
@@ -1145,11 +1204,23 @@ func TestPipeline_Inventory_CI3_DeepAnalysis(t *testing.T) {
 		WithFrameworkDetector(adapters.NewFileSystemFrameworkDetector()).
 		WithGraphBuilder(reg).
 		WithCardProvider(reg).
-		WithClassifier(adapters.NewLanguageAwareClassifier())
+		WithClassifier(adapters.NewLanguageAwareClassifier()).
+		WithSupportedLanguages("PHP", "Python")
 
 	require.NoError(t, p.Run(context.Background(), workerdomain.JobPayload{SummaryID: 6001, RepositoryID: 1}))
 
 	assert.True(t, captured.GetDeepAnalysisAvailable(), "deep_analysis_available must be true for CI3")
+
+	// Intake gate (guards 5 & 7): CI3 is a PHP backend in a supported language, so it
+	// must pass intake cleanly — BACKEND, migratable, no false-positive warning.
+	intake := captured.GetIntakeAssessment()
+	require.NotNil(t, intake, "intake_assessment must always be present")
+	assert.Equal(t, analysisdomain.CodebaseKindBackend, intake.GetCodebaseKind(),
+		"CI3 (CodeIgniter) must classify as BACKEND")
+	assert.Equal(t, "PHP", intake.GetPrimaryLanguage())
+	assert.True(t, intake.GetLanguageSupported(), "PHP must be supported")
+	assert.True(t, intake.GetMigratable(), "CI3 PHP backend must be migratable")
+	assert.Empty(t, intake.GetWarnings(), "a supported PHP backend must not raise an intake warning")
 	assert.NotEmpty(t, captured.GetDependencyGraph(), "CI3 convention edges must be present")
 	assert.NotEmpty(t, captured.GetModuleCards(), "CI3 module cards must be present")
 

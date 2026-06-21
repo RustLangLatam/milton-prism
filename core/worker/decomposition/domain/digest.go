@@ -60,6 +60,14 @@ type AnalysisDigest struct {
 
 	Classification  DigestClassification
 	SharedStateHubs []DigestSharedStateHub
+
+	// AnchorFacts are deterministic, classifier-produced facts (e.g. detected
+	// database engine, classified architectural pattern) that the LLM must anchor
+	// its prose to rather than re-deriving. They never affect the score — they are
+	// rendered into the prompt only so the model confirms the deterministic
+	// classification instead of hallucinating a different one (Canon: deterministic
+	// first, LLM anchors). Empty for the decomposition-pipeline path.
+	AnchorFacts []string
 }
 
 // DigestGraph is the node+edge view of the dependency graph.

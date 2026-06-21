@@ -266,6 +266,324 @@ message AnalysisSummary {
   // (migrability assessment, UI executive summary) must degrade honestly when this
   // is false rather than treating the empty graph as a real "no domain" finding.
   bool deep_analysis_available = 27 [(openapi.v3.property) = {description: "True iff deep structural analysis (dependency graph / module cards) was produced. False = analyzer unavailable/blind; downstream must degrade honestly, not score."}];
+
+  // Deterministically detected database engine(s) the analysed code talks to.
+  // Inferred from drivers/ORM packages (psycopg2/pg → PostgreSQL; mysqli/pdo_mysql/
+  // mysql2 → MySQL; mongo* → MongoDB; sqlite3 → SQLite; …), config files (.env
+  // DB_CONNECTION, Laravel config/database.php default, DATABASE_URL, Django
+  // settings) and the framework default. Never produced by an LLM. Absent (nil) or
+  // engines=["unknown"] when no honest signal exists. Computed at analysis time.
+  DatabaseDetection database_detection = 28 [(openapi.v3.property) = {description: "Deterministically detected database engine(s) with the evidence behind the detection. Honest 'unknown' when no signal."}];
+
+  // Deterministically classified architectural pattern of the analysed code.
+  // A rules-based classifier maps the structural signals the pipeline already
+  // computes (domain/infra ratio, layers present, framework, routing topology,
+  // clustering quality, structural_fallback) to one canonical pattern with a
+  // confidence. Never a pure LLM hallucination — the classifier runs first and the
+  // LLM may only confirm it anchored to this evidence. Absent (nil) for Tier-1-only
+  // analyses with no structural data to reason over.
+  ArchitecturalPattern architectural_pattern = 29 [(openapi.v3.property) = {description: "Deterministically classified architectural pattern (Clean/Hexagonal/Layered/MVC/Modular monolith/Spaghetti) with confidence and the evidence used."}];
+
+  // Intake gate result: an honest, deterministic up-front verdict on whether this
+  // repository is something the platform can actually migrate. Two checks:
+  //   (1) codebase kind — is this a BACKEND (the only kind the platform migrates
+  //       today), or a frontend-only SPA / library / CLI / mobile app?
+  //   (2) primary-language support — does the primary detected language have a
+  //       Tier-2 analyzer (today: PHP and Python)? Other languages produce no graph.
+  // When either check fails the field carries migratable=false plus human-readable
+  // warnings, so the report degrades HONESTLY (it says "this isn't migrable yet and
+  // here's why") instead of emitting a migrability verdict as if the repo were
+  // migrable. Non-blocking: the analysis still completes and Tier-1 facts
+  // (technologies, vulnerabilities) are still produced. Always present on summaries
+  // produced after this gate was added.
+  IntakeAssessment intake_assessment = 30 [(openapi.v3.property) = {description: "Deterministic intake gate: is this a migratable backend in a supported language? Carries codebase_kind, language support, migratable flag, and honest warnings. Non-blocking."}];
+
+  // Deterministic, code-level security findings detected IN the analysed source —
+  // distinct from dependency CVEs (those live in `vulnerabilities`). Today: hardcoded
+  // credentials / secrets in cleartext (API keys, passwords, tokens, connection
+  // strings, private keys, JWTs) found by a pattern + entropy scanner that walks the
+  // workspace. Conservative by design (Lesson 11): a finding is recorded only when a
+  // concrete secret-shaped value surfaces; obvious placeholders/examples are NOT
+  // reported, and each finding carries a confidence. Never produced by an LLM — the
+  // scanner is a pure deterministic function of file contents. Empty when nothing was
+  // found (an honest zero, never a guess). Additive: scores/verdicts are unaffected.
+  repeated SecurityFinding security_findings = 31 [(openapi.v3.property) = {description: "Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean."}];
+}
+
+// CodebaseKind classifies what kind of project a repository is, deterministically,
+// from already-computed analysis signals (frameworks, package ecosystems, routes,
+// language mix). The platform migrates BACKEND repositories today; every other kind
+// is surfaced honestly so the report does not pretend a non-backend repo is migrable.
+enum CodebaseKind {
+  // Kind could not be determined with confidence (ambiguous or too little signal).
+  CODEBASE_KIND_UNSPECIFIED = 0;
+  // Server-side application: web framework, HTTP routes/controllers/handlers, or an
+  // API surface. The only kind the platform migrates today.
+  CODEBASE_KIND_BACKEND = 1;
+  // Frontend-only single-page app or static site (e.g. React/Vue/Angular with no
+  // server framework). Not migratable by this platform yet.
+  CODEBASE_KIND_FRONTEND = 2;
+  // Reusable library / SDK / package — no runnable server, meant to be imported.
+  CODEBASE_KIND_LIBRARY = 3;
+  // Command-line tool / script — an executable entry point, no server.
+  CODEBASE_KIND_CLI = 4;
+  // Mobile application (Android / iOS / React Native / Flutter).
+  CODEBASE_KIND_MOBILE = 5;
+}
+
+// IntakeAssessment is the deterministic up-front gate the analysis pipeline records
+// before any migrability judgement. It answers a single honest question — "can the
+// platform migrate this repository today?" — and, when the answer is no, says exactly
+// why. It never silently degrades: a non-backend repo or an unsupported primary
+// language yields migratable=false plus readable warnings, not an empty or misleading
+// report. Produced with no LLM call.
+message IntakeAssessment {
+  option (openapi.v3.schema) = {
+    title: "IntakeAssessment"
+    description: "Deterministic intake gate: codebase kind, primary-language support, migratable flag, and honest warnings."
+  };
+
+  // Detected kind of this codebase (backend, frontend, library, CLI, mobile, or
+  // unspecified when too ambiguous). The platform migrates BACKEND today.
+  CodebaseKind codebase_kind = 1 [(openapi.v3.property) = {description: "Detected codebase kind. The platform migrates BACKEND today."}];
+
+  // Confidence in the codebase_kind classification, in [0,1]. Lower when the signal
+  // mix is ambiguous (e.g. a fullstack repo with both a server framework and a SPA).
+  float kind_confidence = 2 [(openapi.v3.property) = {
+    description: "Confidence in the codebase_kind classification, in [0,1]."
+    example: {yaml: "0.9"}
+  }];
+
+  // Primary language detected by the inventory stage (go-enry), e.g. "PHP", "Python",
+  // "Java", "JavaScript". The language with the highest backend-weighted signal.
+  string primary_language = 3 [(openapi.v3.property) = {
+    description: "Primary language detected (go-enry), e.g. PHP, Python, Java."
+    example: {yaml: "PHP"}
+  }];
+
+  // True when primary_language has a registered Tier-2 analyzer (today: PHP, Python)
+  // and therefore can produce a dependency graph. False ⇒ no graph will be built and
+  // any migrability verdict would be empty/degraded — surfaced honestly here instead.
+  bool language_supported = 4 [(openapi.v3.property) = {
+    description: "True when the primary language has a Tier-2 analyzer (PHP/Python today)."
+    example: {yaml: "true"}
+  }];
+
+  // The languages the platform currently has analyzers for, for the UI to show
+  // "supported: PHP, Python". Sorted ascending. Reflects the registry at run time.
+  repeated string supported_languages = 5 [(openapi.v3.property) = {description: "Languages with a Tier-2 analyzer at run time (e.g. PHP, Python)."}];
+
+  // The platform's headline intake verdict: true iff this is a BACKEND in a SUPPORTED
+  // language — i.e. the platform can actually migrate it. False for non-backend repos
+  // or unsupported-language backends. Consumers gate the migrability report on this.
+  bool migratable = 6 [(openapi.v3.property) = {
+    description: "True iff this is a backend in a supported language (platform can migrate it)."
+    example: {yaml: "true"}
+  }];
+
+  // Human-readable, specific warnings explaining any intake failure, e.g.
+  // "This repository looks like a frontend-only SPA (React), not a backend — the
+  // platform only migrates backends today." or "Primary language Java is not supported
+  // yet (supported: PHP, Python); no dependency graph was produced." Empty when migratable.
+  repeated string warnings = 7 [(openapi.v3.property) = {description: "Specific human-readable warnings explaining any intake failure. Empty when migratable."}];
+
+  // Deterministic evidence strings behind the codebase_kind classification, e.g.
+  // "framework: Laravel (web)", "ecosystem: Composer (PHP backend)", "routes: 42",
+  // "no server framework; npm-only JS". Lets the report and the LLM anchor to facts.
+  repeated string evidence = 8 [(openapi.v3.property) = {description: "Deterministic evidence strings behind the codebase_kind classification."}];
+}
+
+// DatabaseEngine enumerates the database engines the analysis can deterministically
+// recognise. UNKNOWN is the honest default when no driver/config/ORM signal exists.
+enum DatabaseEngine {
+  // No engine could be determined (no driver, config, or ORM signal).
+  DATABASE_ENGINE_UNSPECIFIED = 0;
+  // PostgreSQL (psycopg2, pg, postgres driver, pgsql connection).
+  DATABASE_ENGINE_POSTGRESQL = 1;
+  // MySQL / MariaDB (mysqli, pdo_mysql, mysql2, mysql-connector, default Laravel).
+  DATABASE_ENGINE_MYSQL = 2;
+  // MongoDB (mongo, mongoose, pymongo, mongodb driver).
+  DATABASE_ENGINE_MONGODB = 3;
+  // SQLite (sqlite3, pdo_sqlite, better-sqlite3).
+  DATABASE_ENGINE_SQLITE = 4;
+  // Microsoft SQL Server (sqlsrv, pdo_sqlsrv, tedious, pyodbc+mssql).
+  DATABASE_ENGINE_SQLSERVER = 5;
+  // Oracle Database (oci8, cx_oracle, oracledb).
+  DATABASE_ENGINE_ORACLE = 6;
+  // Redis used as a primary data store (redis, predis, ioredis) — reported only
+  // when no relational/document engine is also detected, since Redis is most often
+  // a cache rather than the system of record.
+  DATABASE_ENGINE_REDIS = 7;
+}
+
+// DatabaseDetection records which database engine(s) the analysed code uses and the
+// deterministic evidence behind that conclusion. Multiple engines may be present
+// (e.g. a primary store plus Redis). Engines is empty and Unknown=true when no
+// honest signal was found.
+message DatabaseDetection {
+  option (openapi.v3.schema) = {
+    title: "DatabaseDetection"
+    description: "Deterministically detected database engine(s) and the evidence behind the detection."
+  };
+
+  // Detected engines, deduplicated and sorted for stable output. Empty when unknown.
+  repeated DatabaseEngine engines = 1 [(openapi.v3.property) = {description: "Detected database engines (deduplicated, sorted). Empty when unknown."}];
+
+  // Human-readable engine names matching engines order (e.g. "PostgreSQL", "MySQL").
+  // Convenience for report/UI rendering without an enum lookup table.
+  repeated string engine_names = 2 [(openapi.v3.property) = {description: "Display names of the detected engines, aligned with engines."}];
+
+  // True when no engine could be determined from drivers, config, or ORM signals.
+  // engines is empty in this case. An honest 'I don't know', never a guess.
+  bool unknown = 3 [(openapi.v3.property) = {
+    description: "True when no database engine signal was found (engines empty)."
+    example: {yaml: "false"}
+  }];
+
+  // Deterministic evidence strings behind the detection, e.g.
+  // "driver: psycopg2", "config: .env DB_CONNECTION=mysql", "orm: Eloquent (Laravel default MySQL)".
+  // Empty when unknown. Lets the report and the LLM anchor to facts, not guesses.
+  repeated string evidence = 4 [(openapi.v3.property) = {description: "Deterministic evidence strings behind the detection (driver/config/ORM)."}];
+}
+
+// ArchitecturalPatternKind enumerates the canonical architectural patterns the
+// deterministic classifier can assign. UNSPECIFIED means the classifier had no
+// structural data (Tier-1-only) and made no claim.
+enum ArchitecturalPatternKind {
+  // No structural data to classify (Tier-1-only analysis).
+  ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED = 0;
+  // Clean Architecture — strong domain core, layered with dependencies pointing inward.
+  ARCHITECTURAL_PATTERN_KIND_CLEAN = 1;
+  // Hexagonal (Ports & Adapters) — domain isolated behind an explicit adapter/application layer.
+  ARCHITECTURAL_PATTERN_KIND_HEXAGONAL = 2;
+  // Layered / N-tier — stacked layers (presentation/business/data) with mostly downward calls.
+  ARCHITECTURAL_PATTERN_KIND_LAYERED = 3;
+  // MVC — framework-driven controllers/models/views with HTTP routing.
+  ARCHITECTURAL_PATTERN_KIND_MVC = 4;
+  // Modular monolith — several cohesive clusters/modules inside one deployable.
+  ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH = 5;
+  // Spaghetti / Big ball of mud / Acantilado — no domain layer or no discernible structure.
+  ARCHITECTURAL_PATTERN_KIND_SPAGHETTI = 6;
+}
+
+// ArchitecturalPattern records the deterministically classified architectural
+// pattern of the analysed code plus the confidence and the structural evidence the
+// classifier used. The classification runs before any LLM call; the LLM may only
+// confirm it, anchored to this evidence.
+message ArchitecturalPattern {
+  option (openapi.v3.schema) = {
+    title: "ArchitecturalPattern"
+    description: "Deterministically classified architectural pattern with confidence and the evidence used."
+  };
+
+  // Canonical pattern kind assigned by the deterministic classifier.
+  ArchitecturalPatternKind kind = 1 [(openapi.v3.property) = {description: "Canonical architectural pattern kind."}];
+
+  // Display name of the pattern (e.g. "MVC", "Spaghetti / Big ball of mud").
+  string name = 2 [(openapi.v3.property) = {
+    description: "Display name of the classified pattern."
+    example: {yaml: "MVC"}
+  }];
+
+  // Classifier confidence in [0, 1]. Reflects how unambiguously the structural
+  // signals point to this pattern. Lower when the analysis is structurally blind
+  // (deep_analysis_available=false) but a framework still implies a likely pattern.
+  float confidence = 3 [(openapi.v3.property) = {
+    description: "Classifier confidence in [0,1]."
+    example: {yaml: "0.82"}
+  }];
+
+  // Deterministic evidence strings the classifier weighed, e.g.
+  // "framework: Laravel (MVC)", "domain/infra ratio 57%", "3 clusters", "no domain layer".
+  // Lets the report and the LLM anchor the pattern to facts.
+  repeated string evidence = 4 [(openapi.v3.property) = {description: "Structural evidence strings the classifier used to reach this pattern."}];
+}
+
+// SecuritySeverity ranks a code-level security finding by impact. Used for the
+// hardcoded-secret scanner: a live cloud/API secret in cleartext is HIGH; a generic
+// password/connection-string credential is MEDIUM; a lower-confidence or
+// lower-impact match (e.g. a short generic assignment) is LOW.
+enum SecuritySeverity {
+  // No severity set (default; not emitted for real findings).
+  SECURITY_SEVERITY_UNSPECIFIED = 0;
+  // Low impact / lower confidence — surfaced for review, not a confirmed leak.
+  SECURITY_SEVERITY_LOW = 1;
+  // Medium impact — a credential in cleartext (password, generic token, connection
+  // string with embedded credentials).
+  SECURITY_SEVERITY_MEDIUM = 2;
+  // High impact — a recognisably live secret (provider API key, private key, JWT,
+  // AWS secret access key) committed in cleartext.
+  SECURITY_SEVERITY_HIGH = 3;
+}
+
+// SecurityFindingType names the class of code-level security issue detected. v1
+// covers hardcoded secrets/credentials; the enum leaves room for additional
+// deterministic checks (e.g. missing auth) without a breaking change.
+enum SecurityFindingType {
+  // Unset.
+  SECURITY_FINDING_TYPE_UNSPECIFIED = 0;
+  // A secret/credential embedded in cleartext in source or committed config: a
+  // provider API key, password, token, private key, JWT, or a connection string
+  // carrying credentials (e.g. mysql://user:pass@host).
+  SECURITY_FINDING_TYPE_HARDCODED_SECRET = 1;
+}
+
+// SecurityFinding is one deterministic, code-level security issue found IN the
+// analysed source (not a dependency CVE — those are Vulnerabilities). It is anchored
+// to a concrete file:line with the matched snippet redacted, a severity, and a
+// confidence so the report can degrade honestly on ambiguous matches. Produced by a
+// pure pattern + entropy scanner, never by an LLM.
+message SecurityFinding {
+  option (openapi.v3.schema) = {
+    title: "SecurityFinding"
+    description: "A deterministic code-level security finding (e.g. a hardcoded secret) with file:line, severity, and confidence."
+  };
+
+  // The class of finding (today: hardcoded secret/credential).
+  SecurityFindingType type = 1 [(openapi.v3.property) = {description: "Class of the security finding."}];
+
+  // Severity of the finding (LOW/MEDIUM/HIGH).
+  SecuritySeverity severity = 2 [(openapi.v3.property) = {description: "Severity of the finding (LOW/MEDIUM/HIGH)."}];
+
+  // Workspace-relative path of the file the finding was detected in.
+  string file = 3 [(openapi.v3.property) = {
+    description: "Workspace-relative file path of the finding."
+    example: {yaml: "config/database.php"}
+  }];
+
+  // 1-based line number of the finding within the file.
+  uint32 line = 4 [(openapi.v3.property) = {
+    description: "1-based line number of the finding."
+    example: {yaml: "42"}
+  }];
+
+  // A short, human-readable description of what was found and why it is a finding,
+  // e.g. "Hardcoded AWS secret access key" or "Hardcoded password in connection string".
+  string description = 5 [(openapi.v3.property) = {
+    description: "Human-readable description of the finding."
+    example: {yaml: "Hardcoded AWS secret access key"}
+  }];
+
+  // The matched line with the secret value REDACTED (the sensitive token is masked,
+  // never echoed in full) so the report can show context without leaking the secret.
+  string snippet = 6 [(openapi.v3.property) = {
+    description: "The matched line with the secret value redacted."
+    example: {yaml: "aws_secret_access_key = \"AKIA****REDACTED****\""}
+  }];
+
+  // The rule/detector that fired (e.g. "aws-secret-key", "private-key-pem",
+  // "generic-password", "db-connection-string"). Stable identifier for the UI.
+  string rule = 7 [(openapi.v3.property) = {
+    description: "Identifier of the detector rule that fired."
+    example: {yaml: "aws-secret-key"}
+  }];
+
+  // Confidence in [0,1] that this is a real secret rather than a placeholder/example.
+  // Lower for generic/entropy-only matches; near 1.0 for provider-prefixed keys.
+  float confidence = 8 [(openapi.v3.property) = {
+    description: "Confidence in [0,1] that this is a real secret (not a placeholder)."
+    example: {yaml: "0.95"}
+  }];
 }
 
 // UnreachableModule is a module the static analysis could not link to the rest of

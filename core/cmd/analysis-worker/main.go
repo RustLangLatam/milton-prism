@@ -98,6 +98,8 @@ func main() {
 		WithResolver(workeradapters.NewHTTPVersionResolver(http.DefaultClient)).
 		WithScanner(workeradapters.NewOSVVulnerabilityScanner(http.DefaultClient)).
 		WithFrameworkDetector(workeradapters.NewFileSystemFrameworkDetector()).
+		WithDatabaseDetector(workeradapters.NewDatabaseDetector()).
+		WithSecurityScanner(workeradapters.NewSecurityScanner()).
 		WithBranchSHAResolver(workeradapters.ResolveRemoteBranchSHA)
 
 	// Tier-2 (dependency graph + module cards): Python and PHP analyzers registered;
@@ -108,7 +110,11 @@ func main() {
 	pipeline.WithGraphBuilder(registry).
 		WithCardProvider(registry).
 		WithClassifier(workeradapters.NewLanguageAwareClassifier()).
-		WithMigrabilityScorer(workermigrability.NewLouvainMigrabilityScorer())
+		WithMigrabilityScorer(workermigrability.NewLouvainMigrabilityScorer()).
+		// Intake gate (guards 5 & 7): the supported-language set is derived from the
+		// registered analyzers so the "unsupported language" warning stays in lockstep
+		// with the actually-wired Tier-2 analyzers (today: PHP, Python).
+		WithSupportedLanguages(registry.Languages()...)
 
 	analysisHandler := workerjobs.NewAnalysisJobHandler(pipeline)
 

@@ -24,6 +24,49 @@ type (
 	MigrabilityScore      = commonv1.MigrabilityScore
 	MigrabilityAssessment = commonv1.MigrabilityAssessment
 	ScoreSignal           = commonv1.ScoreSignal
+	DatabaseDetection     = analysisv1.DatabaseDetection
+	DatabaseEngine        = analysisv1.DatabaseEngine
+	ArchitecturalPattern  = analysisv1.ArchitecturalPattern
+	APKind                = analysisv1.ArchitecturalPatternKind
+	IntakeAssessment      = analysisv1.IntakeAssessment
+	CodebaseKind          = analysisv1.CodebaseKind
+	SecurityFinding       = analysisv1.SecurityFinding
+	SecurityFindingType   = analysisv1.SecurityFindingType
+	SecuritySeverity      = analysisv1.SecuritySeverity
+)
+
+const (
+	DatabaseEngineUnspecified = analysisv1.DatabaseEngine_DATABASE_ENGINE_UNSPECIFIED
+	DatabaseEnginePostgreSQL  = analysisv1.DatabaseEngine_DATABASE_ENGINE_POSTGRESQL
+	DatabaseEngineMySQL       = analysisv1.DatabaseEngine_DATABASE_ENGINE_MYSQL
+	DatabaseEngineMongoDB     = analysisv1.DatabaseEngine_DATABASE_ENGINE_MONGODB
+	DatabaseEngineSQLite      = analysisv1.DatabaseEngine_DATABASE_ENGINE_SQLITE
+	DatabaseEngineSQLServer   = analysisv1.DatabaseEngine_DATABASE_ENGINE_SQLSERVER
+	DatabaseEngineOracle      = analysisv1.DatabaseEngine_DATABASE_ENGINE_ORACLE
+	DatabaseEngineRedis       = analysisv1.DatabaseEngine_DATABASE_ENGINE_REDIS
+
+	APKindUnspecified     = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED
+	APKindClean           = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_CLEAN
+	APKindHexagonal       = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_HEXAGONAL
+	APKindLayered         = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_LAYERED
+	APKindMVC             = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_MVC
+	APKindModularMonolith = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH
+	APKindSpaghetti       = analysisv1.ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_SPAGHETTI
+
+	CodebaseKindUnspecified = analysisv1.CodebaseKind_CODEBASE_KIND_UNSPECIFIED
+	CodebaseKindBackend     = analysisv1.CodebaseKind_CODEBASE_KIND_BACKEND
+	CodebaseKindFrontend    = analysisv1.CodebaseKind_CODEBASE_KIND_FRONTEND
+	CodebaseKindLibrary     = analysisv1.CodebaseKind_CODEBASE_KIND_LIBRARY
+	CodebaseKindCLI         = analysisv1.CodebaseKind_CODEBASE_KIND_CLI
+	CodebaseKindMobile      = analysisv1.CodebaseKind_CODEBASE_KIND_MOBILE
+
+	SecurityFindingTypeUnspecified     = analysisv1.SecurityFindingType_SECURITY_FINDING_TYPE_UNSPECIFIED
+	SecurityFindingTypeHardcodedSecret = analysisv1.SecurityFindingType_SECURITY_FINDING_TYPE_HARDCODED_SECRET
+
+	SecuritySeverityUnspecified = analysisv1.SecuritySeverity_SECURITY_SEVERITY_UNSPECIFIED
+	SecuritySeverityLow         = analysisv1.SecuritySeverity_SECURITY_SEVERITY_LOW
+	SecuritySeverityMedium      = analysisv1.SecuritySeverity_SECURITY_SEVERITY_MEDIUM
+	SecuritySeverityHigh        = analysisv1.SecuritySeverity_SECURITY_SEVERITY_HIGH
 )
 
 const (

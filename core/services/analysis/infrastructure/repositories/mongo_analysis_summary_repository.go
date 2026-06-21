@@ -51,6 +51,10 @@ type mongoAnalysisSummaryDoc struct {
 	MigrabilityAssessmentBytes []byte              `bson:"migrability_assessment_bytes,omitempty"`
 	SharedStateHubsBytes       []byte              `bson:"shared_state_hubs_bytes,omitempty"`
 	UnreachableModulesBytes    []byte              `bson:"unreachable_modules_bytes,omitempty"`
+	DatabaseDetectionBytes     []byte              `bson:"database_detection_bytes,omitempty"`
+	ArchitecturalPatternBytes  []byte              `bson:"architectural_pattern_bytes,omitempty"`
+	IntakeAssessmentBytes      []byte              `bson:"intake_assessment_bytes,omitempty"`
+	SecurityFindingsBytes      []byte              `bson:"security_findings_bytes,omitempty"`
 	DeepAnalysisAvailable      bool                `bson:"deep_analysis_available,omitempty"`
 	TotalFiles                 uint64              `bson:"total_files,omitempty"`
 	TotalLines                 uint64              `bson:"total_lines,omitempty"`
@@ -355,6 +359,34 @@ func summaryDocToDomain(d *mongoAnalysisSummaryDoc) (*domain.AnalysisSummary, er
 		}
 		out.UnreachableModules = unreachable
 	}
+	if len(d.DatabaseDetectionBytes) > 0 {
+		dd, err := unmarshalDatabaseDetection(d.DatabaseDetectionBytes)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal database_detection: %w", err)
+		}
+		out.DatabaseDetection = dd
+	}
+	if len(d.ArchitecturalPatternBytes) > 0 {
+		ap, err := unmarshalArchitecturalPattern(d.ArchitecturalPatternBytes)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal architectural_pattern: %w", err)
+		}
+		out.ArchitecturalPattern = ap
+	}
+	if len(d.IntakeAssessmentBytes) > 0 {
+		ia, err := unmarshalIntakeAssessment(d.IntakeAssessmentBytes)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal intake_assessment: %w", err)
+		}
+		out.IntakeAssessment = ia
+	}
+	if len(d.SecurityFindingsBytes) > 0 {
+		sf, err := unmarshalSecurityFindings(d.SecurityFindingsBytes)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal security_findings: %w", err)
+		}
+		out.SecurityFindings = sf
+	}
 	if d.CreateTime != 0 {
 		out.CreateTime = timestamppb.New(d.CreateTime.Time())
 	}
@@ -553,4 +585,36 @@ func unmarshalMigrabilityAssessment(b []byte) (*commonv1.MigrabilityAssessment, 
 		return nil, err
 	}
 	return wrapper.GetMigrabilityAssessment(), nil
+}
+
+func unmarshalDatabaseDetection(b []byte) (*analysisv1.DatabaseDetection, error) {
+	wrapper := &analysisv1.AnalysisSummary{}
+	if err := proto.Unmarshal(b, wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.GetDatabaseDetection(), nil
+}
+
+func unmarshalArchitecturalPattern(b []byte) (*analysisv1.ArchitecturalPattern, error) {
+	wrapper := &analysisv1.AnalysisSummary{}
+	if err := proto.Unmarshal(b, wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.GetArchitecturalPattern(), nil
+}
+
+func unmarshalIntakeAssessment(b []byte) (*analysisv1.IntakeAssessment, error) {
+	wrapper := &analysisv1.AnalysisSummary{}
+	if err := proto.Unmarshal(b, wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.GetIntakeAssessment(), nil
+}
+
+func unmarshalSecurityFindings(b []byte) ([]*analysisv1.SecurityFinding, error) {
+	wrapper := &analysisv1.AnalysisSummary{}
+	if err := proto.Unmarshal(b, wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.GetSecurityFindings(), nil
 }

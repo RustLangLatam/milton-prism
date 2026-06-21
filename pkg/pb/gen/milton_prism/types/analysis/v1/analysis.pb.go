@@ -200,6 +200,338 @@ func (Severity) EnumDescriptor() ([]byte, []int) {
 	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{2}
 }
 
+// CodebaseKind classifies what kind of project a repository is, deterministically,
+// from already-computed analysis signals (frameworks, package ecosystems, routes,
+// language mix). The platform migrates BACKEND repositories today; every other kind
+// is surfaced honestly so the report does not pretend a non-backend repo is migrable.
+type CodebaseKind int32
+
+const (
+	// Kind could not be determined with confidence (ambiguous or too little signal).
+	CodebaseKind_CODEBASE_KIND_UNSPECIFIED CodebaseKind = 0
+	// Server-side application: web framework, HTTP routes/controllers/handlers, or an
+	// API surface. The only kind the platform migrates today.
+	CodebaseKind_CODEBASE_KIND_BACKEND CodebaseKind = 1
+	// Frontend-only single-page app or static site (e.g. React/Vue/Angular with no
+	// server framework). Not migratable by this platform yet.
+	CodebaseKind_CODEBASE_KIND_FRONTEND CodebaseKind = 2
+	// Reusable library / SDK / package — no runnable server, meant to be imported.
+	CodebaseKind_CODEBASE_KIND_LIBRARY CodebaseKind = 3
+	// Command-line tool / script — an executable entry point, no server.
+	CodebaseKind_CODEBASE_KIND_CLI CodebaseKind = 4
+	// Mobile application (Android / iOS / React Native / Flutter).
+	CodebaseKind_CODEBASE_KIND_MOBILE CodebaseKind = 5
+)
+
+// Enum value maps for CodebaseKind.
+var (
+	CodebaseKind_name = map[int32]string{
+		0: "CODEBASE_KIND_UNSPECIFIED",
+		1: "CODEBASE_KIND_BACKEND",
+		2: "CODEBASE_KIND_FRONTEND",
+		3: "CODEBASE_KIND_LIBRARY",
+		4: "CODEBASE_KIND_CLI",
+		5: "CODEBASE_KIND_MOBILE",
+	}
+	CodebaseKind_value = map[string]int32{
+		"CODEBASE_KIND_UNSPECIFIED": 0,
+		"CODEBASE_KIND_BACKEND":     1,
+		"CODEBASE_KIND_FRONTEND":    2,
+		"CODEBASE_KIND_LIBRARY":     3,
+		"CODEBASE_KIND_CLI":         4,
+		"CODEBASE_KIND_MOBILE":      5,
+	}
+)
+
+func (x CodebaseKind) Enum() *CodebaseKind {
+	p := new(CodebaseKind)
+	*p = x
+	return p
+}
+
+func (x CodebaseKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CodebaseKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[3].Descriptor()
+}
+
+func (CodebaseKind) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[3]
+}
+
+func (x CodebaseKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CodebaseKind.Descriptor instead.
+func (CodebaseKind) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
+}
+
+// DatabaseEngine enumerates the database engines the analysis can deterministically
+// recognise. UNKNOWN is the honest default when no driver/config/ORM signal exists.
+type DatabaseEngine int32
+
+const (
+	// No engine could be determined (no driver, config, or ORM signal).
+	DatabaseEngine_DATABASE_ENGINE_UNSPECIFIED DatabaseEngine = 0
+	// PostgreSQL (psycopg2, pg, postgres driver, pgsql connection).
+	DatabaseEngine_DATABASE_ENGINE_POSTGRESQL DatabaseEngine = 1
+	// MySQL / MariaDB (mysqli, pdo_mysql, mysql2, mysql-connector, default Laravel).
+	DatabaseEngine_DATABASE_ENGINE_MYSQL DatabaseEngine = 2
+	// MongoDB (mongo, mongoose, pymongo, mongodb driver).
+	DatabaseEngine_DATABASE_ENGINE_MONGODB DatabaseEngine = 3
+	// SQLite (sqlite3, pdo_sqlite, better-sqlite3).
+	DatabaseEngine_DATABASE_ENGINE_SQLITE DatabaseEngine = 4
+	// Microsoft SQL Server (sqlsrv, pdo_sqlsrv, tedious, pyodbc+mssql).
+	DatabaseEngine_DATABASE_ENGINE_SQLSERVER DatabaseEngine = 5
+	// Oracle Database (oci8, cx_oracle, oracledb).
+	DatabaseEngine_DATABASE_ENGINE_ORACLE DatabaseEngine = 6
+	// Redis used as a primary data store (redis, predis, ioredis) — reported only
+	// when no relational/document engine is also detected, since Redis is most often
+	// a cache rather than the system of record.
+	DatabaseEngine_DATABASE_ENGINE_REDIS DatabaseEngine = 7
+)
+
+// Enum value maps for DatabaseEngine.
+var (
+	DatabaseEngine_name = map[int32]string{
+		0: "DATABASE_ENGINE_UNSPECIFIED",
+		1: "DATABASE_ENGINE_POSTGRESQL",
+		2: "DATABASE_ENGINE_MYSQL",
+		3: "DATABASE_ENGINE_MONGODB",
+		4: "DATABASE_ENGINE_SQLITE",
+		5: "DATABASE_ENGINE_SQLSERVER",
+		6: "DATABASE_ENGINE_ORACLE",
+		7: "DATABASE_ENGINE_REDIS",
+	}
+	DatabaseEngine_value = map[string]int32{
+		"DATABASE_ENGINE_UNSPECIFIED": 0,
+		"DATABASE_ENGINE_POSTGRESQL":  1,
+		"DATABASE_ENGINE_MYSQL":       2,
+		"DATABASE_ENGINE_MONGODB":     3,
+		"DATABASE_ENGINE_SQLITE":      4,
+		"DATABASE_ENGINE_SQLSERVER":   5,
+		"DATABASE_ENGINE_ORACLE":      6,
+		"DATABASE_ENGINE_REDIS":       7,
+	}
+)
+
+func (x DatabaseEngine) Enum() *DatabaseEngine {
+	p := new(DatabaseEngine)
+	*p = x
+	return p
+}
+
+func (x DatabaseEngine) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DatabaseEngine) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[4].Descriptor()
+}
+
+func (DatabaseEngine) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[4]
+}
+
+func (x DatabaseEngine) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DatabaseEngine.Descriptor instead.
+func (DatabaseEngine) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
+}
+
+// ArchitecturalPatternKind enumerates the canonical architectural patterns the
+// deterministic classifier can assign. UNSPECIFIED means the classifier had no
+// structural data (Tier-1-only) and made no claim.
+type ArchitecturalPatternKind int32
+
+const (
+	// No structural data to classify (Tier-1-only analysis).
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED ArchitecturalPatternKind = 0
+	// Clean Architecture — strong domain core, layered with dependencies pointing inward.
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_CLEAN ArchitecturalPatternKind = 1
+	// Hexagonal (Ports & Adapters) — domain isolated behind an explicit adapter/application layer.
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_HEXAGONAL ArchitecturalPatternKind = 2
+	// Layered / N-tier — stacked layers (presentation/business/data) with mostly downward calls.
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_LAYERED ArchitecturalPatternKind = 3
+	// MVC — framework-driven controllers/models/views with HTTP routing.
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_MVC ArchitecturalPatternKind = 4
+	// Modular monolith — several cohesive clusters/modules inside one deployable.
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH ArchitecturalPatternKind = 5
+	// Spaghetti / Big ball of mud / Acantilado — no domain layer or no discernible structure.
+	ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_SPAGHETTI ArchitecturalPatternKind = 6
+)
+
+// Enum value maps for ArchitecturalPatternKind.
+var (
+	ArchitecturalPatternKind_name = map[int32]string{
+		0: "ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED",
+		1: "ARCHITECTURAL_PATTERN_KIND_CLEAN",
+		2: "ARCHITECTURAL_PATTERN_KIND_HEXAGONAL",
+		3: "ARCHITECTURAL_PATTERN_KIND_LAYERED",
+		4: "ARCHITECTURAL_PATTERN_KIND_MVC",
+		5: "ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH",
+		6: "ARCHITECTURAL_PATTERN_KIND_SPAGHETTI",
+	}
+	ArchitecturalPatternKind_value = map[string]int32{
+		"ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED":      0,
+		"ARCHITECTURAL_PATTERN_KIND_CLEAN":            1,
+		"ARCHITECTURAL_PATTERN_KIND_HEXAGONAL":        2,
+		"ARCHITECTURAL_PATTERN_KIND_LAYERED":          3,
+		"ARCHITECTURAL_PATTERN_KIND_MVC":              4,
+		"ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH": 5,
+		"ARCHITECTURAL_PATTERN_KIND_SPAGHETTI":        6,
+	}
+)
+
+func (x ArchitecturalPatternKind) Enum() *ArchitecturalPatternKind {
+	p := new(ArchitecturalPatternKind)
+	*p = x
+	return p
+}
+
+func (x ArchitecturalPatternKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ArchitecturalPatternKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[5].Descriptor()
+}
+
+func (ArchitecturalPatternKind) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[5]
+}
+
+func (x ArchitecturalPatternKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ArchitecturalPatternKind.Descriptor instead.
+func (ArchitecturalPatternKind) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
+}
+
+// SecuritySeverity ranks a code-level security finding by impact. Used for the
+// hardcoded-secret scanner: a live cloud/API secret in cleartext is HIGH; a generic
+// password/connection-string credential is MEDIUM; a lower-confidence or
+// lower-impact match (e.g. a short generic assignment) is LOW.
+type SecuritySeverity int32
+
+const (
+	// No severity set (default; not emitted for real findings).
+	SecuritySeverity_SECURITY_SEVERITY_UNSPECIFIED SecuritySeverity = 0
+	// Low impact / lower confidence — surfaced for review, not a confirmed leak.
+	SecuritySeverity_SECURITY_SEVERITY_LOW SecuritySeverity = 1
+	// Medium impact — a credential in cleartext (password, generic token, connection
+	// string with embedded credentials).
+	SecuritySeverity_SECURITY_SEVERITY_MEDIUM SecuritySeverity = 2
+	// High impact — a recognisably live secret (provider API key, private key, JWT,
+	// AWS secret access key) committed in cleartext.
+	SecuritySeverity_SECURITY_SEVERITY_HIGH SecuritySeverity = 3
+)
+
+// Enum value maps for SecuritySeverity.
+var (
+	SecuritySeverity_name = map[int32]string{
+		0: "SECURITY_SEVERITY_UNSPECIFIED",
+		1: "SECURITY_SEVERITY_LOW",
+		2: "SECURITY_SEVERITY_MEDIUM",
+		3: "SECURITY_SEVERITY_HIGH",
+	}
+	SecuritySeverity_value = map[string]int32{
+		"SECURITY_SEVERITY_UNSPECIFIED": 0,
+		"SECURITY_SEVERITY_LOW":         1,
+		"SECURITY_SEVERITY_MEDIUM":      2,
+		"SECURITY_SEVERITY_HIGH":        3,
+	}
+)
+
+func (x SecuritySeverity) Enum() *SecuritySeverity {
+	p := new(SecuritySeverity)
+	*p = x
+	return p
+}
+
+func (x SecuritySeverity) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SecuritySeverity) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[6].Descriptor()
+}
+
+func (SecuritySeverity) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[6]
+}
+
+func (x SecuritySeverity) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SecuritySeverity.Descriptor instead.
+func (SecuritySeverity) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
+}
+
+// SecurityFindingType names the class of code-level security issue detected. v1
+// covers hardcoded secrets/credentials; the enum leaves room for additional
+// deterministic checks (e.g. missing auth) without a breaking change.
+type SecurityFindingType int32
+
+const (
+	// Unset.
+	SecurityFindingType_SECURITY_FINDING_TYPE_UNSPECIFIED SecurityFindingType = 0
+	// A secret/credential embedded in cleartext in source or committed config: a
+	// provider API key, password, token, private key, JWT, or a connection string
+	// carrying credentials (e.g. mysql://user:pass@host).
+	SecurityFindingType_SECURITY_FINDING_TYPE_HARDCODED_SECRET SecurityFindingType = 1
+)
+
+// Enum value maps for SecurityFindingType.
+var (
+	SecurityFindingType_name = map[int32]string{
+		0: "SECURITY_FINDING_TYPE_UNSPECIFIED",
+		1: "SECURITY_FINDING_TYPE_HARDCODED_SECRET",
+	}
+	SecurityFindingType_value = map[string]int32{
+		"SECURITY_FINDING_TYPE_UNSPECIFIED":      0,
+		"SECURITY_FINDING_TYPE_HARDCODED_SECRET": 1,
+	}
+)
+
+func (x SecurityFindingType) Enum() *SecurityFindingType {
+	p := new(SecurityFindingType)
+	*p = x
+	return p
+}
+
+func (x SecurityFindingType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SecurityFindingType) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[7].Descriptor()
+}
+
+func (SecurityFindingType) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[7]
+}
+
+func (x SecurityFindingType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SecurityFindingType.Descriptor instead.
+func (SecurityFindingType) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
+}
+
 // AnalysisSummary is the output of a code analysis run against a repository.
 // It is the primary resource owned by the analysis engine.
 type AnalysisSummary struct {
@@ -296,8 +628,48 @@ type AnalysisSummary struct {
 	// (migrability assessment, UI executive summary) must degrade honestly when this
 	// is false rather than treating the empty graph as a real "no domain" finding.
 	DeepAnalysisAvailable bool `protobuf:"varint,27,opt,name=deep_analysis_available,json=deepAnalysisAvailable,proto3" json:"deep_analysis_available,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Deterministically detected database engine(s) the analysed code talks to.
+	// Inferred from drivers/ORM packages (psycopg2/pg → PostgreSQL; mysqli/pdo_mysql/
+	// mysql2 → MySQL; mongo* → MongoDB; sqlite3 → SQLite; …), config files (.env
+	// DB_CONNECTION, Laravel config/database.php default, DATABASE_URL, Django
+	// settings) and the framework default. Never produced by an LLM. Absent (nil) or
+	// engines=["unknown"] when no honest signal exists. Computed at analysis time.
+	DatabaseDetection *DatabaseDetection `protobuf:"bytes,28,opt,name=database_detection,json=databaseDetection,proto3" json:"database_detection,omitempty"`
+	// Deterministically classified architectural pattern of the analysed code.
+	// A rules-based classifier maps the structural signals the pipeline already
+	// computes (domain/infra ratio, layers present, framework, routing topology,
+	// clustering quality, structural_fallback) to one canonical pattern with a
+	// confidence. Never a pure LLM hallucination — the classifier runs first and the
+	// LLM may only confirm it anchored to this evidence. Absent (nil) for Tier-1-only
+	// analyses with no structural data to reason over.
+	ArchitecturalPattern *ArchitecturalPattern `protobuf:"bytes,29,opt,name=architectural_pattern,json=architecturalPattern,proto3" json:"architectural_pattern,omitempty"`
+	// Intake gate result: an honest, deterministic up-front verdict on whether this
+	// repository is something the platform can actually migrate. Two checks:
+	//
+	//	(1) codebase kind — is this a BACKEND (the only kind the platform migrates
+	//	    today), or a frontend-only SPA / library / CLI / mobile app?
+	//	(2) primary-language support — does the primary detected language have a
+	//	    Tier-2 analyzer (today: PHP and Python)? Other languages produce no graph.
+	//
+	// When either check fails the field carries migratable=false plus human-readable
+	// warnings, so the report degrades HONESTLY (it says "this isn't migrable yet and
+	// here's why") instead of emitting a migrability verdict as if the repo were
+	// migrable. Non-blocking: the analysis still completes and Tier-1 facts
+	// (technologies, vulnerabilities) are still produced. Always present on summaries
+	// produced after this gate was added.
+	IntakeAssessment *IntakeAssessment `protobuf:"bytes,30,opt,name=intake_assessment,json=intakeAssessment,proto3" json:"intake_assessment,omitempty"`
+	// Deterministic, code-level security findings detected IN the analysed source —
+	// distinct from dependency CVEs (those live in `vulnerabilities`). Today: hardcoded
+	// credentials / secrets in cleartext (API keys, passwords, tokens, connection
+	// strings, private keys, JWTs) found by a pattern + entropy scanner that walks the
+	// workspace. Conservative by design (Lesson 11): a finding is recorded only when a
+	// concrete secret-shaped value surfaces; obvious placeholders/examples are NOT
+	// reported, and each finding carries a confidence. Never produced by an LLM — the
+	// scanner is a pure deterministic function of file contents. Empty when nothing was
+	// found (an honest zero, never a guess). Additive: scores/verdicts are unaffected.
+	SecurityFindings []*SecurityFinding `protobuf:"bytes,31,rep,name=security_findings,json=securityFindings,proto3" json:"security_findings,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AnalysisSummary) Reset() {
@@ -519,6 +891,438 @@ func (x *AnalysisSummary) GetDeepAnalysisAvailable() bool {
 	return false
 }
 
+func (x *AnalysisSummary) GetDatabaseDetection() *DatabaseDetection {
+	if x != nil {
+		return x.DatabaseDetection
+	}
+	return nil
+}
+
+func (x *AnalysisSummary) GetArchitecturalPattern() *ArchitecturalPattern {
+	if x != nil {
+		return x.ArchitecturalPattern
+	}
+	return nil
+}
+
+func (x *AnalysisSummary) GetIntakeAssessment() *IntakeAssessment {
+	if x != nil {
+		return x.IntakeAssessment
+	}
+	return nil
+}
+
+func (x *AnalysisSummary) GetSecurityFindings() []*SecurityFinding {
+	if x != nil {
+		return x.SecurityFindings
+	}
+	return nil
+}
+
+// IntakeAssessment is the deterministic up-front gate the analysis pipeline records
+// before any migrability judgement. It answers a single honest question — "can the
+// platform migrate this repository today?" — and, when the answer is no, says exactly
+// why. It never silently degrades: a non-backend repo or an unsupported primary
+// language yields migratable=false plus readable warnings, not an empty or misleading
+// report. Produced with no LLM call.
+type IntakeAssessment struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Detected kind of this codebase (backend, frontend, library, CLI, mobile, or
+	// unspecified when too ambiguous). The platform migrates BACKEND today.
+	CodebaseKind CodebaseKind `protobuf:"varint,1,opt,name=codebase_kind,json=codebaseKind,proto3,enum=milton_prism.types.analysis.v1.CodebaseKind" json:"codebase_kind,omitempty"`
+	// Confidence in the codebase_kind classification, in [0,1]. Lower when the signal
+	// mix is ambiguous (e.g. a fullstack repo with both a server framework and a SPA).
+	KindConfidence float32 `protobuf:"fixed32,2,opt,name=kind_confidence,json=kindConfidence,proto3" json:"kind_confidence,omitempty"`
+	// Primary language detected by the inventory stage (go-enry), e.g. "PHP", "Python",
+	// "Java", "JavaScript". The language with the highest backend-weighted signal.
+	PrimaryLanguage string `protobuf:"bytes,3,opt,name=primary_language,json=primaryLanguage,proto3" json:"primary_language,omitempty"`
+	// True when primary_language has a registered Tier-2 analyzer (today: PHP, Python)
+	// and therefore can produce a dependency graph. False ⇒ no graph will be built and
+	// any migrability verdict would be empty/degraded — surfaced honestly here instead.
+	LanguageSupported bool `protobuf:"varint,4,opt,name=language_supported,json=languageSupported,proto3" json:"language_supported,omitempty"`
+	// The languages the platform currently has analyzers for, for the UI to show
+	// "supported: PHP, Python". Sorted ascending. Reflects the registry at run time.
+	SupportedLanguages []string `protobuf:"bytes,5,rep,name=supported_languages,json=supportedLanguages,proto3" json:"supported_languages,omitempty"`
+	// The platform's headline intake verdict: true iff this is a BACKEND in a SUPPORTED
+	// language — i.e. the platform can actually migrate it. False for non-backend repos
+	// or unsupported-language backends. Consumers gate the migrability report on this.
+	Migratable bool `protobuf:"varint,6,opt,name=migratable,proto3" json:"migratable,omitempty"`
+	// Human-readable, specific warnings explaining any intake failure, e.g.
+	// "This repository looks like a frontend-only SPA (React), not a backend — the
+	// platform only migrates backends today." or "Primary language Java is not supported
+	// yet (supported: PHP, Python); no dependency graph was produced." Empty when migratable.
+	Warnings []string `protobuf:"bytes,7,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	// Deterministic evidence strings behind the codebase_kind classification, e.g.
+	// "framework: Laravel (web)", "ecosystem: Composer (PHP backend)", "routes: 42",
+	// "no server framework; npm-only JS". Lets the report and the LLM anchor to facts.
+	Evidence      []string `protobuf:"bytes,8,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IntakeAssessment) Reset() {
+	*x = IntakeAssessment{}
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IntakeAssessment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IntakeAssessment) ProtoMessage() {}
+
+func (x *IntakeAssessment) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IntakeAssessment.ProtoReflect.Descriptor instead.
+func (*IntakeAssessment) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *IntakeAssessment) GetCodebaseKind() CodebaseKind {
+	if x != nil {
+		return x.CodebaseKind
+	}
+	return CodebaseKind_CODEBASE_KIND_UNSPECIFIED
+}
+
+func (x *IntakeAssessment) GetKindConfidence() float32 {
+	if x != nil {
+		return x.KindConfidence
+	}
+	return 0
+}
+
+func (x *IntakeAssessment) GetPrimaryLanguage() string {
+	if x != nil {
+		return x.PrimaryLanguage
+	}
+	return ""
+}
+
+func (x *IntakeAssessment) GetLanguageSupported() bool {
+	if x != nil {
+		return x.LanguageSupported
+	}
+	return false
+}
+
+func (x *IntakeAssessment) GetSupportedLanguages() []string {
+	if x != nil {
+		return x.SupportedLanguages
+	}
+	return nil
+}
+
+func (x *IntakeAssessment) GetMigratable() bool {
+	if x != nil {
+		return x.Migratable
+	}
+	return false
+}
+
+func (x *IntakeAssessment) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
+}
+
+func (x *IntakeAssessment) GetEvidence() []string {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
+// DatabaseDetection records which database engine(s) the analysed code uses and the
+// deterministic evidence behind that conclusion. Multiple engines may be present
+// (e.g. a primary store plus Redis). Engines is empty and Unknown=true when no
+// honest signal was found.
+type DatabaseDetection struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Detected engines, deduplicated and sorted for stable output. Empty when unknown.
+	Engines []DatabaseEngine `protobuf:"varint,1,rep,packed,name=engines,proto3,enum=milton_prism.types.analysis.v1.DatabaseEngine" json:"engines,omitempty"`
+	// Human-readable engine names matching engines order (e.g. "PostgreSQL", "MySQL").
+	// Convenience for report/UI rendering without an enum lookup table.
+	EngineNames []string `protobuf:"bytes,2,rep,name=engine_names,json=engineNames,proto3" json:"engine_names,omitempty"`
+	// True when no engine could be determined from drivers, config, or ORM signals.
+	// engines is empty in this case. An honest 'I don't know', never a guess.
+	Unknown bool `protobuf:"varint,3,opt,name=unknown,proto3" json:"unknown,omitempty"`
+	// Deterministic evidence strings behind the detection, e.g.
+	// "driver: psycopg2", "config: .env DB_CONNECTION=mysql", "orm: Eloquent (Laravel default MySQL)".
+	// Empty when unknown. Lets the report and the LLM anchor to facts, not guesses.
+	Evidence      []string `protobuf:"bytes,4,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseDetection) Reset() {
+	*x = DatabaseDetection{}
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseDetection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseDetection) ProtoMessage() {}
+
+func (x *DatabaseDetection) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseDetection.ProtoReflect.Descriptor instead.
+func (*DatabaseDetection) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *DatabaseDetection) GetEngines() []DatabaseEngine {
+	if x != nil {
+		return x.Engines
+	}
+	return nil
+}
+
+func (x *DatabaseDetection) GetEngineNames() []string {
+	if x != nil {
+		return x.EngineNames
+	}
+	return nil
+}
+
+func (x *DatabaseDetection) GetUnknown() bool {
+	if x != nil {
+		return x.Unknown
+	}
+	return false
+}
+
+func (x *DatabaseDetection) GetEvidence() []string {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
+// ArchitecturalPattern records the deterministically classified architectural
+// pattern of the analysed code plus the confidence and the structural evidence the
+// classifier used. The classification runs before any LLM call; the LLM may only
+// confirm it, anchored to this evidence.
+type ArchitecturalPattern struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Canonical pattern kind assigned by the deterministic classifier.
+	Kind ArchitecturalPatternKind `protobuf:"varint,1,opt,name=kind,proto3,enum=milton_prism.types.analysis.v1.ArchitecturalPatternKind" json:"kind,omitempty"`
+	// Display name of the pattern (e.g. "MVC", "Spaghetti / Big ball of mud").
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Classifier confidence in [0, 1]. Reflects how unambiguously the structural
+	// signals point to this pattern. Lower when the analysis is structurally blind
+	// (deep_analysis_available=false) but a framework still implies a likely pattern.
+	Confidence float32 `protobuf:"fixed32,3,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	// Deterministic evidence strings the classifier weighed, e.g.
+	// "framework: Laravel (MVC)", "domain/infra ratio 57%", "3 clusters", "no domain layer".
+	// Lets the report and the LLM anchor the pattern to facts.
+	Evidence      []string `protobuf:"bytes,4,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArchitecturalPattern) Reset() {
+	*x = ArchitecturalPattern{}
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArchitecturalPattern) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArchitecturalPattern) ProtoMessage() {}
+
+func (x *ArchitecturalPattern) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArchitecturalPattern.ProtoReflect.Descriptor instead.
+func (*ArchitecturalPattern) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ArchitecturalPattern) GetKind() ArchitecturalPatternKind {
+	if x != nil {
+		return x.Kind
+	}
+	return ArchitecturalPatternKind_ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED
+}
+
+func (x *ArchitecturalPattern) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ArchitecturalPattern) GetConfidence() float32 {
+	if x != nil {
+		return x.Confidence
+	}
+	return 0
+}
+
+func (x *ArchitecturalPattern) GetEvidence() []string {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
+// SecurityFinding is one deterministic, code-level security issue found IN the
+// analysed source (not a dependency CVE — those are Vulnerabilities). It is anchored
+// to a concrete file:line with the matched snippet redacted, a severity, and a
+// confidence so the report can degrade honestly on ambiguous matches. Produced by a
+// pure pattern + entropy scanner, never by an LLM.
+type SecurityFinding struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The class of finding (today: hardcoded secret/credential).
+	Type SecurityFindingType `protobuf:"varint,1,opt,name=type,proto3,enum=milton_prism.types.analysis.v1.SecurityFindingType" json:"type,omitempty"`
+	// Severity of the finding (LOW/MEDIUM/HIGH).
+	Severity SecuritySeverity `protobuf:"varint,2,opt,name=severity,proto3,enum=milton_prism.types.analysis.v1.SecuritySeverity" json:"severity,omitempty"`
+	// Workspace-relative path of the file the finding was detected in.
+	File string `protobuf:"bytes,3,opt,name=file,proto3" json:"file,omitempty"`
+	// 1-based line number of the finding within the file.
+	Line uint32 `protobuf:"varint,4,opt,name=line,proto3" json:"line,omitempty"`
+	// A short, human-readable description of what was found and why it is a finding,
+	// e.g. "Hardcoded AWS secret access key" or "Hardcoded password in connection string".
+	Description string `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
+	// The matched line with the secret value REDACTED (the sensitive token is masked,
+	// never echoed in full) so the report can show context without leaking the secret.
+	Snippet string `protobuf:"bytes,6,opt,name=snippet,proto3" json:"snippet,omitempty"`
+	// The rule/detector that fired (e.g. "aws-secret-key", "private-key-pem",
+	// "generic-password", "db-connection-string"). Stable identifier for the UI.
+	Rule string `protobuf:"bytes,7,opt,name=rule,proto3" json:"rule,omitempty"`
+	// Confidence in [0,1] that this is a real secret rather than a placeholder/example.
+	// Lower for generic/entropy-only matches; near 1.0 for provider-prefixed keys.
+	Confidence    float32 `protobuf:"fixed32,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecurityFinding) Reset() {
+	*x = SecurityFinding{}
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecurityFinding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecurityFinding) ProtoMessage() {}
+
+func (x *SecurityFinding) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecurityFinding.ProtoReflect.Descriptor instead.
+func (*SecurityFinding) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SecurityFinding) GetType() SecurityFindingType {
+	if x != nil {
+		return x.Type
+	}
+	return SecurityFindingType_SECURITY_FINDING_TYPE_UNSPECIFIED
+}
+
+func (x *SecurityFinding) GetSeverity() SecuritySeverity {
+	if x != nil {
+		return x.Severity
+	}
+	return SecuritySeverity_SECURITY_SEVERITY_UNSPECIFIED
+}
+
+func (x *SecurityFinding) GetFile() string {
+	if x != nil {
+		return x.File
+	}
+	return ""
+}
+
+func (x *SecurityFinding) GetLine() uint32 {
+	if x != nil {
+		return x.Line
+	}
+	return 0
+}
+
+func (x *SecurityFinding) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *SecurityFinding) GetSnippet() string {
+	if x != nil {
+		return x.Snippet
+	}
+	return ""
+}
+
+func (x *SecurityFinding) GetRule() string {
+	if x != nil {
+		return x.Rule
+	}
+	return ""
+}
+
+func (x *SecurityFinding) GetConfidence() float32 {
+	if x != nil {
+		return x.Confidence
+	}
+	return 0
+}
+
 // UnreachableModule is a module the static analysis could not link to the rest of
 // the system: it defines functions or classes yet has no incoming or outgoing
 // dependency edges. For review, not deletion — it may be an entry point,
@@ -537,7 +1341,7 @@ type UnreachableModule struct {
 
 func (x *UnreachableModule) Reset() {
 	*x = UnreachableModule{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +1353,7 @@ func (x *UnreachableModule) String() string {
 func (*UnreachableModule) ProtoMessage() {}
 
 func (x *UnreachableModule) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +1366,7 @@ func (x *UnreachableModule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnreachableModule.ProtoReflect.Descriptor instead.
 func (*UnreachableModule) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{1}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *UnreachableModule) GetModule() string {
@@ -610,7 +1414,7 @@ type Technology struct {
 
 func (x *Technology) Reset() {
 	*x = Technology{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -622,7 +1426,7 @@ func (x *Technology) String() string {
 func (*Technology) ProtoMessage() {}
 
 func (x *Technology) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -635,7 +1439,7 @@ func (x *Technology) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Technology.ProtoReflect.Descriptor instead.
 func (*Technology) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{2}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Technology) GetName() string {
@@ -705,7 +1509,7 @@ type Vulnerability struct {
 
 func (x *Vulnerability) Reset() {
 	*x = Vulnerability{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -717,7 +1521,7 @@ func (x *Vulnerability) String() string {
 func (*Vulnerability) ProtoMessage() {}
 
 func (x *Vulnerability) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -730,7 +1534,7 @@ func (x *Vulnerability) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Vulnerability.ProtoReflect.Descriptor instead.
 func (*Vulnerability) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Vulnerability) GetIdentifierRef() string {
@@ -797,7 +1601,7 @@ type RouteInfo struct {
 
 func (x *RouteInfo) Reset() {
 	*x = RouteInfo{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -809,7 +1613,7 @@ func (x *RouteInfo) String() string {
 func (*RouteInfo) ProtoMessage() {}
 
 func (x *RouteInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -822,7 +1626,7 @@ func (x *RouteInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteInfo.ProtoReflect.Descriptor instead.
 func (*RouteInfo) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *RouteInfo) GetMethod() string {
@@ -894,7 +1698,7 @@ type ModuleCard struct {
 
 func (x *ModuleCard) Reset() {
 	*x = ModuleCard{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -906,7 +1710,7 @@ func (x *ModuleCard) String() string {
 func (*ModuleCard) ProtoMessage() {}
 
 func (x *ModuleCard) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -919,7 +1723,7 @@ func (x *ModuleCard) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleCard.ProtoReflect.Descriptor instead.
 func (*ModuleCard) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ModuleCard) GetModule() string {
@@ -1023,7 +1827,7 @@ type SharedStateHub struct {
 
 func (x *SharedStateHub) Reset() {
 	*x = SharedStateHub{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1035,7 +1839,7 @@ func (x *SharedStateHub) String() string {
 func (*SharedStateHub) ProtoMessage() {}
 
 func (x *SharedStateHub) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1048,7 +1852,7 @@ func (x *SharedStateHub) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SharedStateHub.ProtoReflect.Descriptor instead.
 func (*SharedStateHub) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SharedStateHub) GetModule() string {
@@ -1088,7 +1892,7 @@ type BlueprintInfo struct {
 
 func (x *BlueprintInfo) Reset() {
 	*x = BlueprintInfo{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1100,7 +1904,7 @@ func (x *BlueprintInfo) String() string {
 func (*BlueprintInfo) ProtoMessage() {}
 
 func (x *BlueprintInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1113,7 +1917,7 @@ func (x *BlueprintInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlueprintInfo.ProtoReflect.Descriptor instead.
 func (*BlueprintInfo) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *BlueprintInfo) GetName() string {
@@ -1163,7 +1967,7 @@ type ModuleClassification struct {
 
 func (x *ModuleClassification) Reset() {
 	*x = ModuleClassification{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1175,7 +1979,7 @@ func (x *ModuleClassification) String() string {
 func (*ModuleClassification) ProtoMessage() {}
 
 func (x *ModuleClassification) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1188,7 +1992,7 @@ func (x *ModuleClassification) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleClassification.ProtoReflect.Descriptor instead.
 func (*ModuleClassification) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{8}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ModuleClassification) GetDomainModules() []string {
@@ -1242,7 +2046,7 @@ type DependencyEdge struct {
 
 func (x *DependencyEdge) Reset() {
 	*x = DependencyEdge{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1254,7 +2058,7 @@ func (x *DependencyEdge) String() string {
 func (*DependencyEdge) ProtoMessage() {}
 
 func (x *DependencyEdge) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1267,7 +2071,7 @@ func (x *DependencyEdge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DependencyEdge.ProtoReflect.Descriptor instead.
 func (*DependencyEdge) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{9}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DependencyEdge) GetFromModule() string {
@@ -1295,7 +2099,7 @@ var File_milton_prism_types_analysis_v1_analysis_proto protoreflect.FileDescript
 
 const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\n" +
-	"-milton_prism/types/analysis/v1/analysis.proto\x12\x1emilton_prism.types.analysis.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xfe\x1f\n" +
+	"-milton_prism/types/analysis/v1/analysis.proto\x12\x1emilton_prism.types.analysis.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xb5(\n" +
 	"\x0fAnalysisSummary\x12P\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B0\xe0A\b\xbaG*:\x03\x12\x011\x92\x02\"System-assigned unique identifier.R\n" +
@@ -1335,9 +2139,47 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\x17module_count_production\x18\x18 \x01(\rBb\xbaG_:\x05\x12\x03411\x92\x02UCount of production (non-test) module cards. Zero when classification is unavailable.R\x15moduleCountProduction\x12T\n" +
 	"\x11module_count_test\x18\x19 \x01(\rB(\xbaG%:\x05\x12\x03161\x92\x02\x1bCount of test module cards.R\x0fmoduleCountTest\x12\x80\x02\n" +
 	"\x13unreachable_modules\x18\x1a \x03(\v21.milton_prism.types.analysis.v1.UnreachableModuleB\x9b\x01\xbaG\x97\x01\x92\x02\x93\x01Modules with code but no statically resolvable references (for review — may be entry points, framework-wired, or invoked externally; not scored).R\x12unreachableModules\x12\xe3\x01\n" +
-	"\x17deep_analysis_available\x18\x1b \x01(\bB\xaa\x01\xbaG\xa6\x01\x92\x02\xa2\x01True iff deep structural analysis (dependency graph / module cards) was produced. False = analyzer unavailable/blind; downstream must degrade honestly, not score.R\x15deepAnalysisAvailable:j\xbaGgJ\x0fAnalysisSummary\x92\x02SOutput of a code analysis run: technologies, vulnerabilities, and dependency graph.B\x0e\n" +
+	"\x17deep_analysis_available\x18\x1b \x01(\bB\xaa\x01\xbaG\xa6\x01\x92\x02\xa2\x01True iff deep structural analysis (dependency graph / module cards) was produced. False = analyzer unavailable/blind; downstream must degrade honestly, not score.R\x15deepAnalysisAvailable\x12\xde\x01\n" +
+	"\x12database_detection\x18\x1c \x01(\v21.milton_prism.types.analysis.v1.DatabaseDetectionB|\xbaGy\x92\x02vDeterministically detected database engine(s) with the evidence behind the detection. Honest 'unknown' when no signal.R\x11databaseDetection\x12\x86\x02\n" +
+	"\x15architectural_pattern\x18\x1d \x01(\v24.milton_prism.types.analysis.v1.ArchitecturalPatternB\x9a\x01\xbaG\x96\x01\x92\x02\x92\x01Deterministically classified architectural pattern (Clean/Hexagonal/Layered/MVC/Modular monolith/Spaghetti) with confidence and the evidence used.R\x14architecturalPattern\x12\x95\x02\n" +
+	"\x11intake_assessment\x18\x1e \x01(\v20.milton_prism.types.analysis.v1.IntakeAssessmentB\xb5\x01\xbaG\xb1\x01\x92\x02\xad\x01Deterministic intake gate: is this a migratable backend in a supported language? Carries codebase_kind, language support, migratable flag, and honest warnings. Non-blocking.R\x10intakeAssessment\x12\xb2\x02\n" +
+	"\x11security_findings\x18\x1f \x03(\v2/.milton_prism.types.analysis.v1.SecurityFindingB\xd3\x01\xbaG\xcf\x01\x92\x02\xcb\x01Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.R\x10securityFindings:j\xbaGgJ\x0fAnalysisSummary\x92\x02SOutput of a code analysis run: technologies, vulnerabilities, and dependency graph.B\x0e\n" +
 	"\f_delete_timeB\r\n" +
-	"\v_purge_time\"\xe5\x02\n" +
+	"\v_purge_time\"\xf8\b\n" +
+	"\x10IntakeAssessment\x12\x95\x01\n" +
+	"\rcodebase_kind\x18\x01 \x01(\x0e2,.milton_prism.types.analysis.v1.CodebaseKindBB\xbaG?\x92\x02<Detected codebase kind. The platform migrates BACKEND today.R\fcodebaseKind\x12o\n" +
+	"\x0fkind_confidence\x18\x02 \x01(\x02BF\xbaGC:\x05\x12\x030.9\x92\x029Confidence in the codebase_kind classification, in [0,1].R\x0ekindConfidence\x12t\n" +
+	"\x10primary_language\x18\x03 \x01(\tBI\xbaGF:\x05\x12\x03PHP\x92\x02<Primary language detected (go-enry), e.g. PHP, Python, Java.R\x0fprimaryLanguage\x12\x85\x01\n" +
+	"\x12language_supported\x18\x04 \x01(\bBV\xbaGS:\x06\x12\x04true\x92\x02HTrue when the primary language has a Tier-2 analyzer (PHP/Python today).R\x11languageSupported\x12w\n" +
+	"\x13supported_languages\x18\x05 \x03(\tBF\xbaGC\x92\x02@Languages with a Tier-2 analyzer at run time (e.g. PHP, Python).R\x12supportedLanguages\x12{\n" +
+	"\n" +
+	"migratable\x18\x06 \x01(\bB[\xbaGX:\x06\x12\x04true\x92\x02MTrue iff this is a backend in a supported language (platform can migrate it).R\n" +
+	"migratable\x12x\n" +
+	"\bwarnings\x18\a \x03(\tB\\\xbaGY\x92\x02VSpecific human-readable warnings explaining any intake failure. Empty when migratable.R\bwarnings\x12i\n" +
+	"\bevidence\x18\b \x03(\tBM\xbaGJ\x92\x02GDeterministic evidence strings behind the codebase_kind classification.R\bevidence:\x81\x01\xbaG~J\x10IntakeAssessment\x92\x02iDeterministic intake gate: codebase kind, primary-language support, migratable flag, and honest warnings.\"\xd6\x04\n" +
+	"\x11DatabaseDetection\x12\x95\x01\n" +
+	"\aengines\x18\x01 \x03(\x0e2..milton_prism.types.analysis.v1.DatabaseEngineBK\xbaGH\x92\x02EDetected database engines (deduplicated, sorted). Empty when unknown.R\aengines\x12e\n" +
+	"\fengine_names\x18\x02 \x03(\tBB\xbaG?\x92\x02<Display names of the detected engines, aligned with engines.R\vengineNames\x12g\n" +
+	"\aunknown\x18\x03 \x01(\bBM\xbaGJ:\a\x12\x05false\x92\x02>True when no database engine signal was found (engines empty).R\aunknown\x12j\n" +
+	"\bevidence\x18\x04 \x03(\tBN\xbaGK\x92\x02HDeterministic evidence strings behind the detection (driver/config/ORM).R\bevidence:m\xbaGjJ\x11DatabaseDetection\x92\x02TDeterministically detected database engine(s) and the evidence behind the detection.\"\x8b\x04\n" +
+	"\x14ArchitecturalPattern\x12y\n" +
+	"\x04kind\x18\x01 \x01(\x0e28.milton_prism.types.analysis.v1.ArchitecturalPatternKindB+\xbaG(\x92\x02%Canonical architectural pattern kind.R\x04kind\x12H\n" +
+	"\x04name\x18\x02 \x01(\tB4\xbaG1:\x05\x12\x03MVC\x92\x02'Display name of the classified pattern.R\x04name\x12M\n" +
+	"\n" +
+	"confidence\x18\x03 \x01(\x02B-\xbaG*:\x06\x12\x040.82\x92\x02\x1fClassifier confidence in [0,1].R\n" +
+	"confidence\x12h\n" +
+	"\bevidence\x18\x04 \x03(\tBL\xbaGI\x92\x02FStructural evidence strings the classifier used to reach this pattern.R\bevidence:u\xbaGrJ\x14ArchitecturalPattern\x92\x02YDeterministically classified architectural pattern with confidence and the evidence used.\"\xf6\a\n" +
+	"\x0fSecurityFinding\x12m\n" +
+	"\x04type\x18\x01 \x01(\x0e23.milton_prism.types.analysis.v1.SecurityFindingTypeB$\xbaG!\x92\x02\x1eClass of the security finding.R\x04type\x12~\n" +
+	"\bseverity\x18\x02 \x01(\x0e20.milton_prism.types.analysis.v1.SecuritySeverityB0\xbaG-\x92\x02*Severity of the finding (LOW/MEDIUM/HIGH).R\bseverity\x12]\n" +
+	"\x04file\x18\x03 \x01(\tBI\xbaGF:\x15\x12\x13config/database.php\x92\x02,Workspace-relative file path of the finding.R\x04file\x12C\n" +
+	"\x04line\x18\x04 \x01(\rB/\xbaG,:\x04\x12\x0242\x92\x02#1-based line number of the finding.R\x04line\x12u\n" +
+	"\vdescription\x18\x05 \x01(\tBS\xbaGP:!\x12\x1fHardcoded AWS secret access key\x92\x02*Human-readable description of the finding.R\vdescription\x12\x82\x01\n" +
+	"\asnippet\x18\x06 \x01(\tBh\xbaGe:0\x12.aws_secret_access_key = \"AKIA****REDACTED****\"\x92\x020The matched line with the secret value redacted.R\asnippet\x12W\n" +
+	"\x04rule\x18\a \x01(\tBC\xbaG@:\x10\x12\x0eaws-secret-key\x92\x02+Identifier of the detector rule that fired.R\x04rule\x12q\n" +
+	"\n" +
+	"confidence\x18\b \x01(\x02BQ\xbaGN:\x06\x12\x040.95\x92\x02CConfidence in [0,1] that this is a real secret (not a placeholder).R\n" +
+	"confidence:\x87\x01\xbaG\x83\x01J\x0fSecurityFinding\x92\x02oA deterministic code-level security finding (e.g. a hardcoded secret) with file:line, severity, and confidence.\"\xe5\x02\n" +
 	"\x11UnreachableModule\x12Q\n" +
 	"\x06module\x18\x01 \x01(\tB9\xbaG6:\x15\x12\x13backend.legacy_copy\x92\x02\x1cFully-qualified module name.R\x06module\x12Q\n" +
 	"\x04file\x18\x02 \x01(\tB=\xbaG::\x18\x12\x16backend/legacy_copy.py\x92\x02\x1dWorkspace-relative file path.R\x04file\x129\n" +
@@ -1418,7 +2260,39 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\fSEVERITY_LOW\x10\x01\x12\x13\n" +
 	"\x0fSEVERITY_MEDIUM\x10\x02\x12\x11\n" +
 	"\rSEVERITY_HIGH\x10\x03\x12\x15\n" +
-	"\x11SEVERITY_CRITICAL\x10\x04B\x90\x02\n" +
+	"\x11SEVERITY_CRITICAL\x10\x04*\xb0\x01\n" +
+	"\fCodebaseKind\x12\x1d\n" +
+	"\x19CODEBASE_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15CODEBASE_KIND_BACKEND\x10\x01\x12\x1a\n" +
+	"\x16CODEBASE_KIND_FRONTEND\x10\x02\x12\x19\n" +
+	"\x15CODEBASE_KIND_LIBRARY\x10\x03\x12\x15\n" +
+	"\x11CODEBASE_KIND_CLI\x10\x04\x12\x18\n" +
+	"\x14CODEBASE_KIND_MOBILE\x10\x05*\xfb\x01\n" +
+	"\x0eDatabaseEngine\x12\x1f\n" +
+	"\x1bDATABASE_ENGINE_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aDATABASE_ENGINE_POSTGRESQL\x10\x01\x12\x19\n" +
+	"\x15DATABASE_ENGINE_MYSQL\x10\x02\x12\x1b\n" +
+	"\x17DATABASE_ENGINE_MONGODB\x10\x03\x12\x1a\n" +
+	"\x16DATABASE_ENGINE_SQLITE\x10\x04\x12\x1d\n" +
+	"\x19DATABASE_ENGINE_SQLSERVER\x10\x05\x12\x1a\n" +
+	"\x16DATABASE_ENGINE_ORACLE\x10\x06\x12\x19\n" +
+	"\x15DATABASE_ENGINE_REDIS\x10\a*\xbd\x02\n" +
+	"\x18ArchitecturalPatternKind\x12*\n" +
+	"&ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED\x10\x00\x12$\n" +
+	" ARCHITECTURAL_PATTERN_KIND_CLEAN\x10\x01\x12(\n" +
+	"$ARCHITECTURAL_PATTERN_KIND_HEXAGONAL\x10\x02\x12&\n" +
+	"\"ARCHITECTURAL_PATTERN_KIND_LAYERED\x10\x03\x12\"\n" +
+	"\x1eARCHITECTURAL_PATTERN_KIND_MVC\x10\x04\x12/\n" +
+	"+ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH\x10\x05\x12(\n" +
+	"$ARCHITECTURAL_PATTERN_KIND_SPAGHETTI\x10\x06*\x8a\x01\n" +
+	"\x10SecuritySeverity\x12!\n" +
+	"\x1dSECURITY_SEVERITY_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15SECURITY_SEVERITY_LOW\x10\x01\x12\x1c\n" +
+	"\x18SECURITY_SEVERITY_MEDIUM\x10\x02\x12\x1a\n" +
+	"\x16SECURITY_SEVERITY_HIGH\x10\x03*h\n" +
+	"\x13SecurityFindingType\x12%\n" +
+	"!SECURITY_FINDING_TYPE_UNSPECIFIED\x10\x00\x12*\n" +
+	"&SECURITY_FINDING_TYPE_HARDCODED_SECRET\x10\x01B\x90\x02\n" +
 	"\"com.milton_prism.types.analysis.v1B\rAnalysisProtoP\x01ZAmilton_prism/pkg/pb/gen/milton_prism/types/analysis/v1;analysisv1\xf8\x01\x01\xa2\x02\x03MTA\xaa\x02\x1dMiltonPrism.Types.Analysis.V1\xca\x02\x1dMiltonPrism\\Types\\Analysis\\V1\xe2\x02)MiltonPrism\\Types\\Analysis\\V1\\GPBMetadata\xea\x02 MiltonPrism::Types::Analysis::V1b\x06proto3"
 
 var (
@@ -1433,50 +2307,68 @@ func file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP() []byte {
 	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescData
 }
 
-var file_milton_prism_types_analysis_v1_analysis_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_milton_prism_types_analysis_v1_analysis_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_milton_prism_types_analysis_v1_analysis_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_milton_prism_types_analysis_v1_analysis_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_milton_prism_types_analysis_v1_analysis_proto_goTypes = []any{
 	(AnalysisState)(0),               // 0: milton_prism.types.analysis.v1.AnalysisState
 	(TechnologyStatus)(0),            // 1: milton_prism.types.analysis.v1.TechnologyStatus
 	(Severity)(0),                    // 2: milton_prism.types.analysis.v1.Severity
-	(*AnalysisSummary)(nil),          // 3: milton_prism.types.analysis.v1.AnalysisSummary
-	(*UnreachableModule)(nil),        // 4: milton_prism.types.analysis.v1.UnreachableModule
-	(*Technology)(nil),               // 5: milton_prism.types.analysis.v1.Technology
-	(*Vulnerability)(nil),            // 6: milton_prism.types.analysis.v1.Vulnerability
-	(*RouteInfo)(nil),                // 7: milton_prism.types.analysis.v1.RouteInfo
-	(*ModuleCard)(nil),               // 8: milton_prism.types.analysis.v1.ModuleCard
-	(*SharedStateHub)(nil),           // 9: milton_prism.types.analysis.v1.SharedStateHub
-	(*BlueprintInfo)(nil),            // 10: milton_prism.types.analysis.v1.BlueprintInfo
-	(*ModuleClassification)(nil),     // 11: milton_prism.types.analysis.v1.ModuleClassification
-	(*DependencyEdge)(nil),           // 12: milton_prism.types.analysis.v1.DependencyEdge
-	(*timestamppb.Timestamp)(nil),    // 13: google.protobuf.Timestamp
-	(*v1.MigrabilityScore)(nil),      // 14: milton_prism.types.common.v1.MigrabilityScore
-	(*v1.MigrabilityAssessment)(nil), // 15: milton_prism.types.common.v1.MigrabilityAssessment
+	(CodebaseKind)(0),                // 3: milton_prism.types.analysis.v1.CodebaseKind
+	(DatabaseEngine)(0),              // 4: milton_prism.types.analysis.v1.DatabaseEngine
+	(ArchitecturalPatternKind)(0),    // 5: milton_prism.types.analysis.v1.ArchitecturalPatternKind
+	(SecuritySeverity)(0),            // 6: milton_prism.types.analysis.v1.SecuritySeverity
+	(SecurityFindingType)(0),         // 7: milton_prism.types.analysis.v1.SecurityFindingType
+	(*AnalysisSummary)(nil),          // 8: milton_prism.types.analysis.v1.AnalysisSummary
+	(*IntakeAssessment)(nil),         // 9: milton_prism.types.analysis.v1.IntakeAssessment
+	(*DatabaseDetection)(nil),        // 10: milton_prism.types.analysis.v1.DatabaseDetection
+	(*ArchitecturalPattern)(nil),     // 11: milton_prism.types.analysis.v1.ArchitecturalPattern
+	(*SecurityFinding)(nil),          // 12: milton_prism.types.analysis.v1.SecurityFinding
+	(*UnreachableModule)(nil),        // 13: milton_prism.types.analysis.v1.UnreachableModule
+	(*Technology)(nil),               // 14: milton_prism.types.analysis.v1.Technology
+	(*Vulnerability)(nil),            // 15: milton_prism.types.analysis.v1.Vulnerability
+	(*RouteInfo)(nil),                // 16: milton_prism.types.analysis.v1.RouteInfo
+	(*ModuleCard)(nil),               // 17: milton_prism.types.analysis.v1.ModuleCard
+	(*SharedStateHub)(nil),           // 18: milton_prism.types.analysis.v1.SharedStateHub
+	(*BlueprintInfo)(nil),            // 19: milton_prism.types.analysis.v1.BlueprintInfo
+	(*ModuleClassification)(nil),     // 20: milton_prism.types.analysis.v1.ModuleClassification
+	(*DependencyEdge)(nil),           // 21: milton_prism.types.analysis.v1.DependencyEdge
+	(*timestamppb.Timestamp)(nil),    // 22: google.protobuf.Timestamp
+	(*v1.MigrabilityScore)(nil),      // 23: milton_prism.types.common.v1.MigrabilityScore
+	(*v1.MigrabilityAssessment)(nil), // 24: milton_prism.types.common.v1.MigrabilityAssessment
 }
 var file_milton_prism_types_analysis_v1_analysis_proto_depIdxs = []int32{
 	0,  // 0: milton_prism.types.analysis.v1.AnalysisSummary.state:type_name -> milton_prism.types.analysis.v1.AnalysisState
-	5,  // 1: milton_prism.types.analysis.v1.AnalysisSummary.technologies:type_name -> milton_prism.types.analysis.v1.Technology
-	6,  // 2: milton_prism.types.analysis.v1.AnalysisSummary.vulnerabilities:type_name -> milton_prism.types.analysis.v1.Vulnerability
-	12, // 3: milton_prism.types.analysis.v1.AnalysisSummary.dependency_graph:type_name -> milton_prism.types.analysis.v1.DependencyEdge
-	13, // 4: milton_prism.types.analysis.v1.AnalysisSummary.create_time:type_name -> google.protobuf.Timestamp
-	13, // 5: milton_prism.types.analysis.v1.AnalysisSummary.update_time:type_name -> google.protobuf.Timestamp
-	13, // 6: milton_prism.types.analysis.v1.AnalysisSummary.delete_time:type_name -> google.protobuf.Timestamp
-	13, // 7: milton_prism.types.analysis.v1.AnalysisSummary.purge_time:type_name -> google.protobuf.Timestamp
-	8,  // 8: milton_prism.types.analysis.v1.AnalysisSummary.module_cards:type_name -> milton_prism.types.analysis.v1.ModuleCard
-	10, // 9: milton_prism.types.analysis.v1.AnalysisSummary.blueprints:type_name -> milton_prism.types.analysis.v1.BlueprintInfo
-	11, // 10: milton_prism.types.analysis.v1.AnalysisSummary.module_classification:type_name -> milton_prism.types.analysis.v1.ModuleClassification
-	14, // 11: milton_prism.types.analysis.v1.AnalysisSummary.migrability_score:type_name -> milton_prism.types.common.v1.MigrabilityScore
-	15, // 12: milton_prism.types.analysis.v1.AnalysisSummary.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
-	9,  // 13: milton_prism.types.analysis.v1.AnalysisSummary.shared_state_hubs:type_name -> milton_prism.types.analysis.v1.SharedStateHub
-	4,  // 14: milton_prism.types.analysis.v1.AnalysisSummary.unreachable_modules:type_name -> milton_prism.types.analysis.v1.UnreachableModule
-	1,  // 15: milton_prism.types.analysis.v1.Technology.status:type_name -> milton_prism.types.analysis.v1.TechnologyStatus
-	2,  // 16: milton_prism.types.analysis.v1.Vulnerability.severity:type_name -> milton_prism.types.analysis.v1.Severity
-	7,  // 17: milton_prism.types.analysis.v1.ModuleCard.routes:type_name -> milton_prism.types.analysis.v1.RouteInfo
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	14, // 1: milton_prism.types.analysis.v1.AnalysisSummary.technologies:type_name -> milton_prism.types.analysis.v1.Technology
+	15, // 2: milton_prism.types.analysis.v1.AnalysisSummary.vulnerabilities:type_name -> milton_prism.types.analysis.v1.Vulnerability
+	21, // 3: milton_prism.types.analysis.v1.AnalysisSummary.dependency_graph:type_name -> milton_prism.types.analysis.v1.DependencyEdge
+	22, // 4: milton_prism.types.analysis.v1.AnalysisSummary.create_time:type_name -> google.protobuf.Timestamp
+	22, // 5: milton_prism.types.analysis.v1.AnalysisSummary.update_time:type_name -> google.protobuf.Timestamp
+	22, // 6: milton_prism.types.analysis.v1.AnalysisSummary.delete_time:type_name -> google.protobuf.Timestamp
+	22, // 7: milton_prism.types.analysis.v1.AnalysisSummary.purge_time:type_name -> google.protobuf.Timestamp
+	17, // 8: milton_prism.types.analysis.v1.AnalysisSummary.module_cards:type_name -> milton_prism.types.analysis.v1.ModuleCard
+	19, // 9: milton_prism.types.analysis.v1.AnalysisSummary.blueprints:type_name -> milton_prism.types.analysis.v1.BlueprintInfo
+	20, // 10: milton_prism.types.analysis.v1.AnalysisSummary.module_classification:type_name -> milton_prism.types.analysis.v1.ModuleClassification
+	23, // 11: milton_prism.types.analysis.v1.AnalysisSummary.migrability_score:type_name -> milton_prism.types.common.v1.MigrabilityScore
+	24, // 12: milton_prism.types.analysis.v1.AnalysisSummary.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
+	18, // 13: milton_prism.types.analysis.v1.AnalysisSummary.shared_state_hubs:type_name -> milton_prism.types.analysis.v1.SharedStateHub
+	13, // 14: milton_prism.types.analysis.v1.AnalysisSummary.unreachable_modules:type_name -> milton_prism.types.analysis.v1.UnreachableModule
+	10, // 15: milton_prism.types.analysis.v1.AnalysisSummary.database_detection:type_name -> milton_prism.types.analysis.v1.DatabaseDetection
+	11, // 16: milton_prism.types.analysis.v1.AnalysisSummary.architectural_pattern:type_name -> milton_prism.types.analysis.v1.ArchitecturalPattern
+	9,  // 17: milton_prism.types.analysis.v1.AnalysisSummary.intake_assessment:type_name -> milton_prism.types.analysis.v1.IntakeAssessment
+	12, // 18: milton_prism.types.analysis.v1.AnalysisSummary.security_findings:type_name -> milton_prism.types.analysis.v1.SecurityFinding
+	3,  // 19: milton_prism.types.analysis.v1.IntakeAssessment.codebase_kind:type_name -> milton_prism.types.analysis.v1.CodebaseKind
+	4,  // 20: milton_prism.types.analysis.v1.DatabaseDetection.engines:type_name -> milton_prism.types.analysis.v1.DatabaseEngine
+	5,  // 21: milton_prism.types.analysis.v1.ArchitecturalPattern.kind:type_name -> milton_prism.types.analysis.v1.ArchitecturalPatternKind
+	7,  // 22: milton_prism.types.analysis.v1.SecurityFinding.type:type_name -> milton_prism.types.analysis.v1.SecurityFindingType
+	6,  // 23: milton_prism.types.analysis.v1.SecurityFinding.severity:type_name -> milton_prism.types.analysis.v1.SecuritySeverity
+	1,  // 24: milton_prism.types.analysis.v1.Technology.status:type_name -> milton_prism.types.analysis.v1.TechnologyStatus
+	2,  // 25: milton_prism.types.analysis.v1.Vulnerability.severity:type_name -> milton_prism.types.analysis.v1.Severity
+	16, // 26: milton_prism.types.analysis.v1.ModuleCard.routes:type_name -> milton_prism.types.analysis.v1.RouteInfo
+	27, // [27:27] is the sub-list for method output_type
+	27, // [27:27] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_milton_prism_types_analysis_v1_analysis_proto_init() }
@@ -1490,8 +2382,8 @@ func file_milton_prism_types_analysis_v1_analysis_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_types_analysis_v1_analysis_proto_rawDesc), len(file_milton_prism_types_analysis_v1_analysis_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   10,
+			NumEnums:      8,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

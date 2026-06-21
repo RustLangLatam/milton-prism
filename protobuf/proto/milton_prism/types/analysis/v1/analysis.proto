@@ -1,0 +1,618 @@
+syntax = "proto3";
+
+package milton_prism.types.analysis.v1;
+
+import "google/api/field_behavior.proto";
+import "google/protobuf/timestamp.proto";
+import "milton_prism/types/common/v1/migrability.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Types.Analysis.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1;analysisv1";
+option java_multiple_files = true;
+option java_outer_classname = "AnalysisProtoV1";
+option java_package = "com.miltonprism.types.analysis.v1";
+option objc_class_prefix = "MPR";
+
+// ========== ANALYSIS TYPES ==========
+
+// AnalysisState is the lifecycle of a code analysis run.
+enum AnalysisState {
+  // Default — analysis has not started.
+  ANALYSIS_STATE_UNSPECIFIED = 0;
+  // Analysis engine is actively processing the repository.
+  ANALYSIS_STATE_RUNNING = 1;
+  // Analysis finished successfully.
+  ANALYSIS_STATE_COMPLETED = 2;
+  // Analysis failed; see the associated error details.
+  ANALYSIS_STATE_FAILED = 3;
+}
+
+// TechnologyStatus reflects how current a detected technology version is.
+enum TechnologyStatus {
+  // Default unspecified.
+  TECHNOLOGY_STATUS_UNSPECIFIED = 0;
+  // The detected version is current.
+  TECHNOLOGY_STATUS_CURRENT = 1;
+  // A newer stable version is available.
+  TECHNOLOGY_STATUS_OUTDATED = 2;
+  // The version has reached end-of-life and receives no security fixes.
+  TECHNOLOGY_STATUS_END_OF_LIFE = 3;
+}
+
+// Severity classifies the impact of a detected vulnerability.
+enum Severity {
+  // Default unspecified.
+  SEVERITY_UNSPECIFIED = 0;
+  // Informational — low impact.
+  SEVERITY_LOW = 1;
+  // Moderate impact; should be addressed within a sprint.
+  SEVERITY_MEDIUM = 2;
+  // High impact; should be addressed urgently.
+  SEVERITY_HIGH = 3;
+  // Critical impact; requires immediate remediation.
+  SEVERITY_CRITICAL = 4;
+}
+
+// AnalysisSummary is the output of a code analysis run against a repository.
+// It is the primary resource owned by the analysis engine.
+message AnalysisSummary {
+  option (openapi.v3.schema) = {
+    title: "AnalysisSummary"
+    description: "Output of a code analysis run: technologies, vulnerabilities, and dependency graph."
+  };
+
+  // System-assigned identifier.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = IDENTIFIER,
+    (openapi.v3.property) = {
+      description: "System-assigned unique identifier."
+      example: {yaml: "1"}
+    }
+  ];
+
+  // Identifier of the repository that was analysed.
+  uint64 repository_id = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Identifier of the repository this summary belongs to."
+      example: {yaml: "42"}
+    }
+  ];
+
+  // Identifier of the migration that triggered this analysis run.
+  uint64 migration_id = 3 [(openapi.v3.property) = {
+    description: "Migration identifier that triggered this run (0 if standalone)."
+    example: {yaml: "7"}
+  }];
+
+  // Current lifecycle state of the analysis run.
+  AnalysisState state = 4 [(openapi.v3.property) = {
+    description: "Lifecycle state of the analysis run."
+    example: {yaml: "ANALYSIS_STATE_COMPLETED"}
+  }];
+
+  // Technologies detected in the repository source code.
+  repeated Technology technologies = 5 [(openapi.v3.property) = {description: "Technologies detected during analysis."}];
+
+  // Security vulnerabilities found in dependencies or the code itself.
+  repeated Vulnerability vulnerabilities = 6 [(openapi.v3.property) = {description: "Security vulnerabilities detected during analysis."}];
+
+  // Directed dependency graph between modules.
+  repeated DependencyEdge dependency_graph = 7 [(openapi.v3.property) = {description: "Directed dependency graph edges between modules."}];
+
+  // Total number of source files scanned.
+  uint64 total_files = 8 [(openapi.v3.property) = {
+    description: "Total number of source files scanned."
+    example: {yaml: "312"}
+  }];
+
+  // Total number of source lines scanned.
+  uint64 total_lines = 9 [(openapi.v3.property) = {
+    description: "Total number of source lines of code scanned."
+    example: {yaml: "48200"}
+  }];
+
+  // Server-assigned creation timestamp. Immutable after creation.
+  google.protobuf.Timestamp create_time = 10 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (google.api.field_behavior) = IMMUTABLE,
+    (openapi.v3.property) = {
+      description: "Creation timestamp (server-assigned, immutable)."
+      example: {yaml: "2025-01-15T10:30:00Z"}
+    }
+  ];
+
+  // Server-assigned last modification timestamp.
+  google.protobuf.Timestamp update_time = 11 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Last modification timestamp (server-assigned)."
+      example: {yaml: "2025-06-01T08:00:00Z"}
+    }
+  ];
+
+  // Soft-delete timestamp. Present only for logically deleted summaries.
+  optional google.protobuf.Timestamp delete_time = 12 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Soft-delete timestamp. Null while active."
+      example: {yaml: "null"}
+    }
+  ];
+
+  // Scheduled hard-delete timestamp after the retention window expires.
+  optional google.protobuf.Timestamp purge_time = 13 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Scheduled purge timestamp after retention window."
+      example: {yaml: "null"}
+    }
+  ];
+
+  // Per-module structural cards extracted by the Tier-2 language analyzers.
+  repeated ModuleCard module_cards = 14 [(openapi.v3.property) = {description: "Per-module structural cards (functions, classes, routes, state)."}];
+
+  // Flask Blueprint registrations extracted from the Python workspace.
+  repeated BlueprintInfo blueprints = 15 [(openapi.v3.property) = {description: "Flask Blueprint registrations (name, file, url_prefix)."}];
+
+  // Domain/infrastructure/test classification of each module in the dependency graph.
+  // Computed by the analysis pipeline using the same blueprint-group + fan-in
+  // heuristic as the decomposition engine, so architecture documentation can show
+  // domain vs. infrastructure separation without running the full decomposition.
+  ModuleClassification module_classification = 16 [(openapi.v3.property) = {description: "Domain/infrastructure/test classification of each module in the dependency graph."}];
+
+  // Snapshot of the source repository's remote URL, captured at analysis creation time.
+  // Stored so that ListAnalysisSummaries can display the repository without a
+  // cross-service lookup — mirrors the same field on Migration.
+  string repository_url = 17 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Remote URL of the source repository, snapshotted at analysis creation."
+      example: {yaml: "https://github.com/org/my-service"}
+    }
+  ];
+
+  // Branch that was analysed, resolved at creation time (explicit override or
+  // repository default). Empty for analyses created before this field was added.
+  string source_branch = 18 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Branch analysed. Empty for analyses predating this field."
+      example: {yaml: "develop"}
+    }
+  ];
+
+  // Git commit SHA that was actually cloned and analysed. Captured from the
+  // repository HEAD after clone so it reflects the exact commit, not a branch
+  // pointer that may advance after analysis starts.
+  // Empty for analyses predating this field.
+  string commit_sha = 19 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Exact git commit SHA cloned and analysed. Empty for analyses predating this field."
+      example: {yaml: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}
+    }
+  ];
+
+  // Deterministic structural migrability score in [0, 100].
+  // Computed automatically when the analysis pipeline produces a dependency graph
+  // and module classification (i.e. when deep analysis data is available).
+  // Absent for Tier-1-only analyses (no graph) or analyses predating this field.
+  // Does not require an LLM call — computed at analysis completion.
+  milton_prism.types.common.v1.MigrabilityScore migrability_score = 20 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Deterministic structural migrability score 0–100. Present when deep analysis data is available."}
+  ];
+
+  // LLM-produced migrability assessment. Absent until the user explicitly triggers
+  // it via the AssessMigrability RPC. Populating this field costs LLM tokens.
+  milton_prism.types.common.v1.MigrabilityAssessment migrability_assessment = 21 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "LLM-produced migrability verdict. Absent until explicitly triggered by the user."}
+  ];
+
+  // Canonical shared-state hubs: modules with mutable state and weighted fan-in >= 2.
+  // Computed by the analysis pipeline using the same rule as the deterministic scorer.
+  // Sorted by fan-in descending (worst hub first). The frontend must read this list
+  // instead of recomputing from module_cards with its own thresholds.
+  repeated SharedStateHub shared_state_hubs = 23 [(openapi.v3.property) = {description: "Canonical shared-state hubs sorted by weighted fan-in descending."}];
+
+  // Identifier of the user who owns this analysis summary.
+  // Set at creation time from the caller's identity (standalone run) or from
+  // the owning migration's owner_user_id (migration-triggered run).
+  // System users (isSystem=true) can read and list summaries across all owners.
+  uint64 owner_user_id = 22 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Identifier of the user who owns this analysis summary."
+      example: {yaml: "42"}
+    }
+  ];
+
+  // Number of production (non-test) modules in module_cards. Derived from
+  // module_classification.test_modules: a card is production when its module
+  // name is NOT in that list. Zero for analyses without classification data
+  // (Tier-1-only, pre-classification, or when no module cards were extracted).
+  uint32 module_count_production = 24 [(openapi.v3.property) = {
+    description: "Count of production (non-test) module cards. Zero when classification is unavailable."
+    example: {yaml: "411"}
+  }];
+
+  // Number of test modules in module_cards (subset of module_classification.test_modules
+  // that also appear in module_cards). Zero when no test modules were detected.
+  uint32 module_count_test = 25 [(openapi.v3.property) = {
+    description: "Count of test module cards."
+    example: {yaml: "161"}
+  }];
+
+  // Statically unreachable modules: islands (fan-in = 0 AND fan-out = 0) that
+  // carry code but participate in no dependency edge the static analysis could
+  // resolve. NOT a claim of dead code — static analysis cannot prove a module is
+  // unused; these may be entry points, framework-wired classes, or invoked
+  // externally. Excluded from the live set that feeds scoring (a node with no
+  // edges cannot cluster) but still counted as production. A repo-hygiene
+  // "review" signal, never a structural finding and never scored. Known framework
+  // entry points, test islands, and empty package markers are not listed.
+  repeated UnreachableModule unreachable_modules = 26 [(openapi.v3.property) = {description: "Modules with code but no statically resolvable references (for review — may be entry points, framework-wired, or invoked externally; not scored)."}];
+
+  // Whether deep (Tier-2) structural analysis produced any output for this repo:
+  // true iff at least one detected language yielded a dependency graph or module
+  // cards. False means the deep analyzer was unavailable or blind to the layout
+  // (e.g. a pre-PSR-4 / global-namespace PHP codebase like CodeIgniter 3), so the
+  // repo has no module graph to reason over. This is an EXPLICIT pipeline signal —
+  // it is NOT derived from an empty graph or DomainEmpty downstream. Consumers
+  // (migrability assessment, UI executive summary) must degrade honestly when this
+  // is false rather than treating the empty graph as a real "no domain" finding.
+  bool deep_analysis_available = 27 [(openapi.v3.property) = {description: "True iff deep structural analysis (dependency graph / module cards) was produced. False = analyzer unavailable/blind; downstream must degrade honestly, not score."}];
+}
+
+// UnreachableModule is a module the static analysis could not link to the rest of
+// the system: it defines functions or classes yet has no incoming or outgoing
+// dependency edges. For review, not deletion — it may be an entry point,
+// framework-wired, or invoked externally. loc helps prioritise the review.
+message UnreachableModule {
+  option (openapi.v3.schema) = {
+    title: "UnreachableModule"
+    description: "A module with code but no statically resolvable references (for review, not deletion)."
+  };
+
+  // Fully-qualified module name.
+  string module = 1 [(openapi.v3.property) = {
+    description: "Fully-qualified module name."
+    example: {yaml: "backend.legacy_copy"}
+  }];
+
+  // Workspace-relative file path.
+  string file = 2 [(openapi.v3.property) = {
+    description: "Workspace-relative file path."
+    example: {yaml: "backend/legacy_copy.py"}
+  }];
+
+  // Lines of code in the file — for prioritising the review.
+  uint32 loc = 3 [(openapi.v3.property) = {
+    description: "Lines of code in the file."
+    example: {yaml: "240"}
+  }];
+}
+
+// Technology describes a language, framework, database, runtime, or library
+// detected in the repository source code.
+message Technology {
+  option (openapi.v3.schema) = {
+    title: "Technology"
+    description: "A technology (language, framework, library, etc.) detected in the repository."
+  };
+
+  // Display name of the technology (e.g. Go, React, PostgreSQL).
+  string name = 1 [(openapi.v3.property) = {
+    description: "Display name of the technology."
+    example: {yaml: "Go"}
+  }];
+
+  // Version string detected in the repository (e.g. from go.mod or package.json).
+  string detected_version = 2 [(openapi.v3.property) = {
+    description: "Version detected in the repository."
+    example: {yaml: "1.21.0"}
+  }];
+
+  // Most recent stable release version available.
+  string latest_version = 3 [(openapi.v3.property) = {
+    description: "Latest stable release available."
+    example: {yaml: "1.25.0"}
+  }];
+
+  // How current the detected version is.
+  TechnologyStatus status = 4 [(openapi.v3.property) = {
+    description: "Recency status of the detected version."
+    example: {yaml: "TECHNOLOGY_STATUS_OUTDATED"}
+  }];
+
+  // Broad category: language | framework | database | runtime | library.
+  string category = 5 [(openapi.v3.property) = {
+    description: "Broad category: language, framework, database, runtime, or library."
+    example: {yaml: "language"}
+  }];
+
+  // Stable machine identifier for icon and filter mapping (e.g. "laravel", "django", "react").
+  // Lowercase, no variants, independent of how individual package managers name the package.
+  // Empty for technologies not present in the framework catalog (custom or niche packages).
+  string slug = 6 [(openapi.v3.property) = {
+    description: "Stable machine identifier for icon/filter mapping. Empty when unknown."
+    example: {yaml: "laravel"}
+  }];
+}
+
+// Vulnerability describes a security finding in a dependency or the code itself.
+message Vulnerability {
+  option (openapi.v3.schema) = {
+    title: "Vulnerability"
+    description: "A security vulnerability detected in a dependency or the repository source."
+  };
+
+  // External identifier (e.g. CVE-2024-12345, GHSA-xxxx).
+  string identifier_ref = 1 [(openapi.v3.property) = {
+    description: "External vulnerability identifier (e.g. CVE or GHSA ID)."
+    example: {yaml: "CVE-2024-12345"}
+  }];
+
+  // Severity level of the vulnerability.
+  Severity severity = 2 [(openapi.v3.property) = {
+    description: "Severity level."
+    example: {yaml: "SEVERITY_HIGH"}
+  }];
+
+  // Name of the affected dependency or module.
+  string component = 3 [(openapi.v3.property) = {
+    description: "Name of the affected component or dependency."
+    example: {yaml: "golang.org/x/net"}
+  }];
+
+  // Human-readable description of the vulnerability.
+  string description = 4 [(openapi.v3.property) = {
+    description: "Human-readable description of the vulnerability."
+    example: {yaml: "HTTP/2 rapid reset attack allows denial of service."}
+  }];
+
+  // Version in which the vulnerability was fixed.
+  string fixed_in_version = 5 [(openapi.v3.property) = {
+    description: "Version in which the vulnerability was fixed."
+    example: {yaml: "0.20.0"}
+  }];
+
+  // Full advisory text from OSV (Markdown). More detailed than description,
+  // which maps to the one-line OSV summary.
+  string details = 6 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Full advisory description in Markdown (OSV details field). Richer than description."
+      example: {yaml: "### Impact\\nAn attacker who..."}
+    }
+  ];
+
+  // External reference URLs for this advisory (CVE NVD page, GitHub advisory,
+  // fix commit, changelog, etc.).
+  repeated string references = 7 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "URLs to external advisory pages, fix commits, and CVE databases."}
+  ];
+}
+
+// RouteInfo is an HTTP route extracted from a web-framework route decorator.
+message RouteInfo {
+  option (openapi.v3.schema) = {
+    title: "RouteInfo"
+    description: "HTTP route extracted from a web-framework decorator."
+  };
+
+  // HTTP method(s), comma-joined when multiple (e.g. "GET" or "GET,POST").
+  string method = 1 [(openapi.v3.property) = {
+    description: "HTTP method(s), comma-joined when multiple."
+    example: {yaml: "GET"}
+  }];
+
+  // URL path pattern (e.g. "/users/<int:user_id>").
+  string path = 2 [(openapi.v3.property) = {
+    description: "URL path pattern."
+    example: {yaml: "/users/<int:user_id>"}
+  }];
+
+  // Name of the handler function.
+  string handler = 3 [(openapi.v3.property) = {
+    description: "Name of the handler function."
+    example: {yaml: "get_user"}
+  }];
+}
+
+// ModuleCard is a structural summary of a single source module as extracted by
+// a Tier-2 language analyzer (Python, PHP, or any future supported language).
+// It captures the public API surface, mutable module state, and route
+// registrations found by static AST analysis (tree-sitter).
+message ModuleCard {
+  option (openapi.v3.schema) = {
+    title: "ModuleCard"
+    description: "Structural summary of a single source module (Python, PHP, or other Tier-2 supported language)."
+  };
+
+  // Fully-qualified module name as resolved by the language-specific module
+  // resolver. Python uses dotted names (e.g. conduit.users.routes); PHP uses
+  // backslash-separated names (e.g. BookStack\Entities\Models\Book).
+  string module = 1 [(openapi.v3.property) = {
+    description: "Fully-qualified module name (dotted for Python, e.g. conduit.users.routes; backslash-separated for PHP, e.g. BookStack\\\\Entities\\\\Models\\\\Book)."
+    example: {yaml: "conduit.users.routes"}
+  }];
+
+  // Workspace-relative file path.
+  string file = 2 [(openapi.v3.property) = {
+    description: "Workspace-relative file path."
+    example: {yaml: "conduit/users/routes.py"}
+  }];
+
+  // Names of module-level function definitions.
+  repeated string functions = 3 [(openapi.v3.property) = {description: "Module-level function names."}];
+
+  // Names of class definitions in this module. For PHP, each entry carries a
+  // kind prefix: "class:Book", "trait:HandlesLogins", "interface:Renderable".
+  // For Python, plain class names are used (e.g. "Article").
+  repeated string classes = 4 [(openapi.v3.property) = {description: "Class names in this module. PHP entries carry a kind prefix (e.g. class:Book); Python entries are plain names."}];
+
+  // Names of mutable module-level variables (non-ALL_CAPS assignments).
+  repeated string module_level_state = 5 [(openapi.v3.property) = {description: "Mutable module-level variable names."}];
+
+  // HTTP routes detected via route decorator analysis.
+  repeated RouteInfo routes = 6 [(openapi.v3.property) = {description: "HTTP routes found on decorated functions."}];
+
+  // First 120 characters of the module docstring, if present.
+  string docstring_head = 7 [(openapi.v3.property) = {
+    description: "First 120 characters of the module docstring."
+    example: {yaml: "User authentication routes for the Conduit API."}
+  }];
+
+  // Non-blank, non-comment line count.
+  uint32 loc = 8 [(openapi.v3.property) = {
+    description: "Non-blank non-comment line count."
+    example: {yaml: "42"}
+  }];
+
+  // Weighted fan-in: sum of edge weights from all importers of this module.
+  // Computed from the dependency graph by the analysis pipeline (same formula
+  // used by the deterministic scorer). Zero when the module is not imported.
+  uint32 fan_in = 9 [(openapi.v3.property) = {
+    description: "Weighted fan-in (sum of edge weights from importers). Same metric the scorer uses."
+    example: {yaml: "19"}
+  }];
+
+  // Weighted fan-out: sum of edge weights to all modules this module imports.
+  uint32 fan_out = 10 [(openapi.v3.property) = {
+    description: "Weighted fan-out (sum of edge weights to imported modules)."
+    example: {yaml: "5"}
+  }];
+
+  // True when this module has mutable module-level state AND fan_in >= 2.
+  // Computed by the analysis pipeline using the same rule as the scorer/distiller.
+  // Canonical flag — do not recompute from functions/state counts in the client.
+  bool is_shared_state_hub = 11 [(openapi.v3.property) = {
+    description: "True when module has mutable state and weighted fan-in >= 2 (canonical hub flag)."
+    example: {yaml: "true"}
+  }];
+
+  // Weighted fan-in from production (non-test) importers only: sum of edge
+  // weights from modules not in the test classification. Zero when all importers
+  // are test modules, the module is not imported, or classification was skipped.
+  // Use this value for display instead of fan_in to avoid inflating counts with
+  // test-only dependencies.
+  uint32 fan_in_from_production = 12 [(openapi.v3.property) = {
+    description: "Weighted fan-in from non-test importers only. Use for display; falls back to fan_in when 0 and no classification is available."
+    example: {yaml: "41"}
+  }];
+}
+
+// SharedStateHub is a module that exposes mutable module-level state and is
+// imported by at least two other modules (weighted fan-in ≥ 2). These are the
+// canonical hubs as determined by the backend scorer — do not recompute in the client.
+message SharedStateHub {
+  option (openapi.v3.schema) = {
+    title: "SharedStateHub"
+    description: "Module with mutable state and weighted fan-in >= 2 (canonical shared-state hub)."
+  };
+
+  // Dotted module name.
+  string module = 1 [(openapi.v3.property) = {description: "Dotted module name of the hub."}];
+
+  // Names of the mutable module-level variables that constitute shared state.
+  repeated string mutable_state = 2 [(openapi.v3.property) = {description: "Mutable module-level variable names."}];
+
+  // Weighted fan-in: sum of edge weights from all importers (same as ModuleCard.fan_in).
+  uint32 fan_in = 3 [(openapi.v3.property) = {
+    description: "Weighted fan-in (sum of edge weights from importers)."
+    example: {yaml: "19"}
+  }];
+}
+
+// BlueprintInfo holds Flask Blueprint metadata correlated from Blueprint()
+// definitions and register_blueprint() calls in a Python workspace.
+message BlueprintInfo {
+  option (openapi.v3.schema) = {
+    title: "BlueprintInfo"
+    description: "Flask Blueprint registration metadata."
+  };
+
+  // Blueprint name — first string argument of Blueprint(name, ...).
+  string name = 1 [(openapi.v3.property) = {
+    description: "Blueprint name."
+    example: {yaml: "users"}
+  }];
+
+  // Workspace-relative file path where Blueprint() was instantiated.
+  string file = 2 [(openapi.v3.property) = {
+    description: "File where Blueprint() was defined."
+    example: {yaml: "conduit/users/routes.py"}
+  }];
+
+  // URL prefix from register_blueprint(bp, url_prefix=...), empty if not registered.
+  string url_prefix = 3 [(openapi.v3.property) = {
+    description: "URL prefix from register_blueprint (empty if not found)."
+    example: {yaml: "/users"}
+  }];
+}
+
+// ModuleClassification holds the domain/infrastructure/test classification of
+// every module in the dependency graph. Computed by the blueprint-group heuristic
+// (or the fan-in structural fallback) — the same algorithm as the decomposition
+// engine's DeterministicInfraDetector, intentionally kept separate so each
+// worker can evolve its classification criteria independently.
+message ModuleClassification {
+  option (openapi.v3.schema) = {
+    title: "ModuleClassification"
+    description: "Domain/infrastructure/test classification of each module in the dependency graph."
+  };
+
+  // Modules classified as domain (business logic).
+  repeated string domain_modules = 1 [(openapi.v3.property) = {description: "Modules carrying business/domain logic."}];
+
+  // Modules classified as infrastructure (shared utilities, DB clients, config, etc.).
+  repeated string infra_modules = 2 [(openapi.v3.property) = {description: "Modules classified as shared infrastructure."}];
+
+  // Modules classified as tests (excluded from domain/infra partitions).
+  repeated string test_modules = 3 [(openapi.v3.property) = {description: "Test modules excluded from domain/infra partitions."}];
+
+  // Modules classified as application layer (controllers, middleware, CLI commands).
+  // Populated only for languages with framework-aware classification (e.g. PHP/Laravel,
+  // PHP/Symfony). Empty for Python and other generic stacks.
+  repeated string application_modules = 5 [(openapi.v3.property) = {description: "Modules classified as application layer (HTTP controllers, middleware, CLI handlers)."}];
+
+  // True when no blueprint groups were detected and the fan-in structural fallback
+  // was applied. Signals that domain/infra boundaries are heuristic estimates.
+  bool structural_fallback = 4 [(openapi.v3.property) = {
+    description: "True when the fan-in structural fallback was used (no blueprint groups found)."
+    example: {yaml: "false"}
+  }];
+}
+
+// DependencyEdge is a directed edge in the inter-module dependency graph.
+// A higher weight indicates stronger coupling.
+message DependencyEdge {
+  option (openapi.v3.schema) = {
+    title: "DependencyEdge"
+    description: "Directed edge between two modules in the dependency graph."
+  };
+
+  // Fully qualified name of the dependent module.
+  string from_module = 1 [(openapi.v3.property) = {
+    description: "Fully qualified name of the module with the dependency."
+    example: {yaml: "service/orders"}
+  }];
+
+  // Fully qualified name of the module being depended on.
+  string to_module = 2 [(openapi.v3.property) = {
+    description: "Fully qualified name of the module being depended on."
+    example: {yaml: "service/inventory"}
+  }];
+
+  // Coupling strength: higher values indicate more frequent inter-module calls.
+  uint32 weight = 3 [(openapi.v3.property) = {
+    description: "Coupling strength (higher = more coupled)."
+    example: {yaml: "12"}
+  }];
+}

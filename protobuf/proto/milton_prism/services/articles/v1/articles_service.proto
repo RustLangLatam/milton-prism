@@ -1,0 +1,200 @@
+syntax = "proto3";
+
+package milton_prism.services.articles.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "milton_prism/types/articles/v1/articles.proto";
+import "milton_prism/types/pagination/v1/pagination.proto";
+import "milton_prism/types/query_params/v1/query_params.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Services.Articles.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/services/articles/v1;articlessvcv1";
+option java_multiple_files = true;
+option java_outer_classname = "ArticlesServiceProtoV1";
+option java_package = "com.miltonprism.services.articles.v1";
+option objc_class_prefix = "MPR";
+
+// ArticleService manages articles and tags for the Conduit platform.
+//
+// Derived from cluster conduit.articles in the decomposition engine output.
+// All RPCs require bearer-token authentication.
+// Standard CRUD methods follow AIP-130 – 135.
+// Custom methods (feed, favorite, comments) are marked TODO — implement as
+// AIP-136 :verbCamelCase custom methods before shipping.
+service ArticleService {
+  // CreateArticle persists a new article for the authenticated author.
+  //
+  // The author_identifier must reference a valid profile in the profile service.
+  rpc CreateArticle(CreateArticleRequest) returns (milton_prism.types.articles.v1.Article) {
+    option (google.api.http) = {
+      post: "/v1/articles"
+      body: "article"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Create an article"
+      description: "Persists a new article. The author_identifier must reference an existing profile."
+    };
+  }
+
+  // GetArticle returns a single article by its numeric identifier.
+  rpc GetArticle(GetArticleRequest) returns (milton_prism.types.articles.v1.Article) {
+    option (google.api.http) = {get: "/v1/articles/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Get an article"
+      description: "Returns an article by numeric identifier."
+    };
+  }
+
+  // ListArticles returns a paginated, optionally filtered list of articles.
+  rpc ListArticles(ListArticlesRequest) returns (ListArticlesResponse) {
+    option (google.api.http) = {get: "/v1/articles"};
+    option (openapi.v3.operation) = {
+      summary: "List articles"
+      description: "Returns a paginated, filtered list of articles."
+    };
+  }
+
+  // UpdateArticle applies a FieldMask-bounded partial update.
+  //
+  // Mutable fields: slug, title, description, body, state.
+  rpc UpdateArticle(UpdateArticleRequest) returns (milton_prism.types.articles.v1.Article) {
+    option (google.api.http) = {
+      patch: "/v1/articles/{article.identifier}"
+      body: "article"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Update an article"
+      description: "Applies a FieldMask-bounded partial update. Mutable fields: slug, title, description, body, state."
+    };
+  }
+
+  // DeleteArticle soft-deletes an article by identifier.
+  rpc DeleteArticle(DeleteArticleRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/articles/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Delete an article"
+      description: "Soft-deletes an article. The record is retained until the purge window expires."
+    };
+  }
+
+  // GetTag returns a single tag by its numeric identifier.
+  rpc GetTag(GetTagRequest) returns (milton_prism.types.articles.v1.Tag) {
+    option (google.api.http) = {get: "/v1/tags/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Get a tag"
+      description: "Returns a tag by numeric identifier."
+    };
+  }
+
+  // ListTags returns a paginated list of all active tags.
+  rpc ListTags(ListTagsRequest) returns (ListTagsResponse) {
+    option (google.api.http) = {get: "/v1/tags"};
+    option (openapi.v3.operation) = {
+      summary: "List tags"
+      description: "Returns a paginated list of active tags."
+    };
+  }
+
+  // TODO: custom route derived from GET /api/articles/<slug>/favorite
+  //       implement as POST /v1/articles/{identifier}:favorite  (AIP-136)
+
+  // TODO: custom route derived from GET /api/articles/feed
+  //       implement as GET /v1/articles:listFeed  (AIP-136)
+
+  // TODO: custom route derived from GET /api/articles/<slug>/comments
+  //       implement as GET /v1/articles/{identifier}:listComments  (AIP-136)
+}
+
+// CreateArticleRequest carries the article to create.
+message CreateArticleRequest {
+  // Article to create. author_identifier and slug are required.
+  milton_prism.types.articles.v1.Article article = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Article resource to create."}
+  ];
+}
+
+// GetArticleRequest identifies the article to retrieve.
+message GetArticleRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Article identifier."
+      example: {yaml: "7"}
+    }
+  ];
+}
+
+// ListArticlesRequest parameters for a paginated, filtered list.
+message ListArticlesRequest {
+  // Optional filter to narrow results.
+  milton_prism.types.articles.v1.ArticlesFilter filter = 1 [(openapi.v3.property) = {description: "Optional filter to narrow the article list."}];
+  // Pagination parameters (page_number, page_size).
+  milton_prism.types.query_params.v1.PageQueryParams page_params = 2 [(openapi.v3.property) = {description: "Page number and page size parameters."}];
+}
+
+// ListArticlesResponse carries a page of articles with pagination metadata.
+message ListArticlesResponse {
+  // The articles on this page.
+  repeated milton_prism.types.articles.v1.Article articles = 1 [(openapi.v3.property) = {description: "Articles in this result page."}];
+  // Pagination metadata.
+  milton_prism.types.pagination.v1.Pagination pagination = 2 [(openapi.v3.property) = {description: "Pagination metadata."}];
+}
+
+// UpdateArticleRequest carries the partial update payload.
+message UpdateArticleRequest {
+  // Article fields to update. identifier is required.
+  milton_prism.types.articles.v1.Article article = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Article resource with fields to update."}
+  ];
+  // Mask of fields to update. Required; empty mask updates all mutable fields.
+  google.protobuf.FieldMask update_mask = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Fields to update."}
+  ];
+}
+
+// DeleteArticleRequest identifies the article to soft-delete.
+message DeleteArticleRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Article identifier."
+      example: {yaml: "7"}
+    }
+  ];
+}
+
+// GetTagRequest identifies the tag to retrieve.
+message GetTagRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Tag identifier."
+      example: {yaml: "1"}
+    }
+  ];
+}
+
+// ListTagsRequest parameters for a paginated list of tags.
+message ListTagsRequest {
+  // Pagination parameters (page_number, page_size).
+  milton_prism.types.query_params.v1.PageQueryParams page_params = 1 [(openapi.v3.property) = {description: "Page number and page size parameters."}];
+}
+
+// ListTagsResponse carries a page of tags with pagination metadata.
+message ListTagsResponse {
+  // The tags on this page.
+  repeated milton_prism.types.articles.v1.Tag tags = 1 [(openapi.v3.property) = {description: "Tags in this result page."}];
+  // Pagination metadata.
+  milton_prism.types.pagination.v1.Pagination pagination = 2 [(openapi.v3.property) = {description: "Pagination metadata."}];
+}

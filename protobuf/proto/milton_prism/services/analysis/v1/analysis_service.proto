@@ -1,0 +1,253 @@
+syntax = "proto3";
+
+package milton_prism.services.analysis.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "milton_prism/types/analysis/v1/analysis.proto";
+import "milton_prism/types/common/v1/migrability.proto";
+import "milton_prism/types/pagination/v1/pagination.proto";
+import "milton_prism/types/query_params/v1/query_params.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Services.Analysis.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1;analysissvcv1";
+option java_multiple_files = true;
+option java_outer_classname = "AnalysisServiceProtoV1";
+option java_package = "com.miltonprism.services.analysis.v1";
+option objc_class_prefix = "MPR";
+
+// AnalysisService provides read access to code analysis results and the ability
+// to trigger new analysis runs.
+//
+// Analysis runs are asynchronous: RunAnalysis returns immediately with an
+// AnalysisSummary in RUNNING state and enqueues the heavy work to the analysis
+// engine worker. Clients poll GetAnalysisSummary until the state transitions
+// to COMPLETED or FAILED.
+//
+// All RPCs require bearer-token authentication.
+// Read methods follow AIP-130 / AIP-132.
+// RunAnalysis follows AIP-136 (custom method).
+service AnalysisService {
+  // GetAnalysisSummary returns a single analysis summary by its numeric identifier.
+  //
+  // Only system users or users associated with the source repository may retrieve
+  // a summary.
+  rpc GetAnalysisSummary(GetAnalysisSummaryRequest) returns (milton_prism.types.analysis.v1.AnalysisSummary) {
+    option (google.api.http) = {get: "/v1/analysis_summaries/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Get an analysis summary"
+      description: "Returns a single code analysis summary by numeric identifier."
+    };
+  }
+
+  // ListAnalysisSummaries returns a paginated list of analysis summaries.
+  //
+  // Results can be filtered by repository, migration, or state.
+  rpc ListAnalysisSummaries(ListAnalysisSummariesRequest) returns (ListAnalysisSummariesResponse) {
+    option (google.api.http) = {get: "/v1/analysis_summaries"};
+    option (openapi.v3.operation) = {
+      summary: "List analysis summaries"
+      description: "Returns a paginated, filtered list of code analysis summaries."
+    };
+  }
+
+  // RunAnalysis enqueues a new code analysis run against a repository.
+  //
+  // The RPC is asynchronous: it creates an AnalysisSummary in RUNNING state and
+  // returns immediately. The analysis engine worker processes the job and
+  // transitions the summary to COMPLETED or FAILED when done.
+  // Callers should poll GetAnalysisSummary to observe progress.
+  //
+  // Standalone deduplication: when migration_id is 0 and force is false, the
+  // service checks whether a COMPLETED analysis already exists for the same
+  // repository+branch+commit. If one is found, the response sets duplicate_found=true
+  // and returns the existing analysis in existing_analysis instead of creating a
+  // new run. Pass force=true to bypass the check and always create a fresh analysis.
+  rpc RunAnalysis(RunAnalysisRequest) returns (RunAnalysisResponse) {
+    option (google.api.http) = {
+      post: "/v1/analysis_summaries:run"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Run a code analysis"
+      description: "Enqueues an async analysis run. Returns immediately with an AnalysisSummary in RUNNING state. For standalone runs, if a COMPLETED analysis for the same commit already exists and force=false, returns duplicate_found=true with the existing analysis instead of creating a new run."
+    };
+  }
+
+  // EvaluateMigrability runs the LLM migrability assessment for a completed analysis.
+  //
+  // This is an opt-in synchronous call — it makes one LLM API call and costs
+  // ~$0.003 per execution. It can be called for any analysis with deep data
+  // (graph + classification), regardless of whether it is linked to a migration.
+  // The result is persisted as migrability_assessment on the AnalysisSummary.
+  //
+  // Requires: the analysis must be in COMPLETED state with a non-empty
+  // dependency graph. Returns the assessment immediately.
+  rpc EvaluateMigrability(EvaluateMigrabilityRequest) returns (milton_prism.types.common.v1.MigrabilityAssessment) {
+    option (google.api.http) = {
+      post: "/v1/analysis_summaries/{identifier}:evaluateMigrability"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Evaluate analysis migrability"
+      description: "Runs the opt-in LLM migrability assessment for a completed analysis summary. Makes one LLM API call (~$0.003). Persists and returns the MigrabilityAssessment."
+    };
+  }
+}
+
+// EvaluateMigrabilityRequest identifies the analysis summary to assess.
+message EvaluateMigrabilityRequest {
+  // Numeric identifier of the completed AnalysisSummary to assess.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Analysis summary identifier."
+      example: {yaml: "42"}
+    }
+  ];
+
+  // BCP-47 language tag for the prose fields (summary, reasons, blockers) in
+  // the LLM response. Absent or empty → default "en". Module names,
+  // identifiers, and i18n keys are never translated regardless of this value.
+  string language = 2 [(openapi.v3.property) = {
+    description: "BCP-47 language for LLM-generated prose (summary/reasons/blockers). Absent → 'en'. Module names and identifiers are never translated."
+    example: {yaml: "es"}
+  }];
+}
+
+// GetAnalysisSummaryRequest identifies the summary to retrieve.
+message GetAnalysisSummaryRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Analysis summary identifier."
+      example: {yaml: "1"}
+    }
+  ];
+}
+
+// ListAnalysisSummariesRequest parameters for a paginated, filtered list.
+message ListAnalysisSummariesRequest {
+  // Optional filter to narrow results.
+  AnalysisSummariesFilter filter = 1 [(openapi.v3.property) = {description: "Optional filter to narrow the analysis summary list."}];
+  // Pagination parameters (page_number, page_size).
+  milton_prism.types.query_params.v1.PageQueryParams page_params = 2 [(openapi.v3.property) = {description: "Page number and page size parameters."}];
+}
+
+// ListAnalysisSummariesResponse carries a page of summaries with pagination metadata.
+message ListAnalysisSummariesResponse {
+  // The analysis summaries on this page.
+  repeated milton_prism.types.analysis.v1.AnalysisSummary analysis_summaries = 1 [(openapi.v3.property) = {description: "Analysis summaries in this result page."}];
+  // Pagination metadata for this result page.
+  milton_prism.types.pagination.v1.Pagination pagination = 2 [(openapi.v3.property) = {description: "Pagination metadata."}];
+}
+
+// RunAnalysisRequest initiates a new asynchronous analysis run.
+message RunAnalysisRequest {
+  // Identifier of the repository to analyse.
+  uint64 repository_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Identifier of the repository to analyse."
+      example: {yaml: "42"}
+    }
+  ];
+  // Optional identifier of the migration that triggered this run.
+  // When set, the resulting summary is linked to the migration record.
+  uint64 migration_id = 2 [(openapi.v3.property) = {
+    description: "Migration identifier that triggered this run (0 if standalone)."
+    example: {yaml: "7"}
+  }];
+  // Branch to analyse. When empty the repository's default_branch is used.
+  string source_branch = 3 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {
+      description: "Branch to analyse. Defaults to the repository's default_branch when empty."
+      example: {yaml: "develop"}
+    }
+  ];
+  // When true, bypass duplicate detection for standalone runs and always
+  // create a fresh analysis, even if a COMPLETED analysis for the same
+  // repository+branch+commit already exists.
+  bool force = 4 [(openapi.v3.property) = {
+    description: "When true, force a new analysis even if a duplicate already exists."
+    example: {yaml: "false"}
+  }];
+  // Owner of the resulting summary. Injected server-side by the handler from
+  // the caller's identity (standalone) or from the owning migration's
+  // owner_user_id (migration-triggered). Clients must not set this field.
+  uint64 owner_user_id = 5 [(openapi.v3.property) = {
+    description: "Owner user identifier. Injected server-side; ignored when sent by clients."
+    example: {yaml: "42"}
+  }];
+}
+
+// RunAnalysisResponse is the result of a RunAnalysis call.
+message RunAnalysisResponse {
+  // The newly created AnalysisSummary in RUNNING state.
+  // Absent (null) when duplicate_found is true.
+  milton_prism.types.analysis.v1.AnalysisSummary analysis_summary = 1 [(openapi.v3.property) = {description: "Newly created analysis summary (RUNNING). Null when duplicate_found."}];
+
+  // True when a COMPLETED analysis for the same repository+branch+commit was
+  // found and force was false. No new analysis was created; existing_analysis
+  // carries the details of the duplicate.
+  bool duplicate_found = 2 [(openapi.v3.property) = {
+    description: "True when a same-commit analysis already exists and no new run was started."
+    example: {yaml: "false"}
+  }];
+
+  // The existing COMPLETED AnalysisSummary that matches the current HEAD commit.
+  // Populated only when duplicate_found is true.
+  milton_prism.types.analysis.v1.AnalysisSummary existing_analysis = 3 [(openapi.v3.property) = {description: "Existing COMPLETED analysis when duplicate_found=true."}];
+}
+
+// AnalysisSummariesFilter constrains the set of summaries returned by ListAnalysisSummaries.
+message AnalysisSummariesFilter {
+  // Restrict results to summaries for this repository.
+  optional uint64 repository_id = 1 [(openapi.v3.property) = {
+    description: "Filter by source repository identifier."
+    example: {yaml: "42"}
+  }];
+  // Restrict results to summaries linked to this migration.
+  optional uint64 migration_id = 2 [(openapi.v3.property) = {
+    description: "Filter by associated migration identifier."
+    example: {yaml: "7"}
+  }];
+  // Restrict results to summaries in this lifecycle state.
+  optional milton_prism.types.analysis.v1.AnalysisState state = 3 [(openapi.v3.property) = {
+    description: "Filter by analysis lifecycle state."
+    example: {yaml: "ANALYSIS_STATE_COMPLETED"}
+  }];
+  // When true, restrict results to standalone analyses (migration_id absent or 0).
+  // Mutually exclusive with migration_id: if both are set, standalone takes precedence.
+  bool standalone = 4 [(openapi.v3.property) = {
+    description: "When true, return only standalone analyses (not linked to any migration)."
+    example: {yaml: "true"}
+  }];
+  // Restrict results to summaries in ANY of these lifecycle states.
+  // When non-empty, takes precedence over state (singular).
+  // Translates to a single MongoDB $in query so pagination covers the union.
+  repeated milton_prism.types.analysis.v1.AnalysisState states = 5 [(openapi.v3.property) = {
+    description: "Filter by multiple lifecycle states (OR). Takes precedence over state when non-empty."
+    example: {yaml: "[ANALYSIS_STATE_RUNNING, ANALYSIS_STATE_COMPLETED]"}
+  }];
+
+  // Restrict results to summaries for this source branch.
+  // Combine with repository_id and state=COMPLETED to find the latest
+  // completed analysis for a given repo+branch pair.
+  optional string source_branch = 6 [(openapi.v3.property) = {
+    description: "Filter by source branch name."
+    example: {yaml: "main"}
+  }];
+
+  // Restrict results to summaries owned by this user.
+  // Injected automatically by the handler for non-system callers; clients
+  // should not set this field (it will be overwritten).
+  optional uint64 owner_user_id = 7 [(openapi.v3.property) = {
+    description: "Filter by owner user identifier. Injected server-side for non-system callers."
+    example: {yaml: "42"}
+  }];
+}

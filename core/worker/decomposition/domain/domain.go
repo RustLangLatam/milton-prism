@@ -191,9 +191,9 @@ type ServiceCandidate struct {
 // after decomposition — it is present in the monolith as a direct import but
 // would vanish as a compile-time dependency in a proper microservices topology.
 type OperationalCoupling struct {
-	FromService  string // service whose view/controller layer imports the other
-	ToService    string // service that is referenced
-	FromModule   string // the specific module (e.g. "conduit.user.views")
+	FromService string // service whose view/controller layer imports the other
+	ToService   string // service that is referenced
+	FromModule  string // the specific module (e.g. "conduit.user.views")
 }
 
 // DerivedContract is the output of the ContractDeriver stage (stage 5) for
@@ -231,12 +231,12 @@ type ProtoMessage struct {
 
 // ProtoField represents one field within a ProtoMessage.
 type ProtoField struct {
-	Name      string
-	Type      string // proto type (e.g. "string", "uint64", "google.protobuf.Timestamp")
-	Number    int
-	Comment   string // inline comment, e.g. for cross-service FK annotations
-	IsCrossFK bool   // true when this field is a foreign key to another service
-	RefTable  string // SQLAlchemy __tablename__ of the referenced table
+	Name       string
+	Type       string // proto type (e.g. "string", "uint64", "google.protobuf.Timestamp")
+	Number     int
+	Comment    string // inline comment, e.g. for cross-service FK annotations
+	IsCrossFK  bool   // true when this field is a foreign key to another service
+	RefTable   string // SQLAlchemy __tablename__ of the referenced table
 	RefService string // service name that owns RefTable (empty if not resolved)
 }
 
@@ -245,7 +245,7 @@ type ServiceRPC struct {
 	Name       string // rpc name (e.g. "ListArticles"), empty when IsTODO is true
 	Path       string // original Flask route path
 	HTTPMethod string
-	IsTODO     bool   // true when the route could not be mapped to a standard CRUD method
+	IsTODO     bool // true when the route could not be mapped to a standard CRUD method
 }
 
 // DataOwnership is the output of stage 6. It records the shared-database flag
@@ -254,8 +254,8 @@ type ServiceRPC struct {
 type DataOwnership struct {
 	// SharedDatabase is always true in v1: all proposed services share one database.
 	// Each boundary spec must declare this explicitly so the flag is never silent.
-	SharedDatabase      bool
-	CrossServiceFKs     []CrossServiceFK
+	SharedDatabase  bool
+	CrossServiceFKs []CrossServiceFK
 	// OperationalCouplings aggregates the view-layer couplings from all candidates.
 	// Used by assemblePlan to populate RestructurePlan.operational_couplings.
 	OperationalCouplings []OperationalCoupling

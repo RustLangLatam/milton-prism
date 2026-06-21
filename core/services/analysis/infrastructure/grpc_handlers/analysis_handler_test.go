@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	summaryID  uint64 = 1
-	repoID     uint64 = 42
+	summaryID   uint64 = 1
+	repoID      uint64 = 42
 	migrationID uint64 = 7
 )
 

@@ -39,7 +39,7 @@ type ServiceGenerationRecord struct {
 
 // JobPayload is the Asynq task payload for generation:run jobs.
 type JobPayload struct {
-	MigrationID uint64   `json:"migration_id"`
+	MigrationID uint64 `json:"migration_id"`
 	// ServiceFilter is the optional allowlist of service names to generate.
 	// Empty (default) generates all services in the package.
 	ServiceFilter []string `json:"service_filter,omitempty"`

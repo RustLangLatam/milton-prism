@@ -26,9 +26,9 @@ import (
 //       ./core/worker/generation/infrastructure/container/...
 
 const (
-	agentImage     = "milton-prism-generation-agent:latest"
-	isolatedNet    = "prism-generation"
-	testCPUQuota   = 50_000  // 50% of one CPU
+	agentImage      = "milton-prism-generation-agent:latest"
+	isolatedNet     = "prism-generation"
+	testCPUQuota    = 50_000            // 50% of one CPU
 	testMemoryBytes = 256 * 1024 * 1024 // 256 MiB
 )
 

@@ -449,7 +449,7 @@ class Widget extends Model
 }
 `
 	workspace := writePHPWorkspace(t, map[string]string{
-		"composer.json":                fixtureComposerJSON,
+		"composer.json":               fixtureComposerJSON,
 		"app/Empty/Models/Widget.php": emptyModel,
 	})
 	cluster := workerdomain.Cluster{

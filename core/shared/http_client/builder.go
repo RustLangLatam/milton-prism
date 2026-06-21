@@ -5,8 +5,8 @@ package http_client
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"milton_prism/pkg/config"
+	"net/http"
 )
 
 type HTTPClient struct {

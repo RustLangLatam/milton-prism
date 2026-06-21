@@ -3,9 +3,9 @@
 package utils
 
 import (
-	"runtime/debug"
 	"milton_prism/core/shared/grpc_health"
 	"milton_prism/pkg/log"
+	"runtime/debug"
 
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 )

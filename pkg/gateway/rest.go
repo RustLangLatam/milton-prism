@@ -3,11 +3,11 @@ package gateway
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"milton_prism/pkg/config"
 	"milton_prism/pkg/gateway/handlers"
 	"milton_prism/pkg/gateway/metrics_collector"
 	"milton_prism/pkg/utils"
+	"net/http"
 
 	"milton_prism/pkg/log"
 

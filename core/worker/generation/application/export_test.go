@@ -4,7 +4,7 @@ package application
 // This file is compiled only during `go test`.
 
 var (
-	ExtractErrorVarNames    = extractErrorVarNames
-	BuildMessageErrorGo     = buildMessageErrorGo
+	ExtractErrorVarNames      = extractErrorVarNames
+	BuildMessageErrorGo       = buildMessageErrorGo
 	ScanExistingErrorVarNames = scanExistingErrorVarNames
 )

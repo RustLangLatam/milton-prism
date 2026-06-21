@@ -330,12 +330,12 @@ func TestInvoke_Articles_GatesPass(t *testing.T) {
 		articlesServiceProto
 
 	req := ports.InvokeRequest{
-		ServiceName:            "articles",
-		ErrorPrefix:            "ART",
-		ProtoContent:           combinedProto,
-		BoundarySpec:           articlesBoundarySpec,
-		GeneratorPromptRef:     "docs/prism/milton-prism-service-generator-prompt.md",
-		OutputProfile:          "go",
+		ServiceName:           "articles",
+		ErrorPrefix:           "ART",
+		ProtoContent:          combinedProto,
+		BoundarySpec:          articlesBoundarySpec,
+		GeneratorPromptRef:    "docs/prism/milton-prism-service-generator-prompt.md",
+		OutputProfile:         "go",
 		APIKey:                cred.apiKey,
 		SessionCredentialsDir: cred.sessionCredDir,
 	}

@@ -10,8 +10,8 @@ import (
 	"milton_prism/core/services/analysis/ports"
 	applog "milton_prism/pkg/log"
 	analysissvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
-	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
+	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	paginationv1 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
 	queryparamsv1 "milton_prism/pkg/pb/gen/milton_prism/types/query_params/v1"
 	"milton_prism/pkg/pb/impl"
@@ -32,34 +32,34 @@ var _ ports.AnalysisSummaryRepository = (*MongoAnalysisSummaryRepository)(nil)
 // Repeated proto sub-messages are serialised as bytes to avoid maintaining
 // parallel BSON structs for complex nested types.
 type mongoAnalysisSummaryDoc struct {
-	ID                        primitive.ObjectID  `bson:"_id,omitempty"`
-	Identifier                uint64              `bson:"identifier"`
-	RepositoryID              uint64              `bson:"repository_id"`
-	MigrationID               uint64              `bson:"migration_id,omitempty"`
-	OwnerUserID               uint64              `bson:"owner_user_id,omitempty"`
-	RepositoryURL             string              `bson:"repository_url,omitempty"`
-	SourceBranch              string              `bson:"source_branch,omitempty"`
-	CommitSHA                 string              `bson:"commit_sha,omitempty"`
-	State                     int32               `bson:"state"`
-	TechnologiesBytes         []byte              `bson:"technologies_bytes,omitempty"`
-	VulnerabilitiesBytes      []byte              `bson:"vulnerabilities_bytes,omitempty"`
-	DependencyGraphBytes      []byte              `bson:"dependency_graph_bytes,omitempty"`
-	ModuleCardsBytes          []byte              `bson:"module_cards_bytes,omitempty"`
-	BlueprintsBytes           []byte              `bson:"blueprints_bytes,omitempty"`
-	ModuleClassificationBytes []byte              `bson:"module_classification_bytes,omitempty"`
-	MigrabilityScoreBytes     []byte              `bson:"migrability_score_bytes,omitempty"`
-	MigrabilityAssessmentBytes []byte             `bson:"migrability_assessment_bytes,omitempty"`
-	SharedStateHubsBytes      []byte              `bson:"shared_state_hubs_bytes,omitempty"`
-	UnreachableModulesBytes   []byte              `bson:"unreachable_modules_bytes,omitempty"`
-	DeepAnalysisAvailable     bool                `bson:"deep_analysis_available,omitempty"`
-	TotalFiles                uint64              `bson:"total_files,omitempty"`
-	TotalLines                uint64              `bson:"total_lines,omitempty"`
-	ModuleCountProduction     int64               `bson:"module_count_production,omitempty"`
-	ModuleCountTest           int64               `bson:"module_count_test,omitempty"`
-	CreateTime                primitive.DateTime  `bson:"create_time"`
-	UpdateTime                *primitive.DateTime `bson:"update_time,omitempty"`
-	DeleteTime                *primitive.DateTime `bson:"delete_time,omitempty"`
-	PurgeTime                 *primitive.DateTime `bson:"purge_time,omitempty"`
+	ID                         primitive.ObjectID  `bson:"_id,omitempty"`
+	Identifier                 uint64              `bson:"identifier"`
+	RepositoryID               uint64              `bson:"repository_id"`
+	MigrationID                uint64              `bson:"migration_id,omitempty"`
+	OwnerUserID                uint64              `bson:"owner_user_id,omitempty"`
+	RepositoryURL              string              `bson:"repository_url,omitempty"`
+	SourceBranch               string              `bson:"source_branch,omitempty"`
+	CommitSHA                  string              `bson:"commit_sha,omitempty"`
+	State                      int32               `bson:"state"`
+	TechnologiesBytes          []byte              `bson:"technologies_bytes,omitempty"`
+	VulnerabilitiesBytes       []byte              `bson:"vulnerabilities_bytes,omitempty"`
+	DependencyGraphBytes       []byte              `bson:"dependency_graph_bytes,omitempty"`
+	ModuleCardsBytes           []byte              `bson:"module_cards_bytes,omitempty"`
+	BlueprintsBytes            []byte              `bson:"blueprints_bytes,omitempty"`
+	ModuleClassificationBytes  []byte              `bson:"module_classification_bytes,omitempty"`
+	MigrabilityScoreBytes      []byte              `bson:"migrability_score_bytes,omitempty"`
+	MigrabilityAssessmentBytes []byte              `bson:"migrability_assessment_bytes,omitempty"`
+	SharedStateHubsBytes       []byte              `bson:"shared_state_hubs_bytes,omitempty"`
+	UnreachableModulesBytes    []byte              `bson:"unreachable_modules_bytes,omitempty"`
+	DeepAnalysisAvailable      bool                `bson:"deep_analysis_available,omitempty"`
+	TotalFiles                 uint64              `bson:"total_files,omitempty"`
+	TotalLines                 uint64              `bson:"total_lines,omitempty"`
+	ModuleCountProduction      int64               `bson:"module_count_production,omitempty"`
+	ModuleCountTest            int64               `bson:"module_count_test,omitempty"`
+	CreateTime                 primitive.DateTime  `bson:"create_time"`
+	UpdateTime                 *primitive.DateTime `bson:"update_time,omitempty"`
+	DeleteTime                 *primitive.DateTime `bson:"delete_time,omitempty"`
+	PurgeTime                  *primitive.DateTime `bson:"purge_time,omitempty"`
 }
 
 // MongoAnalysisSummaryRepository persists AnalysisSummary records in MongoDB.
@@ -170,10 +170,10 @@ func (r *MongoAnalysisSummaryRepository) List(ctx context.Context, filter *analy
 	// so only the lightweight fields travel on the wire per page. Callers that
 	// need the full payload use GetByID instead.
 	listProjection := bson.M{
-		"dependency_graph_bytes":      0,
-		"module_cards_bytes":          0,
-		"blueprints_bytes":            0,
-		"module_classification_bytes": 0,
+		"dependency_graph_bytes":       0,
+		"module_cards_bytes":           0,
+		"blueprints_bytes":             0,
+		"module_classification_bytes":  0,
 		"migrability_assessment_bytes": 0,
 	}
 	opts := options.Find().
@@ -224,10 +224,10 @@ type wrapperForTechnologies struct {
 	Items []*analysisv1.Technology `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
 }
 
-func (m *wrapperForTechnologies) ProtoMessage()             {}
+func (m *wrapperForTechnologies) ProtoMessage()               {}
 func (m *wrapperForTechnologies) ProtoReflect() proto.Message { return nil }
-func (m *wrapperForTechnologies) Reset()                    {}
-func (m *wrapperForTechnologies) String() string            { return "" }
+func (m *wrapperForTechnologies) Reset()                      {}
+func (m *wrapperForTechnologies) String() string              { return "" }
 
 func summaryToDoc(s *domain.AnalysisSummary) (*mongoAnalysisSummaryDoc, error) {
 	doc := &mongoAnalysisSummaryDoc{
@@ -491,7 +491,7 @@ func (r *MongoAnalysisSummaryRepository) UpdateMigrabilityAssessment(ctx context
 		bson.M{"identifier": identifier, "delete_time": nil},
 		bson.M{"$set": bson.M{
 			"migrability_assessment_bytes": b,
-			"update_time":                 now,
+			"update_time":                  now,
 		}},
 	)
 	if err != nil {

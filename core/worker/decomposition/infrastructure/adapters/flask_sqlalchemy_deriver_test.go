@@ -113,7 +113,7 @@ def delete_comment(slug, id):
 
 // conduitUserModels reproduces the real conduit/user/models.py:
 // User with snake_case timestamps (create_time/update_time after AIP rename)
-// and token: str = '' as an annotated assignment (NOT a db.Column).
+// and token: str = ” as an annotated assignment (NOT a db.Column).
 const conduitUserModels = `
 from conduit.database import SurrogatePK, Model
 from conduit.extensions import db

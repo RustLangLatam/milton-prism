@@ -19,8 +19,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 
-	applog "milton_prism/pkg/log"
 	"milton_prism/core/worker/generation/ports"
+	applog "milton_prism/pkg/log"
 )
 
 const (

@@ -13,10 +13,38 @@ info:
     contact:
         name: Milton Prism API Support
         email: rust.lang.latam@gmail.com
-    version: 1.1.0-dev
+    version: 1.0.1-dev
 servers:
     - url: https://api.miltonprism.com
 paths:
+    /v1/analyses/{analysisId}/usage:
+        get:
+            tags:
+                - BillingService
+            description: GetAnalysisUsage returns the aggregate usage attributed to a single analysis.
+            operationId: GetAnalysisUsage
+            parameters:
+                - name: analysisId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UsageAggregateResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
     /v1/analysis_summaries:
         get:
             tags:
@@ -52,16 +80,62 @@ paths:
                     type: string
                     description: Filter by analysis lifecycle state.
                     format: enum
+                - name: filter.standalone
+                  in: query
+                  description: |-
+                    When true, restrict results to standalone analyses (migration_id absent or 0).
+                     Mutually exclusive with migration_id: if both are set, standalone takes precedence.
+                  schema:
+                    example: true
+                    type: boolean
+                    description: When true, return only standalone analyses (not linked to any migration).
+                - name: filter.states
+                  in: query
+                  description: |-
+                    Restrict results to summaries in ANY of these lifecycle states.
+                     When non-empty, takes precedence over state (singular).
+                     Translates to a single MongoDB $in query so pagination covers the union.
+                  schema:
+                    example: [ANALYSIS_STATE_RUNNING, ANALYSIS_STATE_COMPLETED]
+                    type: array
+                    items:
+                        enum:
+                            - ANALYSIS_STATE_UNSPECIFIED
+                            - ANALYSIS_STATE_RUNNING
+                            - ANALYSIS_STATE_COMPLETED
+                            - ANALYSIS_STATE_FAILED
+                        type: string
+                        format: enum
+                    description: Filter by multiple lifecycle states (OR). Takes precedence over state when non-empty.
+                - name: filter.sourceBranch
+                  in: query
+                  description: |-
+                    Restrict results to summaries for this source branch.
+                     Combine with repository_id and state=COMPLETED to find the latest
+                     completed analysis for a given repo+branch pair.
+                  schema:
+                    example: main
+                    type: string
+                    description: Filter by source branch name.
+                - name: filter.ownerUserId
+                  in: query
+                  description: |-
+                    Restrict results to summaries owned by this user.
+                     Injected automatically by the handler for non-system callers; clients
+                     should not set this field (it will be overwritten).
+                  schema:
+                    example: 42
+                    type: string
+                    description: Filter by owner user identifier. Injected server-side for non-system callers.
                 - name: pageParams.order
                   in: query
                   description: Sort order.
                   schema:
-                    example: desc
                     enum:
                         - ORDER_DESC_UNSPECIFIED
                         - ORDER_ASC
                     type: string
-                    default: asc
+                    default: ORDER_ASC
                     description: Sort order
                     format: enum
                 - name: pageParams.pageNumber
@@ -88,7 +162,6 @@ paths:
                   in: query
                   description: The key to sort the results by.
                   schema:
-                    example: create_time
                     type: string
                     default: create_time
                     description: Field to sort by
@@ -132,12 +205,45 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /v1/analysis_summaries/{identifier}:evaluateMigrability:
+        post:
+            tags:
+                - AnalysisService
+            summary: Evaluate analysis migrability
+            description: Runs the opt-in LLM migrability assessment for a completed analysis summary. Makes one LLM API call (~$0.003). Persists and returns the MigrabilityAssessment.
+            operationId: EvaluateMigrability
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the completed AnalysisSummary to assess.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/EvaluateMigrabilityRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MigrabilityAssessment'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
     /v1/analysis_summaries:run:
         post:
             tags:
                 - AnalysisService
             summary: Run a code analysis
-            description: Enqueues an async analysis run. Returns immediately with an AnalysisSummary in RUNNING state.
+            description: Enqueues an async analysis run. Returns immediately with an AnalysisSummary in RUNNING state. For standalone runs, if a COMPLETED analysis for the same commit already exists and force=false, returns duplicate_found=true with the existing analysis instead of creating a new run.
             operationId: RunAnalysis
             requestBody:
                 content:
@@ -151,7 +257,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AnalysisSummary'
+                                $ref: '#/components/schemas/RunAnalysisResponse'
                 default:
                     description: Default Api GateWay error response
                     content:
@@ -193,12 +299,11 @@ paths:
                   in: query
                   description: Sort order.
                   schema:
-                    example: desc
                     enum:
                         - ORDER_DESC_UNSPECIFIED
                         - ORDER_ASC
                     type: string
-                    default: asc
+                    default: ORDER_ASC
                     description: Sort order
                     format: enum
                 - name: pageParams.pageNumber
@@ -225,7 +330,6 @@ paths:
                   in: query
                   description: The key to sort the results by.
                   schema:
-                    example: create_time
                     type: string
                     default: create_time
                     description: Field to sort by
@@ -394,19 +498,45 @@ paths:
                         - MIGRATION_STATE_PUSHED
                         - MIGRATION_STATE_FAILED
                         - MIGRATION_STATE_CANCELLED
+                        - MIGRATION_STATE_RESTRUCTURING_READY
                     type: string
                     description: Filter by migration lifecycle state.
                     format: enum
+                - name: filter.states
+                  in: query
+                  description: |-
+                    Restrict results to migrations in ANY of these lifecycle states.
+                     When non-empty, takes precedence over state (singular).
+                     Translates to a single MongoDB $in query so pagination covers the union.
+                  schema:
+                    example: [MIGRATION_STATE_ANALYZING, MIGRATION_STATE_DESIGNING, MIGRATION_STATE_GENERATING]
+                    type: array
+                    items:
+                        enum:
+                            - MIGRATION_STATE_UNSPECIFIED
+                            - MIGRATION_STATE_PENDING
+                            - MIGRATION_STATE_ANALYZING
+                            - MIGRATION_STATE_DESIGNING
+                            - MIGRATION_STATE_AWAITING_APPROVAL
+                            - MIGRATION_STATE_GENERATING
+                            - MIGRATION_STATE_TESTING
+                            - MIGRATION_STATE_READY
+                            - MIGRATION_STATE_PUSHED
+                            - MIGRATION_STATE_FAILED
+                            - MIGRATION_STATE_CANCELLED
+                            - MIGRATION_STATE_RESTRUCTURING_READY
+                        type: string
+                        format: enum
+                    description: Filter by multiple lifecycle states (OR). Takes precedence over state when non-empty.
                 - name: pageParams.order
                   in: query
                   description: Sort order.
                   schema:
-                    example: desc
                     enum:
                         - ORDER_DESC_UNSPECIFIED
                         - ORDER_ASC
                     type: string
-                    default: asc
+                    default: ORDER_ASC
                     description: Sort order
                     format: enum
                 - name: pageParams.pageNumber
@@ -433,7 +563,6 @@ paths:
                   in: query
                   description: The key to sort the results by.
                   schema:
-                    example: create_time
                     type: string
                     default: create_time
                     description: Field to sort by
@@ -624,6 +753,134 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:enrichRoadmap:
+        post:
+            tags:
+                - MigrationService
+            summary: Enrich roadmap steps with LLM narratives
+            description: Triggers opt-in LLM enrichment of the deterministic roadmap steps. Costs tokens. Updates the stored enrichment on every call. Requires RESTRUCTURING_READY state.
+            operationId: EnrichRoadmap
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the migration. Must be in RESTRUCTURING_READY state with a non-empty action_plan.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/EnrichRoadmapRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:exportActionPlanPrompt:
+        get:
+            tags:
+                - MigrationService
+            summary: Export restructuring action plan as a Markdown agent prompt
+            description: Returns a deterministic Markdown file (.md) containing the restructuring action plan with stack-specific instructions for the detected framework. No LLM cost. Requires RESTRUCTURING_READY state with a non-empty action_plan.
+            operationId: ExportActionPlanPrompt
+            parameters:
+                - name: identifier
+                  in: path
+                  description: |-
+                    Numeric identifier of the migration. Must be in RESTRUCTURING_READY state
+                     with a non-empty restructuring_roadmap.action_plan.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        '*/*': {}
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:generateBlueprint:
+        post:
+            tags:
+                - MigrationService
+            summary: Generate LLM microservice blueprint anchored to dependency graph
+            description: Triggers opt-in LLM blueprint generation. Loads the full dependency graph and module cards, then proposes service groupings anchored to measured coupling. Costs tokens. Updates the stored blueprint on every call. Requires RESTRUCTURING_READY state with a completed analysis.
+            operationId: GenerateBlueprint
+            parameters:
+                - name: identifier
+                  in: path
+                  description: |-
+                    Numeric identifier of the migration. Must be in RESTRUCTURING_READY state
+                     with a completed analysis (analysis_summary_id > 0) and a non-empty roadmap.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GenerateBlueprintRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:generateRestructuringRoadmap:
+        post:
+            tags:
+                - MigrationService
+            summary: Generate a restructuring roadmap
+            description: Assembles a roadmap from the persisted assessment and plan for a NOT_MIGRABLE or no-boundary migration. Transitions to RESTRUCTURING_READY (terminal). No LLM call is made.
+            operationId: GenerateRestructuringRoadmap
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier of the migration. Must be in AWAITING_APPROVAL state.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/GenerateRestructuringRoadmapRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
     /v1/migrations/{identifier}:generationPackage:
         post:
             tags:
@@ -651,6 +908,39 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/GenerationPackage'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+    /v1/migrations/{identifier}:run:
+        post:
+            tags:
+                - MigrationService
+            summary: Run the full roadmap end-to-end from the platform
+            description: 'One-shot orchestration: starts the pipeline and auto-approves the plan when design completes so analysis → design → generation runs without manual steps. Stops at READY; never auto-publishes. The migrability gate still blocks a NOT_MIGRABLE verdict without an override.'
+            operationId: RunMigration
+            parameters:
+                - name: identifier
+                  in: path
+                  description: Numeric identifier assigned at creation.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RunMigrationRequest'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Migration'
                 default:
                     description: Default Api GateWay error response
                     content:
@@ -723,6 +1013,56 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /v1/migrations/{migrationId}/usage:
+        get:
+            tags:
+                - BillingService
+            description: GetMigrationUsage returns the aggregate usage attributed to a single migration.
+            operationId: GetMigrationUsage
+            parameters:
+                - name: migrationId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UsageAggregateResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
+    /v1/migrations/{migrationId}:downloadDeliverable:
+        get:
+            tags:
+                - MigrationService
+            summary: Download the compiled deliverable as a ZIP archive
+            description: Assembles skeleton + generated artifacts into a complete Go monorepo and returns it as application/zip. The ZIP unpacks flat (go.mod at root). Callable in READY or PUSHED state.
+            operationId: DownloadDeliverable
+            parameters:
+                - name: migrationId
+                  in: path
+                  description: Numeric migration identifier. Migration must be in READY or PUSHED state.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Compiled Go monorepo deliverable as a ZIP archive.
+                    content:
+                        application/zip:
+                            schema:
+                                type: string
+                                format: binary
     /v1/migrations/{migrationId}:generationArtifacts:
         post:
             tags:
@@ -789,6 +1129,28 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /v1/plans:
+        get:
+            tags:
+                - BillingService
+            description: ListPlans returns the full plan catalog.
+            operationId: ListPlans
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListPlansResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
     /v1/repositories:
         get:
             tags:
@@ -835,12 +1197,11 @@ paths:
                   in: query
                   description: Sort order.
                   schema:
-                    example: desc
                     enum:
                         - ORDER_DESC_UNSPECIFIED
                         - ORDER_ASC
                     type: string
-                    default: asc
+                    default: ORDER_ASC
                     description: Sort order
                     format: enum
                 - name: pageParams.pageNumber
@@ -867,7 +1228,6 @@ paths:
                   in: query
                   description: The key to sort the results by.
                   schema:
-                    example: create_time
                     type: string
                     default: create_time
                     description: Field to sort by
@@ -1121,12 +1481,11 @@ paths:
                   in: query
                   description: Sort order.
                   schema:
-                    example: desc
                     enum:
                         - ORDER_DESC_UNSPECIFIED
                         - ORDER_ASC
                     type: string
-                    default: asc
+                    default: ORDER_ASC
                     description: Sort order
                     format: enum
                 - name: pageParams.pageNumber
@@ -1153,7 +1512,6 @@ paths:
                   in: query
                   description: The key to sort the results by.
                   schema:
-                    example: create_time
                     type: string
                     default: create_time
                     description: Field to sort by
@@ -1197,6 +1555,113 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Status'
+    /v1/usageRecords:
+        get:
+            tags:
+                - BillingService
+            description: |-
+                ListUsageRecords returns a paginated list of raw usage records. Non-system
+                 callers see only their own records; system users may filter by any user.
+            operationId: ListUsageRecords
+            parameters:
+                - name: userId
+                  in: query
+                  description: 'Optional: restrict to a single user (system users only; ignored otherwise).'
+                  schema:
+                    type: string
+                - name: analysisId
+                  in: query
+                  description: 'Optional: restrict to a single analysis.'
+                  schema:
+                    type: string
+                - name: migrationId
+                  in: query
+                  description: 'Optional: restrict to a single migration.'
+                  schema:
+                    type: string
+                - name: pageParams.order
+                  in: query
+                  description: Sort order.
+                  schema:
+                    enum:
+                        - ORDER_DESC_UNSPECIFIED
+                        - ORDER_ASC
+                    type: string
+                    default: ORDER_ASC
+                    description: Sort order
+                    format: enum
+                - name: pageParams.pageNumber
+                  in: query
+                  description: Result page number to retrieve.
+                  schema:
+                    example: 2
+                    minLength: 1
+                    type: integer
+                    description: Page number
+                    format: uint32
+                - name: pageParams.pageSize
+                  in: query
+                  description: Maximum number of records per page.
+                  schema:
+                    example: 20
+                    maxLength: 100
+                    minLength: 10
+                    type: integer
+                    default: !!float 10
+                    description: Records per page
+                    format: uint32
+                - name: pageParams.sortBy
+                  in: query
+                  description: The key to sort the results by.
+                  schema:
+                    type: string
+                    default: create_time
+                    description: Field to sort by
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListUsageRecordsResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
+        post:
+            tags:
+                - BillingService
+            description: |-
+                RecordUsage persists a single usage record. System-user only; intended for
+                 cross-service spend reporting (migration / generation workers).
+            operationId: RecordUsage
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/UsageRecord'
+                required: true
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UsageRecord'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
     /v1/users:
         get:
             tags:
@@ -1234,12 +1699,11 @@ paths:
                   in: query
                   description: Sort order.
                   schema:
-                    example: desc
                     enum:
                         - ORDER_DESC_UNSPECIFIED
                         - ORDER_ASC
                     type: string
-                    default: asc
+                    default: ORDER_ASC
                     description: Sort order
                     format: enum
                 - name: pageParams.pageNumber
@@ -1266,7 +1730,6 @@ paths:
                   in: query
                   description: The key to sort the results by.
                   schema:
-                    example: create_time
                     type: string
                     default: create_time
                     description: Field to sort by
@@ -1454,6 +1917,67 @@ paths:
             security:
                 - ApiKey: []
                   Authorization: []
+    /v1/users/{userId}/plan:
+        get:
+            tags:
+                - BillingService
+            description: |-
+                GetUserPlan returns the plan a user is associated with (defaulting to the
+                 free plan when no explicit association exists). Non-system callers may only
+                 query their own plan.
+            operationId: GetUserPlan
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Plan'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
+    /v1/users/{userId}/usage:
+        get:
+            tags:
+                - BillingService
+            description: |-
+                GetUserUsage returns the aggregate usage for a user, with an operation
+                 breakdown. Non-system callers may only query their own usage.
+            operationId: GetUserUsage
+            parameters:
+                - name: userId
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UsageAggregateResponse'
+                default:
+                    description: Default Api GateWay error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+            security:
+                - ApiKey: []
+                  Authorization: []
     /v1/users:authenticate:
         post:
             tags:
@@ -1578,6 +2102,35 @@ paths:
                 - ApiKey: []
 components:
     schemas:
+        ActionItem:
+            title: ActionItem
+            type: object
+            properties:
+                kind:
+                    type: string
+                    description: Step kind (EXTRACT_DOMAIN, DECOUPLE_STATE, SPLIT_GOD_MODULE, DEFINE_BOUNDARIES, ADD_ROUTING).
+                subject:
+                    type: string
+                    description: Target of the action (module name or list).
+                action:
+                    type: string
+                    description: Concrete action to take, using real module names where available.
+                blocking:
+                    type: boolean
+                    description: True when this action must be resolved before decomposition is valid.
+                impact:
+                    type: integer
+                    description: Score points recovered when this step is resolved (+N to migrability score).
+                    format: int32
+                order:
+                    type: integer
+                    description: Execution sequence (1-based). Lower order must be resolved first.
+                    format: int32
+                dependsOnStep:
+                    type: integer
+                    description: Order number of the prerequisite step. Zero means no dependency.
+                    format: int32
+            description: A concrete restructuring step derived from a score signal. Ordered by impact (score points recovered).
         AnalysisSummary:
             title: AnalysisSummary
             required:
@@ -1663,181 +2216,81 @@ components:
                     items:
                         $ref: '#/components/schemas/BlueprintInfo'
                     description: Flask Blueprint registrations (name, file, url_prefix).
+                moduleClassification:
+                    allOf:
+                        - $ref: '#/components/schemas/ModuleClassification'
+                    description: Domain/infrastructure/test classification of each module in the dependency graph.
+                repositoryUrl:
+                    readOnly: true
+                    example: https://github.com/org/my-service
+                    type: string
+                    description: Remote URL of the source repository, snapshotted at analysis creation.
+                sourceBranch:
+                    readOnly: true
+                    example: develop
+                    type: string
+                    description: Branch analysed. Empty for analyses predating this field.
+                commitSha:
+                    readOnly: true
+                    example: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+                    type: string
+                    description: Exact git commit SHA cloned and analysed. Empty for analyses predating this field.
+                migrabilityScore:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/MigrabilityScore'
+                    description: Deterministic structural migrability score 0–100. Present when deep analysis data is available.
+                migrabilityAssessment:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/MigrabilityAssessment'
+                    description: LLM-produced migrability verdict. Absent until explicitly triggered by the user.
+                sharedStateHubs:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/SharedStateHub'
+                    description: Canonical shared-state hubs sorted by weighted fan-in descending.
+                ownerUserId:
+                    readOnly: true
+                    example: 42
+                    type: string
+                    description: Identifier of the user who owns this analysis summary.
+                moduleCountProduction:
+                    example: 411
+                    type: integer
+                    description: Count of production (non-test) module cards. Zero when classification is unavailable.
+                    format: uint32
+                moduleCountTest:
+                    example: 161
+                    type: integer
+                    description: Count of test module cards.
+                    format: uint32
+                unreachableModules:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/UnreachableModule'
+                    description: Modules with code but no statically resolvable references (for review — may be entry points, framework-wired, or invoked externally; not scored).
+                deepAnalysisAvailable:
+                    type: boolean
+                    description: True iff deep structural analysis (dependency graph / module cards) was produced. False = analyzer unavailable/blind; downstream must degrade honestly, not score.
                 databaseDetection:
-                    $ref: '#/components/schemas/DatabaseDetection'
+                    allOf:
+                        - $ref: '#/components/schemas/DatabaseDetection'
                     description: Deterministically detected database engine(s) with the evidence behind the detection. Honest 'unknown' when no signal.
                 architecturalPattern:
-                    $ref: '#/components/schemas/ArchitecturalPattern'
+                    allOf:
+                        - $ref: '#/components/schemas/ArchitecturalPattern'
                     description: Deterministically classified architectural pattern (Clean/Hexagonal/Layered/MVC/Modular monolith/Spaghetti) with confidence and the evidence used.
                 intakeAssessment:
-                    $ref: '#/components/schemas/IntakeAssessment'
+                    allOf:
+                        - $ref: '#/components/schemas/IntakeAssessment'
                     description: 'Deterministic intake gate: is this a migratable backend in a supported language? Carries codebase_kind, language support, migratable flag, and honest warnings. Non-blocking.'
                 securityFindings:
                     type: array
                     items:
                         $ref: '#/components/schemas/SecurityFinding'
-                    description: 'Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.'
+                    description: Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.
             description: 'Output of a code analysis run: technologies, vulnerabilities, and dependency graph.'
-        DatabaseDetection:
-            title: DatabaseDetection
-            type: object
-            properties:
-                engines:
-                    type: array
-                    items:
-                        enum:
-                            - DATABASE_ENGINE_UNSPECIFIED
-                            - DATABASE_ENGINE_POSTGRESQL
-                            - DATABASE_ENGINE_MYSQL
-                            - DATABASE_ENGINE_MONGODB
-                            - DATABASE_ENGINE_SQLITE
-                            - DATABASE_ENGINE_SQLSERVER
-                            - DATABASE_ENGINE_ORACLE
-                            - DATABASE_ENGINE_REDIS
-                        type: string
-                        format: enum
-                    description: Detected database engines (deduplicated, sorted). Empty when unknown.
-                engineNames:
-                    type: array
-                    items:
-                        type: string
-                    description: Display names of the detected engines, aligned with engines.
-                unknown:
-                    example: false
-                    type: boolean
-                    description: True when no database engine signal was found (engines empty).
-                evidence:
-                    type: array
-                    items:
-                        type: string
-                    description: Deterministic evidence strings behind the detection (driver/config/ORM).
-            description: Deterministically detected database engine(s) and the evidence behind the detection.
-        ArchitecturalPattern:
-            title: ArchitecturalPattern
-            type: object
-            properties:
-                kind:
-                    enum:
-                        - ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED
-                        - ARCHITECTURAL_PATTERN_KIND_CLEAN
-                        - ARCHITECTURAL_PATTERN_KIND_HEXAGONAL
-                        - ARCHITECTURAL_PATTERN_KIND_LAYERED
-                        - ARCHITECTURAL_PATTERN_KIND_MVC
-                        - ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH
-                        - ARCHITECTURAL_PATTERN_KIND_SPAGHETTI
-                    type: string
-                    description: Canonical architectural pattern kind.
-                    format: enum
-                name:
-                    example: MVC
-                    type: string
-                    description: Display name of the classified pattern.
-                confidence:
-                    example: 0.82
-                    type: number
-                    description: Classifier confidence in [0,1].
-                    format: float
-                evidence:
-                    type: array
-                    items:
-                        type: string
-                    description: Structural evidence strings the classifier used to reach this pattern.
-            description: Deterministically classified architectural pattern with confidence and the evidence used.
-        IntakeAssessment:
-            title: IntakeAssessment
-            type: object
-            properties:
-                codebaseKind:
-                    enum:
-                        - CODEBASE_KIND_UNSPECIFIED
-                        - CODEBASE_KIND_BACKEND
-                        - CODEBASE_KIND_FRONTEND
-                        - CODEBASE_KIND_LIBRARY
-                        - CODEBASE_KIND_CLI
-                        - CODEBASE_KIND_MOBILE
-                    type: string
-                    description: The platform migrates BACKEND today.
-                    format: enum
-                kindConfidence:
-                    example: 0.9
-                    type: number
-                    description: Confidence in the codebase_kind classification, in [0,1].
-                    format: float
-                primaryLanguage:
-                    example: PHP
-                    type: string
-                    description: Primary language detected (go-enry), e.g. PHP, Python, Java.
-                languageSupported:
-                    example: true
-                    type: boolean
-                    description: 'True when the primary language has a Tier-2 analyzer (PHP/Python today).'
-                supportedLanguages:
-                    type: array
-                    items:
-                        type: string
-                    description: 'Languages with a Tier-2 analyzer at run time (e.g. PHP, Python).'
-                migratable:
-                    example: true
-                    type: boolean
-                    description: True iff this is a backend in a supported language (platform can migrate it).
-                warnings:
-                    type: array
-                    items:
-                        type: string
-                    description: Specific human-readable warnings explaining any intake failure. Empty when migratable.
-                evidence:
-                    type: array
-                    items:
-                        type: string
-                    description: Deterministic evidence strings behind the codebase_kind classification.
-            description: 'Deterministic intake gate: codebase kind, primary-language support, migratable flag, and honest warnings.'
-        SecurityFinding:
-            title: SecurityFinding
-            type: object
-            properties:
-                type:
-                    enum:
-                        - SECURITY_FINDING_TYPE_UNSPECIFIED
-                        - SECURITY_FINDING_TYPE_HARDCODED_SECRET
-                    type: string
-                    description: Class of the security finding.
-                    format: enum
-                severity:
-                    enum:
-                        - SECURITY_SEVERITY_UNSPECIFIED
-                        - SECURITY_SEVERITY_LOW
-                        - SECURITY_SEVERITY_MEDIUM
-                        - SECURITY_SEVERITY_HIGH
-                    type: string
-                    description: Severity of the finding (LOW/MEDIUM/HIGH).
-                    format: enum
-                file:
-                    example: config/database.php
-                    type: string
-                    description: Workspace-relative file path of the finding.
-                line:
-                    example: 42
-                    type: integer
-                    description: 1-based line number of the finding.
-                    format: uint32
-                description:
-                    example: Hardcoded AWS secret access key
-                    type: string
-                    description: Human-readable description of the finding.
-                snippet:
-                    example: aws_secret_access_key = "AKIA****REDACTED****"
-                    type: string
-                    description: The matched line with the secret value redacted.
-                rule:
-                    example: aws-secret-key
-                    type: string
-                    description: Identifier of the detector rule that fired.
-                confidence:
-                    example: 0.95
-                    type: number
-                    description: Confidence in [0,1] that this is a real secret (not a placeholder).
-                    format: float
-            description: 'A deterministic code-level security finding (e.g. a hardcoded secret) with file:line, severity, and confidence.'
         Any:
             type: object
             properties:
@@ -1875,7 +2328,43 @@ components:
                     example: true
                     type: boolean
                     description: true advances to GENERATING; false transitions to CANCELLED.
+                serviceFilter:
+                    type: array
+                    items:
+                        type: string
+                    description: Optional subset of service names to generate. Empty = generate all.
             description: ApproveDesignRequest carries the owner's decision on the restructure plan.
+        ArchitecturalPattern:
+            title: ArchitecturalPattern
+            type: object
+            properties:
+                kind:
+                    enum:
+                        - ARCHITECTURAL_PATTERN_KIND_UNSPECIFIED
+                        - ARCHITECTURAL_PATTERN_KIND_CLEAN
+                        - ARCHITECTURAL_PATTERN_KIND_HEXAGONAL
+                        - ARCHITECTURAL_PATTERN_KIND_LAYERED
+                        - ARCHITECTURAL_PATTERN_KIND_MVC
+                        - ARCHITECTURAL_PATTERN_KIND_MODULAR_MONOLITH
+                        - ARCHITECTURAL_PATTERN_KIND_SPAGHETTI
+                    type: string
+                    description: Canonical architectural pattern kind.
+                    format: enum
+                name:
+                    example: MVC
+                    type: string
+                    description: Display name of the classified pattern.
+                confidence:
+                    example: 0.82
+                    type: number
+                    description: Classifier confidence in [0,1].
+                    format: float
+                evidence:
+                    type: array
+                    items:
+                        type: string
+                    description: Structural evidence strings the classifier used to reach this pattern.
+            description: Deterministically classified architectural pattern with confidence and the evidence used.
         Article:
             required:
                 - authorIdentifier
@@ -1938,6 +2427,10 @@ components:
                     example: 7
                     type: string
                     description: Migration identifier. Migration must have a completed analysis.
+                language:
+                    example: de
+                    type: string
+                    description: BCP-47 language for LLM-generated prose (summary/reasons/blockers). Absent → 'en'. Module names and identifiers are never translated.
             description: AssessMigrabilityRequest triggers the opt-in LLM migrability assessment.
         AuthenticateUserRequest:
             required:
@@ -1996,6 +2489,22 @@ components:
                     type: string
                     description: URL prefix from register_blueprint (empty if not found).
             description: Flask Blueprint registration metadata.
+        BlueprintService:
+            title: BlueprintService
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: Proposed service name.
+                modules:
+                    type: array
+                    items:
+                        type: string
+                    description: Modules from the dependency graph that belong to this service.
+                rationale:
+                    type: string
+                    description: Coupling-anchored rationale for this service boundary.
+            description: One proposed microservice in the LLM blueprint, grounded in coupling data.
         Branch:
             title: Branch
             type: object
@@ -2023,6 +2532,27 @@ components:
                     type: string
                     description: Migration identifier.
             description: CancelMigrationRequest cancels a non-terminal migration.
+        CandidateGrouping:
+            title: CandidateGrouping
+            type: object
+            properties:
+                name:
+                    type: string
+                    description: Candidate group name.
+                modules:
+                    type: array
+                    items:
+                        type: string
+                    description: Source modules in this candidate group.
+                responsibilities:
+                    type: array
+                    items:
+                        type: string
+                    description: Domain responsibilities of this candidate group.
+                confidence:
+                    type: string
+                    description: 'Confidence in this grouping: HIGH, MEDIUM, or LOW.'
+            description: LLM-proposed grouping of modules that share a domain responsibility.
         CrossServiceFk:
             title: CrossServiceFk
             type: object
@@ -2052,6 +2582,40 @@ components:
                     type: string
                     description: Proto message name in the owner service that contains this field (e.g. Article, Comment).
             description: A foreign-key reference that crosses a service boundary.
+        DatabaseDetection:
+            title: DatabaseDetection
+            type: object
+            properties:
+                engines:
+                    type: array
+                    items:
+                        enum:
+                            - DATABASE_ENGINE_UNSPECIFIED
+                            - DATABASE_ENGINE_POSTGRESQL
+                            - DATABASE_ENGINE_MYSQL
+                            - DATABASE_ENGINE_MONGODB
+                            - DATABASE_ENGINE_SQLITE
+                            - DATABASE_ENGINE_SQLSERVER
+                            - DATABASE_ENGINE_ORACLE
+                            - DATABASE_ENGINE_REDIS
+                        type: string
+                        format: enum
+                    description: Detected database engines (deduplicated, sorted). Empty when unknown.
+                engineNames:
+                    type: array
+                    items:
+                        type: string
+                    description: Display names of the detected engines, aligned with engines.
+                unknown:
+                    example: false
+                    type: boolean
+                    description: True when no database engine signal was found (engines empty).
+                evidence:
+                    type: array
+                    items:
+                        type: string
+                    description: Deterministic evidence strings behind the detection (driver/config/ORM).
+            description: Deterministically detected database engine(s) and the evidence behind the detection.
         DependencyEdge:
             title: DependencyEdge
             type: object
@@ -2070,6 +2634,42 @@ components:
                     description: Coupling strength (higher = more coupled).
                     format: uint32
             description: Directed edge between two modules in the dependency graph.
+        EnrichRoadmapRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 10003
+                    type: string
+                    description: Migration identifier. Migration must be in RESTRUCTURING_READY state.
+            description: EnrichRoadmapRequest triggers the opt-in LLM enrichment of roadmap steps.
+        EnrichedStep:
+            title: EnrichedStep
+            type: object
+            properties:
+                stepOrder:
+                    type: integer
+                    description: ActionItem.order this narrative belongs to.
+                    format: int32
+                narrative:
+                    type: string
+                    description: LLM-written explanation of why this step is needed and how to execute it for this specific codebase.
+            description: LLM-written narrative for one restructuring step, keyed by step order.
+        EvaluateMigrabilityRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 42
+                    type: string
+                    description: Analysis summary identifier.
+                language:
+                    example: es
+                    type: string
+                    description: BCP-47 language for LLM-generated prose (summary/reasons/blockers). Absent → 'en'. Module names and identifiers are never translated.
+            description: EvaluateMigrabilityRequest identifies the analysis summary to assess.
         ExternalDocs:
             type: object
             properties:
@@ -2106,6 +2706,29 @@ components:
                     type: string
                     description: UTF-8 file content.
             description: FileEntry is a single file for the push operation.
+        GenerateBlueprintRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 10003
+                    type: string
+                    description: Migration identifier. Must be in RESTRUCTURING_READY state with a completed analysis.
+            description: GenerateBlueprintRequest triggers the opt-in LLM blueprint generation.
+        GenerateRestructuringRoadmapRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier. Must be in AWAITING_APPROVAL with NOT_MIGRABLE verdict or no_service_boundaries=true.
+            description: |-
+                GenerateRestructuringRoadmapRequest identifies the migration to generate a roadmap for.
+                 The migration must be in AWAITING_APPROVAL state with a NOT_MIGRABLE verdict
+                 or a plan with no_service_boundaries=true.
         GenerationPackage:
             title: GenerationPackage
             type: object
@@ -2163,6 +2786,54 @@ components:
                     description: The type of the serialized message.
             additionalProperties: true
             description: Contains an arbitrary serialized message along with a @type that describes the type of the serialized message.
+        IntakeAssessment:
+            title: IntakeAssessment
+            type: object
+            properties:
+                codebaseKind:
+                    enum:
+                        - CODEBASE_KIND_UNSPECIFIED
+                        - CODEBASE_KIND_BACKEND
+                        - CODEBASE_KIND_FRONTEND
+                        - CODEBASE_KIND_LIBRARY
+                        - CODEBASE_KIND_CLI
+                        - CODEBASE_KIND_MOBILE
+                    type: string
+                    description: Detected codebase kind. The platform migrates BACKEND today.
+                    format: enum
+                kindConfidence:
+                    example: 0.9
+                    type: number
+                    description: Confidence in the codebase_kind classification, in [0,1].
+                    format: float
+                primaryLanguage:
+                    example: PHP
+                    type: string
+                    description: Primary language detected (go-enry), e.g. PHP, Python, Java.
+                languageSupported:
+                    example: true
+                    type: boolean
+                    description: True when the primary language has a Tier-2 analyzer (PHP/Python today).
+                supportedLanguages:
+                    type: array
+                    items:
+                        type: string
+                    description: Languages with a Tier-2 analyzer at run time (e.g. PHP, Python).
+                migratable:
+                    example: true
+                    type: boolean
+                    description: True iff this is a backend in a supported language (platform can migrate it).
+                warnings:
+                    type: array
+                    items:
+                        type: string
+                    description: Specific human-readable warnings explaining any intake failure. Empty when migratable.
+                evidence:
+                    type: array
+                    items:
+                        type: string
+                    description: Deterministic evidence strings behind the codebase_kind classification.
+            description: 'Deterministic intake gate: codebase kind, primary-language support, migratable flag, and honest warnings.'
         ListAnalysisSummariesResponse:
             type: object
             properties:
@@ -2211,6 +2882,14 @@ components:
                         - $ref: '#/components/schemas/Pagination'
                     description: Pagination metadata.
             description: ListMigrationsResponse carries a page of migrations with pagination metadata.
+        ListPlansResponse:
+            type: object
+            properties:
+                plans:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Plan'
+            description: ListPlansResponse wraps the plan catalog.
         ListRepositoriesResponse:
             type: object
             properties:
@@ -2237,6 +2916,16 @@ components:
                         - $ref: '#/components/schemas/Pagination'
                     description: Pagination metadata.
             description: ListTagsResponse carries a page of tags with pagination metadata.
+        ListUsageRecordsResponse:
+            type: object
+            properties:
+                usageRecords:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/UsageRecord'
+                pagination:
+                    $ref: '#/components/schemas/Pagination'
+            description: ListUsageRecordsResponse wraps a page of usage records.
         ListUsersResponse:
             type: object
             properties:
@@ -2259,13 +2948,8 @@ components:
             properties:
                 verdict:
                     example: MIGRABLE
-                    enum:
-                        - MIGRABLE
-                        - PARTIAL
-                        - NOT_MIGRABLE
-                        - INCOMPLETE_NO_STRUCTURAL_DATA
                     type: string
-                    description: 'Migrability verdict: MIGRABLE, PARTIAL, NOT_MIGRABLE, or INCOMPLETE_NO_STRUCTURAL_DATA. INCOMPLETE_NO_STRUCTURAL_DATA is an honest degrade (deep structural analysis produced no graph); when present, migrabilityScore is absent and consumers MUST branch on verdict before reading the score.'
+                    description: 'Migrability verdict: MIGRABLE, PARTIAL, or NOT_MIGRABLE.'
                 summary:
                     example: Flask REST API organised in blueprints with clear domain separation.
                     type: string
@@ -2279,7 +2963,7 @@ components:
                     type: array
                     items:
                         type: string
-                    description: Structural blockers preventing decomposition. Empty for MIGRABLE.
+                    description: Supplemental non-structural LLM blockers. Structural blockers are in MigrabilityScore.typed_blockers.
                 confidence:
                     example: HIGH
                     type: string
@@ -2290,17 +2974,67 @@ components:
                     description: Estimated API cost in USD.
                     format: double
                 assessedTime:
-                    readOnly: true
                     type: string
                     description: When the assessment was last run.
                     format: date-time
                 migrabilityScore:
                     example: 87
                     type: integer
-                    nullable: true
-                    description: Structural migrability score 0–100. Higher is more decomposable. Optional and nullable&#58; ABSENT (not 0) when verdict is INCOMPLETE_NO_STRUCTURAL_DATA, because there is no graph to score. Consumers MUST branch on verdict before reading this number.
+                    description: Structural migrability score 0–100. Higher is more decomposable. Absent when verdict is INCOMPLETE_NO_STRUCTURAL_DATA.
                     format: int32
+                scoreSignals:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ScoreSignal'
+                    description: Per-signal breakdown of the migrability score.
+                typedRecommendations:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/TypedRecommendation'
+                    description: Typed next-step items derived from verdict + structural findings.
+                assessmentLanguage:
+                    example: en
+                    type: string
+                    description: BCP-47 language tag of the LLM-generated prose fields. Always 'en' until multi-language prompts are introduced. Absent on old records; frontend defaults to 'en'.
             description: LLM-produced migrability verdict. Absent until explicitly requested by the user.
+        MigrabilityScore:
+            title: MigrabilityScore
+            type: object
+            properties:
+                value:
+                    example: 90
+                    type: integer
+                    description: Structural migrability score 0–100. Higher is more decomposable.
+                    format: int32
+                signals:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ScoreSignal'
+                    description: Per-signal breakdown of the migrability score.
+                structuralVerdict:
+                    example: NO_SERVICE_BOUNDARIES
+                    type: string
+                    description: Deterministic structural verdict derived from score signals. NO_SERVICE_BOUNDARIES when no domain layer exists. Absent otherwise — use migrability_assessment.verdict for LLM-produced verdicts.
+                scoreBand:
+                    enum:
+                        - SCORE_BAND_UNSPECIFIED
+                        - SCORE_BAND_GOOD
+                        - SCORE_BAND_MEDIUM
+                        - SCORE_BAND_BAD
+                    type: string
+                    description: 'Score quality tier: GOOD (≥70), MEDIUM (≥40), or BAD (<40).'
+                    format: enum
+                structuralFindings:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/StructuralFinding'
+                    description: Typed structural findings from the scorer. Absent on old analyses.
+                typedBlockers:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/TypedBlocker'
+                    description: Typed structural blockers. Frontend shows these as the authoritative list.
+            description: Deterministic structural migrability score 0–100 with per-signal breakdown. Computed without an LLM call.
         Migration:
             title: Migration
             required:
@@ -2338,6 +3072,7 @@ components:
                         - MIGRATION_STATE_PUSHED
                         - MIGRATION_STATE_FAILED
                         - MIGRATION_STATE_CANCELLED
+                        - MIGRATION_STATE_RESTRUCTURING_READY
                     type: string
                     description: Current lifecycle state of the migration.
                     format: enum
@@ -2405,6 +3140,25 @@ components:
                     example: false
                     type: boolean
                     description: When true, overrides a NOT_MIGRABLE block and allows generation to proceed.
+                analysisReused:
+                    readOnly: true
+                    example: false
+                    type: boolean
+                    description: True when analysis was reused from a prior run on the same commit.
+                restructuringRoadmap:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/RestructuringRoadmap'
+                    description: Restructuring roadmap for NOT_MIGRABLE or no-boundary migrations. Absent until GenerateRestructuringRoadmap is called.
+                sourceAnalysisSummaryId:
+                    writeOnly: true
+                    example: 0
+                    type: string
+                    description: 'Optional: identifier of a completed AnalysisSummary to reuse. When set, StartMigration skips re-analysis and transitions directly to DESIGNING.'
+                autoApprove:
+                    example: false
+                    type: boolean
+                    description: When true, the design plan is auto-approved on reaching AWAITING_APPROVAL so the full roadmap runs end-to-end (stops before the human-gated publish). Set by RunMigration.
             description: A migration run that decomposes a monolith into microservices.
         MigrationOutput:
             title: MigrationOutput
@@ -2435,7 +3189,7 @@ components:
                 module:
                     example: conduit.users.routes
                     type: string
-                    description: Dotted module name (e.g. conduit.users.routes).
+                    description: Fully-qualified module name (dotted for Python, e.g. conduit.users.routes; backslash-separated for PHP, e.g. BookStack\\Entities\\Models\\Book).
                 file:
                     example: conduit/users/routes.py
                     type: string
@@ -2449,7 +3203,7 @@ components:
                     type: array
                     items:
                         type: string
-                    description: Module-level class names.
+                    description: Class names in this module. PHP entries carry a kind prefix (e.g. class:Book); Python entries are plain names.
                 moduleLevelState:
                     type: array
                     items:
@@ -2469,7 +3223,55 @@ components:
                     type: integer
                     description: Non-blank non-comment line count.
                     format: uint32
-            description: Structural summary of a single Python module.
+                fanIn:
+                    example: 19
+                    type: integer
+                    description: Weighted fan-in (sum of edge weights from importers). Same metric the scorer uses.
+                    format: uint32
+                fanOut:
+                    example: 5
+                    type: integer
+                    description: Weighted fan-out (sum of edge weights to imported modules).
+                    format: uint32
+                isSharedStateHub:
+                    example: true
+                    type: boolean
+                    description: True when module has mutable state and weighted fan-in >= 2 (canonical hub flag).
+                fanInFromProduction:
+                    example: 41
+                    type: integer
+                    description: Weighted fan-in from non-test importers only. Use for display; falls back to fan_in when 0 and no classification is available.
+                    format: uint32
+            description: Structural summary of a single source module (Python, PHP, or other Tier-2 supported language).
+        ModuleClassification:
+            title: ModuleClassification
+            type: object
+            properties:
+                domainModules:
+                    type: array
+                    items:
+                        type: string
+                    description: Modules carrying business/domain logic.
+                infraModules:
+                    type: array
+                    items:
+                        type: string
+                    description: Modules classified as shared infrastructure.
+                testModules:
+                    type: array
+                    items:
+                        type: string
+                    description: Test modules excluded from domain/infra partitions.
+                applicationModules:
+                    type: array
+                    items:
+                        type: string
+                    description: Modules classified as application layer (HTTP controllers, middleware, CLI handlers).
+                structuralFallback:
+                    example: false
+                    type: boolean
+                    description: True when the fan-in structural fallback was used (no blueprint groups found).
+            description: Domain/infrastructure/test classification of each module in the dependency graph.
         NamedAny:
             type: object
             properties:
@@ -2481,6 +3283,24 @@ components:
                         - $ref: '#/components/schemas/Any'
                     description: Mapped value
             description: Automatically-generated message used to represent maps of Any as ordered (name,value) pairs.
+        OperationUsage:
+            type: object
+            properties:
+                operation:
+                    enum:
+                        - USAGE_OPERATION_UNSPECIFIED
+                        - USAGE_OPERATION_ASSESSMENT
+                        - USAGE_OPERATION_ANALYSIS
+                        - USAGE_OPERATION_MIGRATION
+                        - USAGE_OPERATION_GENERATION
+                    type: string
+                    description: The operation this breakdown line is for.
+                    format: enum
+                totals:
+                    allOf:
+                        - $ref: '#/components/schemas/UsageTotals'
+                    description: The totals for this operation.
+            description: OperationUsage breaks a usage total down by a single operation kind.
         OperationalCoupling:
             title: OperationalCoupling
             type: object
@@ -2524,6 +3344,34 @@ components:
                     type: string
                     description: Total number of pages
             description: Pagination information.
+        Plan:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: Stable machine-readable plan code (free | pro | enterprise).
+                displayName:
+                    type: string
+                    description: Human-readable plan name.
+                maxAnalysesPerMonth:
+                    type: string
+                    description: Maximum analyses per month (-1 = unlimited).
+                maxMigrationsPerMonth:
+                    type: string
+                    description: Maximum migrations per month (-1 = unlimited).
+                maxTokensPerMonth:
+                    type: string
+                    description: Maximum LLM tokens per month (-1 = unlimited).
+                maxConcurrency:
+                    type: string
+                    description: Maximum concurrent generation jobs (-1 = unlimited).
+                monthlyCostCapUsd:
+                    type: number
+                    description: Soft monthly cost ceiling in US dollars (-1 = unlimited).
+                    format: double
+            description: |-
+                Plan is a named usage tier with monthly limits. Limits use -1 to mean
+                 "unlimited"; a value of 0 means "not allowed".
         ProbeSourceRepositoryRequest:
             required:
                 - remoteUrl
@@ -2775,7 +3623,115 @@ components:
                 boundariesExplanation:
                     type: string
                     description: Plain-language explanation of why no service boundaries were found. Empty when no_service_boundaries is false.
+                candidateGroupings:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/CandidateGrouping'
+                    description: LLM-derived candidate service groupings. Empty until LLM clustering is wired.
+                restructureRecommendations:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RestructureRecommendation'
+                    description: LLM-derived restructure recommendations. Empty until LLM clustering is wired.
+                partitionModularity:
+                    type: number
+                    description: Newman-Girvan modularity Q of the Louvain clustering partition (domain sub-graph, affinity-edge-free). Range [−0.5, 1]; higher is better. Informative quality signal for the decomposition output, separate from the migrability score.
+                    format: double
             description: Proposed decomposition of the source monolith into named microservices.
+        RestructureRecommendation:
+            title: RestructureRecommendation
+            type: object
+            properties:
+                kind:
+                    type: string
+                    description: Recommendation kind (e.g. EXTRACT_SERVICE, REFACTOR).
+                subject:
+                    type: string
+                    description: Target of the recommendation (module name or pattern).
+                action:
+                    type: string
+                    description: Concrete action recommended.
+                blocking:
+                    type: boolean
+                    description: True when this recommendation blocks decomposition approval.
+            description: An actionable recommendation produced by the LLM clustering engine.
+        RestructuringRoadmap:
+            title: RestructuringRoadmap
+            type: object
+            properties:
+                diagnosis:
+                    $ref: '#/components/schemas/RoadmapDiagnosis'
+                structuralProblems:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/StructuralProblem'
+                    description: Scored structural impediments, ordered by penalty descending.
+                actionPlan:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/ActionItem'
+                    description: Concrete restructuring steps; blocking items first.
+                boundariesExplanation:
+                    type: string
+                    description: Plain-language explanation of why no service boundaries were found. Empty when not applicable.
+                generatedTime:
+                    readOnly: true
+                    type: string
+                    description: When the roadmap was generated.
+                    format: date-time
+                enrichment:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/RoadmapEnrichment'
+                    description: LLM-written narratives for each action step. Absent until EnrichRoadmap is called; action_plan is the fallback.
+                blueprint:
+                    readOnly: true
+                    allOf:
+                        - $ref: '#/components/schemas/ServiceBlueprint'
+                    description: LLM-proposed target service blueprint anchored to coupling data. Absent until GenerateBlueprint is called.
+            description: Automated restructuring plan for a migration that cannot be decomposed. Generated from persisted assessment data without an LLM call.
+        RoadmapDiagnosis:
+            title: RoadmapDiagnosis
+            type: object
+            properties:
+                verdict:
+                    type: string
+                    description: 'Migrability verdict: NOT_MIGRABLE or the reason for no boundaries.'
+                summary:
+                    type: string
+                    description: 1-2 sentence description of the codebase's architectural pattern.
+                migrabilityScore:
+                    type: integer
+                    description: Structural migrability score 0–100. Absent when verdict is INCOMPLETE_NO_STRUCTURAL_DATA (no graph to score).
+                    format: int32
+                confidence:
+                    type: string
+                    description: 'Model confidence: HIGH, MEDIUM, or LOW.'
+                blockers:
+                    type: array
+                    items:
+                        type: string
+                    description: Structural blockers preventing decomposition.
+            description: Assessment summary that triggered the restructuring roadmap.
+        RoadmapEnrichment:
+            title: RoadmapEnrichment
+            type: object
+            properties:
+                steps:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/EnrichedStep'
+                    description: LLM narratives for each action step, keyed by step_order.
+                costUsd:
+                    type: number
+                    description: Accumulated API cost in USD for this enrichment call.
+                    format: double
+                enrichedTime:
+                    readOnly: true
+                    type: string
+                    description: When the LLM enrichment was produced.
+                    format: date-time
+            description: LLM enrichment of the deterministic action plan. One narrative per step. Absent until EnrichRoadmap is called.
         RouteInfo:
             title: RouteInfo
             type: object
@@ -2806,7 +3762,159 @@ components:
                     example: 7
                     type: string
                     description: Migration identifier that triggered this run (0 if standalone).
+                sourceBranch:
+                    example: develop
+                    type: string
+                    description: Branch to analyse. Defaults to the repository's default_branch when empty.
+                force:
+                    example: false
+                    type: boolean
+                    description: When true, force a new analysis even if a duplicate already exists.
+                ownerUserId:
+                    example: 42
+                    type: string
+                    description: Owner user identifier. Injected server-side; ignored when sent by clients.
             description: RunAnalysisRequest initiates a new asynchronous analysis run.
+        RunAnalysisResponse:
+            type: object
+            properties:
+                analysisSummary:
+                    allOf:
+                        - $ref: '#/components/schemas/AnalysisSummary'
+                    description: Newly created analysis summary (RUNNING). Null when duplicate_found.
+                duplicateFound:
+                    example: false
+                    type: boolean
+                    description: True when a same-commit analysis already exists and no new run was started.
+                existingAnalysis:
+                    allOf:
+                        - $ref: '#/components/schemas/AnalysisSummary'
+                    description: Existing COMPLETED analysis when duplicate_found=true.
+            description: RunAnalysisResponse is the result of a RunAnalysis call.
+        RunMigrationRequest:
+            required:
+                - identifier
+            type: object
+            properties:
+                identifier:
+                    example: 7
+                    type: string
+                    description: Migration identifier.
+                serviceFilter:
+                    type: array
+                    items:
+                        type: string
+                    description: Optional subset of service names to generate when the plan is auto-approved. Empty = generate all.
+            description: RunMigrationRequest triggers the single-shot end-to-end roadmap execution.
+        ScoreSignal:
+            title: ScoreSignal
+            type: object
+            properties:
+                signal:
+                    type: string
+                    description: Signal identifier.
+                penalty:
+                    type: integer
+                    description: Score penalty (0 = no issue, higher = worse).
+                    format: int32
+                detail:
+                    type: string
+                    description: Human-readable explanation of this signal (legacy prose; use detail_key when present).
+                modules:
+                    type: array
+                    items:
+                        type: string
+                    description: Module names implicated by this signal (structured, machine-readable).
+                detailKey:
+                    type: string
+                    description: i18n key replacing the prose detail field. Absent on old analyses.
+                detailParams:
+                    type: object
+                    additionalProperties:
+                        type: string
+                    description: Interpolation params for detail_key.
+            description: One structural signal and its penalty contribution to the migrability score.
+        SecurityFinding:
+            title: SecurityFinding
+            type: object
+            properties:
+                type:
+                    enum:
+                        - SECURITY_FINDING_TYPE_UNSPECIFIED
+                        - SECURITY_FINDING_TYPE_HARDCODED_SECRET
+                    type: string
+                    description: Class of the security finding.
+                    format: enum
+                severity:
+                    enum:
+                        - SECURITY_SEVERITY_UNSPECIFIED
+                        - SECURITY_SEVERITY_LOW
+                        - SECURITY_SEVERITY_MEDIUM
+                        - SECURITY_SEVERITY_HIGH
+                    type: string
+                    description: Severity of the finding (LOW/MEDIUM/HIGH).
+                    format: enum
+                file:
+                    example: config/database.php
+                    type: string
+                    description: Workspace-relative file path of the finding.
+                line:
+                    example: 42
+                    type: integer
+                    description: 1-based line number of the finding.
+                    format: uint32
+                description:
+                    example: Hardcoded AWS secret access key
+                    type: string
+                    description: Human-readable description of the finding.
+                snippet:
+                    example: aws_secret_access_key = "AKIA****REDACTED****"
+                    type: string
+                    description: The matched line with the secret value redacted.
+                rule:
+                    example: aws-secret-key
+                    type: string
+                    description: Identifier of the detector rule that fired.
+                confidence:
+                    example: 0.95
+                    type: number
+                    description: Confidence in [0,1] that this is a real secret (not a placeholder).
+                    format: float
+            description: A deterministic code-level security finding (e.g. a hardcoded secret) with file:line, severity, and confidence.
+        ServiceBlueprint:
+            title: ServiceBlueprint
+            type: object
+            properties:
+                services:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/BlueprintService'
+                    description: Proposed microservices, each grounded in coupling data.
+                isHypothetical:
+                    type: boolean
+                    description: True when the blueprint is a post-restructuring target, not a current-state description.
+                preconditionNote:
+                    type: string
+                    description: What must be done before this blueprint is actionable (references action_plan blocking steps).
+                requiredSteps:
+                    type: array
+                    items:
+                        type: integer
+                        format: int32
+                    description: ActionItem.order values that must be resolved before this blueprint is actionable.
+                costUsd:
+                    type: number
+                    description: Accumulated API cost in USD for this generation call.
+                    format: double
+                generatedTime:
+                    readOnly: true
+                    type: string
+                    description: When the LLM blueprint was produced.
+                    format: date-time
+                confidenceNote:
+                    type: string
+                    description: LLM confidence note on the proposed groupings. Empty when confidence is high.
+            description: LLM-proposed microservice grouping anchored to the dependency graph. Absent until GenerateBlueprint is called.
         ServiceGenerationArtifacts:
             title: ServiceGenerationArtifacts
             type: object
@@ -2893,6 +4001,24 @@ components:
                     type: boolean
                     description: true lifts the NOT_MIGRABLE block; false reinstates it.
             description: SetMigrabilityOverrideRequest sets or clears the migrability override flag.
+        SharedStateHub:
+            title: SharedStateHub
+            type: object
+            properties:
+                module:
+                    type: string
+                    description: Dotted module name of the hub.
+                mutableState:
+                    type: array
+                    items:
+                        type: string
+                    description: Mutable module-level variable names.
+                fanIn:
+                    example: 19
+                    type: integer
+                    description: Weighted fan-in (sum of edge weights from importers).
+                    format: uint32
+            description: Module with mutable state and weighted fan-in >= 2 (canonical shared-state hub).
         StartMigrationRequest:
             required:
                 - identifier
@@ -2921,6 +4047,45 @@ components:
                     type: string
                     description: Detailed description of the error.
             description: Human-readable error response message in response to an invalid request.
+        StructuralFinding:
+            title: StructuralFinding
+            type: object
+            properties:
+                kind:
+                    type: string
+                    description: Finding kind.
+                severity:
+                    type: string
+                    description: 'Finding severity: high, medium, or low.'
+                titleKey:
+                    type: string
+                    description: i18n key for the finding title.
+                params:
+                    type: object
+                    additionalProperties:
+                        type: string
+                    description: Template interpolation params.
+                modules:
+                    type: array
+                    items:
+                        type: string
+                    description: Module names involved in this finding.
+            description: One typed structural issue detected by the scorer.
+        StructuralProblem:
+            title: StructuralProblem
+            type: object
+            properties:
+                signal:
+                    type: string
+                    description: Signal identifier (e.g. hub_severity, god_modules).
+                penalty:
+                    type: integer
+                    description: Score penalty applied by this signal (higher = worse).
+                    format: int32
+                detail:
+                    type: string
+                    description: Human-readable explanation of what was detected.
+            description: A scored structural impediment to microservice decomposition.
         Tag:
             type: object
             properties:
@@ -2949,8 +4114,9 @@ components:
                         - TARGET_LANGUAGE_GO
                         - TARGET_LANGUAGE_RUST
                         - TARGET_LANGUAGE_PYTHON
+                        - TARGET_LANGUAGE_NODE
                     type: string
-                    description: Output language. Only TARGET_LANGUAGE_GO is supported in v1.
+                    description: Output language. GO is the only certified target in v1. PYTHON is experimental (profile + generator prompt exist, not end-to-end certified). RUST and NODE are registered for selection but are generator holes (no profile/prompt; not generable). See the TargetLanguage enum for per-language status.
                     format: enum
                 database:
                     example: TARGET_DATABASE_MONGODB
@@ -2975,7 +4141,16 @@ components:
                 useApiGateway:
                     example: true
                     type: boolean
-                    description: Wrap generated services with an HTTP/gRPC gateway.
+                    description: Wrap generated services with an HTTP/gRPC gateway. Ignored for MONOLITH topology.
+                topology:
+                    example: TARGET_TOPOLOGY_MICROSERVICES
+                    enum:
+                        - TARGET_TOPOLOGY_UNSPECIFIED
+                        - TARGET_TOPOLOGY_MICROSERVICES
+                        - TARGET_TOPOLOGY_MONOLITH
+                    type: string
+                    description: 'Architectural target: MICROSERVICES (default, decompose + gateway) or MONOLITH (single HTTP-native service, no gateway).'
+                    format: enum
             description: 'Target stack: language, database, and inter-service transport.'
         Technology:
             title: Technology
@@ -3007,6 +4182,10 @@ components:
                     example: language
                     type: string
                     description: 'Broad category: language, framework, database, runtime, or library.'
+                slug:
+                    example: laravel
+                    type: string
+                    description: Stable machine identifier for icon/filter mapping. Empty when unknown.
             description: A technology (language, framework, library, etc.) detected in the repository.
         TestConnectionRequest:
             required:
@@ -3046,6 +4225,134 @@ components:
                     description: Expiration time of the token
                     format: date-time
             description: Token represents a cryptographic token (JWT).
+        TypedBlocker:
+            title: TypedBlocker
+            type: object
+            properties:
+                blockerKey:
+                    type: string
+                    description: i18n key for this blocker.
+                params:
+                    type: object
+                    additionalProperties:
+                        type: string
+                    description: Template interpolation params.
+            description: Typed structural blocker emitted by the scorer.
+        TypedRecommendation:
+            title: TypedRecommendation
+            type: object
+            properties:
+                recKey:
+                    type: string
+                    description: i18n key for this recommendation.
+                params:
+                    type: object
+                    additionalProperties:
+                        type: string
+                    description: Template interpolation params.
+            description: Structured next-step recommendation derived from verdict + structural findings.
+        UnreachableModule:
+            title: UnreachableModule
+            type: object
+            properties:
+                module:
+                    example: backend.legacy_copy
+                    type: string
+                    description: Fully-qualified module name.
+                file:
+                    example: backend/legacy_copy.py
+                    type: string
+                    description: Workspace-relative file path.
+                loc:
+                    example: 240
+                    type: integer
+                    description: Lines of code in the file.
+                    format: uint32
+            description: A module with code but no statically resolvable references (for review, not deletion).
+        UsageAggregateResponse:
+            type: object
+            properties:
+                total:
+                    allOf:
+                        - $ref: '#/components/schemas/UsageTotals'
+                    description: Grand total across all matched records.
+                byOperation:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/OperationUsage'
+                    description: Breakdown by operation.
+            description: UsageAggregateResponse carries a grand total plus a per-operation breakdown.
+        UsageRecord:
+            required:
+                - userId
+                - operation
+            type: object
+            properties:
+                identifier:
+                    readOnly: true
+                    type: string
+                    description: Platform-assigned unique usage-record identifier.
+                    format: uint64
+                userId:
+                    type: string
+                    description: Identifier of the user the spend is attributed to.
+                analysisId:
+                    type: string
+                    description: Analysis summary identifier the spend originated from (0 if not analysis-bound).
+                migrationId:
+                    type: string
+                    description: Migration identifier the spend originated from (0 if not migration-bound).
+                operation:
+                    enum:
+                        - USAGE_OPERATION_UNSPECIFIED
+                        - USAGE_OPERATION_ASSESSMENT
+                        - USAGE_OPERATION_ANALYSIS
+                        - USAGE_OPERATION_MIGRATION
+                        - USAGE_OPERATION_GENERATION
+                    type: string
+                    description: Operation kind that produced the spend.
+                    format: enum
+                tokensIn:
+                    type: string
+                    description: Input (prompt) tokens reported by the provider.
+                tokensOut:
+                    type: string
+                    description: Output (completion) tokens reported by the provider.
+                costUsd:
+                    type: number
+                    description: Estimated cost in US dollars for this record.
+                    format: double
+                model:
+                    type: string
+                    description: Model identifier used to produce the spend.
+                createTime:
+                    readOnly: true
+                    type: string
+                    description: Time the spend was recorded.
+                    format: date-time
+            description: |-
+                UsageRecord is a single accounted LLM spend event, attributed to the owning
+                 user and to the originating analysis or migration. It is the atomic fact the
+                 aggregation endpoints sum over.
+        UsageTotals:
+            type: object
+            properties:
+                recordCount:
+                    type: string
+                    description: Number of usage records in the aggregate.
+                tokensIn:
+                    type: string
+                    description: Summed input tokens.
+                tokensOut:
+                    type: string
+                    description: Summed output tokens.
+                costUsd:
+                    type: number
+                    description: Summed cost in US dollars.
+                    format: double
+            description: |-
+                UsageTotals is an aggregate of usage records: summed tokens and cost plus the
+                 number of records folded into the total.
         User:
             required:
                 - email
@@ -3154,6 +4461,17 @@ components:
                     example: 0.20.0
                     type: string
                     description: Version in which the vulnerability was fixed.
+                details:
+                    readOnly: true
+                    example: null
+                    type: string
+                    description: Full advisory description in Markdown (OSV details field). Richer than description.
+                references:
+                    readOnly: true
+                    type: array
+                    items:
+                        type: string
+                    description: URLs to external advisory pages, fix commits, and CVE databases.
             description: A security vulnerability detected in a dependency or the repository source.
     securitySchemes:
         Authorization:
@@ -3194,6 +4512,14 @@ tags:
          Standard CRUD methods follow AIP-130 – 135.
          Custom methods (feed, favorite, comments) are marked TODO — implement as
          AIP-136 :verbCamelCase custom methods before shipping.
+    - name: BillingService
+      description: |-
+        BillingService records and aggregates LLM token / cost usage and exposes the
+         usage-plan catalog and per-user plan association.
+
+         Usage records are written best-effort by the spend sites (assessment,
+         migration derivation, code generation). The read methods aggregate those
+         records by user, by analysis, and by migration.
     - name: IdentityService
       description: |-
         IdentityService manages User resources and platform authentication.

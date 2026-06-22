@@ -27,6 +27,7 @@ const (
 	MigrationService_ListMigrations_FullMethodName               = "/milton_prism.services.migration.v1.MigrationService/ListMigrations"
 	MigrationService_DeleteMigration_FullMethodName              = "/milton_prism.services.migration.v1.MigrationService/DeleteMigration"
 	MigrationService_StartMigration_FullMethodName               = "/milton_prism.services.migration.v1.MigrationService/StartMigration"
+	MigrationService_RunMigration_FullMethodName                 = "/milton_prism.services.migration.v1.MigrationService/RunMigration"
 	MigrationService_ApproveDesign_FullMethodName                = "/milton_prism.services.migration.v1.MigrationService/ApproveDesign"
 	MigrationService_GetGenerationPackage_FullMethodName         = "/milton_prism.services.migration.v1.MigrationService/GetGenerationPackage"
 	MigrationService_CancelMigration_FullMethodName              = "/milton_prism.services.migration.v1.MigrationService/CancelMigration"
@@ -77,6 +78,25 @@ type MigrationServiceClient interface {
 	//
 	// Only the owner or a system user may start a migration.
 	StartMigration(ctx context.Context, in *StartMigrationRequest, opts ...grpc.CallOption) (*v1.Migration, error)
+	// RunMigration executes the full restructuring roadmap end-to-end from the
+	// platform in a single shot, with no intermediate manual steps.
+	//
+	// It is the one-shot orchestration trigger: from the migration's current
+	// state it kicks off the pipeline (PENDING starts analysis) and records an
+	// auto-approve intent so that, the moment decomposition reaches
+	// AWAITING_APPROVAL, the design plan is approved automatically and generation
+	// begins — without a human approval click. When the migration is already at
+	// AWAITING_APPROVAL the plan is approved immediately.
+	//
+	// The final publish (git push) is NEVER automated: the run drives the
+	// migration only as far as READY (or FAILED). The migrability gate still
+	// applies — a NOT_MIGRABLE verdict without an override blocks the
+	// auto-approval, just like a manual ApproveDesign.
+	//
+	// Idempotent: re-running from a state that is already in flight is a no-op
+	// that re-asserts the auto-approve intent. Only the owner or a system user
+	// may call this.
+	RunMigration(ctx context.Context, in *RunMigrationRequest, opts ...grpc.CallOption) (*v1.Migration, error)
 	// ApproveDesign transitions a migration from AWAITING_APPROVAL.
 	//
 	// When approved is true the migration advances to GENERATING.
@@ -220,6 +240,16 @@ func (c *migrationServiceClient) StartMigration(ctx context.Context, in *StartMi
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(v1.Migration)
 	err := c.cc.Invoke(ctx, MigrationService_StartMigration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *migrationServiceClient) RunMigration(ctx context.Context, in *RunMigrationRequest, opts ...grpc.CallOption) (*v1.Migration, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(v1.Migration)
+	err := c.cc.Invoke(ctx, MigrationService_RunMigration_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -382,6 +412,25 @@ type MigrationServiceServer interface {
 	//
 	// Only the owner or a system user may start a migration.
 	StartMigration(context.Context, *StartMigrationRequest) (*v1.Migration, error)
+	// RunMigration executes the full restructuring roadmap end-to-end from the
+	// platform in a single shot, with no intermediate manual steps.
+	//
+	// It is the one-shot orchestration trigger: from the migration's current
+	// state it kicks off the pipeline (PENDING starts analysis) and records an
+	// auto-approve intent so that, the moment decomposition reaches
+	// AWAITING_APPROVAL, the design plan is approved automatically and generation
+	// begins — without a human approval click. When the migration is already at
+	// AWAITING_APPROVAL the plan is approved immediately.
+	//
+	// The final publish (git push) is NEVER automated: the run drives the
+	// migration only as far as READY (or FAILED). The migrability gate still
+	// applies — a NOT_MIGRABLE verdict without an override blocks the
+	// auto-approval, just like a manual ApproveDesign.
+	//
+	// Idempotent: re-running from a state that is already in flight is a no-op
+	// that re-asserts the auto-approve intent. Only the owner or a system user
+	// may call this.
+	RunMigration(context.Context, *RunMigrationRequest) (*v1.Migration, error)
 	// ApproveDesign transitions a migration from AWAITING_APPROVAL.
 	//
 	// When approved is true the migration advances to GENERATING.
@@ -495,6 +544,9 @@ func (UnimplementedMigrationServiceServer) DeleteMigration(context.Context, *Del
 }
 func (UnimplementedMigrationServiceServer) StartMigration(context.Context, *StartMigrationRequest) (*v1.Migration, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartMigration not implemented")
+}
+func (UnimplementedMigrationServiceServer) RunMigration(context.Context, *RunMigrationRequest) (*v1.Migration, error) {
+	return nil, status.Error(codes.Unimplemented, "method RunMigration not implemented")
 }
 func (UnimplementedMigrationServiceServer) ApproveDesign(context.Context, *ApproveDesignRequest) (*v1.Migration, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApproveDesign not implemented")
@@ -639,6 +691,24 @@ func _MigrationService_StartMigration_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MigrationServiceServer).StartMigration(ctx, req.(*StartMigrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MigrationService_RunMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunMigrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MigrationServiceServer).RunMigration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MigrationService_RunMigration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MigrationServiceServer).RunMigration(ctx, req.(*RunMigrationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -885,6 +955,10 @@ var MigrationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StartMigration",
 			Handler:    _MigrationService_StartMigration_Handler,
+		},
+		{
+			MethodName: "RunMigration",
+			Handler:    _MigrationService_RunMigration_Handler,
 		},
 		{
 			MethodName: "ApproveDesign",

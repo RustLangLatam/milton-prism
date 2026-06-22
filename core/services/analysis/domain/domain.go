@@ -74,6 +74,10 @@ const (
 	AnalysisStateRunning        = analysisv1.AnalysisState_ANALYSIS_STATE_RUNNING
 	AnalysisStateCompleted      = analysisv1.AnalysisState_ANALYSIS_STATE_COMPLETED
 	AnalysisStateFailed         = analysisv1.AnalysisState_ANALYSIS_STATE_FAILED
+	// AnalysisStateAwaitingRootSelection: a monorepo with multiple detected
+	// project roots; the heavy pipeline did not run, root_candidates holds the
+	// options, and the user must pick one via SelectRoot to proceed.
+	AnalysisStateAwaitingRootSelection = analysisv1.AnalysisState_ANALYSIS_STATE_AWAITING_ROOT_SELECTION
 	TechnologyStatusUnspecified = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_UNSPECIFIED
 	TechnologyStatusCurrent     = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_CURRENT
 	TechnologyStatusOutdated    = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_OUTDATED

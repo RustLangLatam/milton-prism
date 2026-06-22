@@ -10,9 +10,11 @@ import (
 type AnalysisClient interface {
 	// RunAnalysis requests the analysis service to begin an asynchronous
 	// analysis run for the given repository and migration. sourceBranch
-	// overrides the repository's default_branch when non-empty. The call is
+	// overrides the repository's default_branch when non-empty. rootSubdirectory
+	// optionally scopes the analysis to a repository-relative subdirectory
+	// (monorepo support); empty means the whole repository root. The call is
 	// best-effort: a transport error does not block the state transition.
-	RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch string) error
+	RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch, rootSubdirectory string) error
 
 	// GetAnalysisSummary fetches the header fields of an AnalysisSummary by
 	// identifier. The analysis service enforces ownership: the caller's token

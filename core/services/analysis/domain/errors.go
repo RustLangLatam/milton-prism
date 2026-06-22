@@ -20,13 +20,24 @@ func newError(code, message string) *Error {
 // ── Validation errors (ANL1xx) ────────────────────────────────────────────────
 
 const (
-	ErrCodeMissingIdentifier   = "ANL101"
-	ErrCodeMissingRepositoryID = "ANL102"
+	ErrCodeMissingIdentifier       = "ANL101"
+	ErrCodeMissingRepositoryID     = "ANL102"
+	ErrCodeInvalidRootSubdirectory = "ANL103"
+	// ErrCodeInvalidRootSelection: SelectRoot was called with a root_directory
+	// that is empty or not among the analysis's detected root_candidates, or the
+	// analysis is not in AWAITING_ROOT_SELECTION state. Fails closed.
+	ErrCodeInvalidRootSelection = "ANL104"
 )
 
 var (
 	ErrMissingIdentifier   = newError(ErrCodeMissingIdentifier, "Failure_Missing_Identifier")
 	ErrMissingRepositoryID = newError(ErrCodeMissingRepositoryID, "Failure_Missing_Repository_ID")
+	// ErrInvalidRootSubdirectory: the requested monorepo root subdirectory is not
+	// a safe repository-relative path (absolute, traversal, or empty component).
+	ErrInvalidRootSubdirectory = newError(ErrCodeInvalidRootSubdirectory, "Failure_Invalid_Root_Subdirectory")
+	// ErrInvalidRootSelection: SelectRoot choice rejected (not a candidate, empty,
+	// or the analysis is not awaiting a selection).
+	ErrInvalidRootSelection = newError(ErrCodeInvalidRootSelection, "Failure_Invalid_Root_Selection")
 )
 
 // ── Domain errors (ANL2xx) ────────────────────────────────────────────────────
@@ -52,6 +63,29 @@ var (
 	ErrRepoUnreachable         = newError(ErrCodeRepoUnreachable, "Failure_Repository_Unreachable")
 	ErrNoDeepData              = newError(ErrCodeNoDeepData, "Failure_No_Deep_Data")
 )
+
+// ── Plan / quota errors (ANL3xx) ──────────────────────────────────────────────
+
+const (
+	// ErrCodePlanLimitExceeded: RunAnalysis rejected because the owner's billing
+	// plan count limit (analyses-per-month) has been reached. Hard block; the user
+	// must upgrade their plan or wait for the next billing month. Maps to
+	// FailedPrecondition (the gateway surfaces a 4xx).
+	ErrCodePlanLimitExceeded = "ANL301"
+)
+
+// ErrPlanLimitExceeded carries an actionable message; NewErrPlanLimitExceeded
+// builds a per-plan message with the concrete monthly cap.
+var ErrPlanLimitExceeded = newError(ErrCodePlanLimitExceeded, "Failure_Plan_Limit_Exceeded")
+
+// NewErrPlanLimitExceeded builds a plan-limit error whose message names the
+// concrete monthly analysis cap so the panel can show an actionable notice.
+func NewErrPlanLimitExceeded(limit int64) *Error {
+	return &Error{
+		Code:    ErrCodePlanLimitExceeded,
+		Message: fmt.Sprintf("Plan limit reached: %d analyses per month. Upgrade your plan.", limit),
+	}
+}
 
 // ── Internal errors (ANL5xx) ──────────────────────────────────────────────────
 

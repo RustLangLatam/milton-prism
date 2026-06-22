@@ -5,10 +5,12 @@ package mocks
 
 import (
 	"context"
+	"time"
 
 	"milton_prism/core/services/migration/domain"
 	"milton_prism/core/services/migration/ports"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
 	paginationv1 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
 	queryparamsv1 "milton_prism/pkg/pb/gen/milton_prism/types/query_params/v1"
 
@@ -30,6 +32,7 @@ var (
 	_ ports.RoadmapEnricher              = (*MockRoadmapEnricher)(nil)
 	_ ports.BlueprintGenerator           = (*MockBlueprintGenerator)(nil)
 	_ ports.StackDetector                = (*MockStackDetector)(nil)
+	_ ports.BillingClient                = (*MockBillingClient)(nil)
 )
 
 // MockMigrationRepository is a testify mock for ports.MigrationRepository.
@@ -72,6 +75,10 @@ func (m *MockMigrationRepository) SetMigrabilityOverride(ctx context.Context, id
 	return m.Called(ctx, identifier, override).Error(0)
 }
 
+func (m *MockMigrationRepository) SetAutoApprove(ctx context.Context, identifier uint64, autoApprove bool) error {
+	return m.Called(ctx, identifier, autoApprove).Error(0)
+}
+
 func (m *MockMigrationRepository) SetRestructuringRoadmap(ctx context.Context, identifier uint64, roadmap *domain.RestructuringRoadmap) error {
 	return m.Called(ctx, identifier, roadmap).Error(0)
 }
@@ -90,6 +97,22 @@ func (m *MockMigrationRepository) AdoptAnalysis(ctx context.Context, migrationID
 
 func (m *MockMigrationRepository) SoftDelete(ctx context.Context, identifier uint64) error {
 	return m.Called(ctx, identifier).Error(0)
+}
+
+func (m *MockMigrationRepository) CountByOwnerSince(ctx context.Context, ownerID uint64, since time.Time) (int64, error) {
+	args := m.Called(ctx, ownerID, since)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+// MockBillingClient is a testify mock for ports.BillingClient.
+type MockBillingClient struct {
+	mock.Mock
+}
+
+func (m *MockBillingClient) GetUserPlan(ctx context.Context, userID uint64) (*billingv1.Plan, error) {
+	args := m.Called(ctx, userID)
+	v, _ := args.Get(0).(*billingv1.Plan)
+	return v, args.Error(1)
 }
 
 // MockTransactionManager is a pass-through implementation of ports.TransactionManager.
@@ -138,8 +161,8 @@ type MockAnalysisClient struct {
 	mock.Mock
 }
 
-func (m *MockAnalysisClient) RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch string) error {
-	return m.Called(ctx, repositoryID, migrationID, ownerUserID, sourceBranch).Error(0)
+func (m *MockAnalysisClient) RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch, rootSubdirectory string) error {
+	return m.Called(ctx, repositoryID, migrationID, ownerUserID, sourceBranch, rootSubdirectory).Error(0)
 }
 
 func (m *MockAnalysisClient) GetAnalysisSummary(ctx context.Context, identifier uint64) (*analysisv1.AnalysisSummary, error) {

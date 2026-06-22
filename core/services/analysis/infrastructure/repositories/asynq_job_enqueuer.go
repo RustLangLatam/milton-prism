@@ -25,11 +25,12 @@ type AsynqJobEnqueuer struct {
 // asynqPayload is the JSON shape of the analysis:run task payload.
 // It must match workerdomain.JobPayload in the worker.
 type asynqPayload struct {
-	SummaryID     uint64 `json:"summary_id"`
-	RepositoryID  uint64 `json:"repository_id"`
-	MigrationID   uint64 `json:"migration_id"`
-	RemoteURL     string `json:"remote_url"`
-	DefaultBranch string `json:"default_branch"`
+	SummaryID        uint64 `json:"summary_id"`
+	RepositoryID     uint64 `json:"repository_id"`
+	MigrationID      uint64 `json:"migration_id"`
+	RemoteURL        string `json:"remote_url"`
+	DefaultBranch    string `json:"default_branch"`
+	RootSubdirectory string `json:"root_subdirectory,omitempty"`
 }
 
 // NewAsynqJobEnqueuer constructs an AsynqJobEnqueuer connected to the Redis
@@ -48,13 +49,14 @@ func (e *AsynqJobEnqueuer) Close() error {
 }
 
 // EnqueueAnalysis encodes the job as JSON and enqueues an analysis:run task.
-func (e *AsynqJobEnqueuer) EnqueueAnalysis(ctx context.Context, summaryID, repositoryID, migrationID uint64, remoteURL, defaultBranch string) error {
+func (e *AsynqJobEnqueuer) EnqueueAnalysis(ctx context.Context, summaryID, repositoryID, migrationID uint64, remoteURL, defaultBranch, rootSubdirectory string) error {
 	payload, err := json.Marshal(asynqPayload{
-		SummaryID:     summaryID,
-		RepositoryID:  repositoryID,
-		MigrationID:   migrationID,
-		RemoteURL:     remoteURL,
-		DefaultBranch: defaultBranch,
+		SummaryID:        summaryID,
+		RepositoryID:     repositoryID,
+		MigrationID:      migrationID,
+		RemoteURL:        remoteURL,
+		DefaultBranch:    defaultBranch,
+		RootSubdirectory: rootSubdirectory,
 	})
 	if err != nil {
 		return err

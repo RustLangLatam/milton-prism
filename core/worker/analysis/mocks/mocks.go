@@ -29,6 +29,11 @@ func (m *MockSummaryWriter) MarkAnalysisFailed(ctx context.Context, summaryID ui
 	return args.Error(0)
 }
 
+func (m *MockSummaryWriter) MarkAwaitingRootSelection(ctx context.Context, summaryID uint64, candidates []string) error {
+	args := m.Called(ctx, summaryID, candidates)
+	return args.Error(0)
+}
+
 func (m *MockSummaryWriter) FindCompletedForBranch(ctx context.Context, repositoryID uint64, branch string) (*analysisdomain.AnalysisSummary, error) {
 	args := m.Called(ctx, repositoryID, branch)
 	if args.Get(0) == nil {

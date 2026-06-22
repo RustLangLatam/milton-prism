@@ -3,6 +3,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"milton_prism/core/services/migration/domain"
 	paginationv1 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
@@ -29,6 +30,11 @@ type MigrationRepository interface {
 	// SetMigrabilityOverride sets or clears the migrability_override flag.
 	// Idempotent: setting the same value twice is a no-op.
 	SetMigrabilityOverride(ctx context.Context, identifier uint64, override bool) error
+	// SetAutoApprove sets or clears the auto_approve flag. When true, the design
+	// plan is approved automatically once decomposition reaches AWAITING_APPROVAL,
+	// so the full roadmap runs end-to-end from a single RunMigration call.
+	// Idempotent: setting the same value twice is a no-op.
+	SetAutoApprove(ctx context.Context, identifier uint64, autoApprove bool) error
 	// SetRestructuringRoadmap persists the roadmap and atomically transitions the
 	// migration from AWAITING_APPROVAL to RESTRUCTURING_READY (terminal).
 	SetRestructuringRoadmap(ctx context.Context, identifier uint64, roadmap *domain.RestructuringRoadmap) error
@@ -49,4 +55,8 @@ type MigrationRepository interface {
 	AdoptAnalysis(ctx context.Context, migrationID, analysisSummaryID uint64, sourceBranch string) error
 	// SoftDelete marks the migration as deleted without removing it.
 	SoftDelete(ctx context.Context, identifier uint64) error
+	// CountByOwnerSince returns the number of (non-deleted) migrations owned by
+	// ownerID whose create_time is at or after since. Used for billing plan quota
+	// enforcement (migrations-per-month). since must be UTC.
+	CountByOwnerSince(ctx context.Context, ownerID uint64, since time.Time) (int64, error)
 }

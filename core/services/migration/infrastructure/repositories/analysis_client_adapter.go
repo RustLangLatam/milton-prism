@@ -29,15 +29,16 @@ func NewAnalysisClientAdapter(c *grpc_client_sdk.AnalysisGrpcClient) *AnalysisCl
 // sourceBranch is forwarded so the worker clones the chosen branch instead of
 // the repository's default_branch. The returned summary is not used here;
 // only transport errors are surfaced to the caller.
-func (a *AnalysisClientAdapter) RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch string) error {
+func (a *AnalysisClientAdapter) RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch, rootSubdirectory string) error {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 	_, err := a.client.RunAnalysis(ctx, &analysissvcv1.RunAnalysisRequest{
-		RepositoryId: repositoryID,
-		MigrationId:  migrationID,
-		SourceBranch: sourceBranch,
-		OwnerUserId:  ownerUserID,
+		RepositoryId:     repositoryID,
+		MigrationId:      migrationID,
+		SourceBranch:     sourceBranch,
+		OwnerUserId:      ownerUserID,
+		RootSubdirectory: rootSubdirectory,
 	})
 	if err != nil {
 		applog.Warningf("migration: RunAnalysis dispatch failed repository_id=%d migration_id=%d: %v",

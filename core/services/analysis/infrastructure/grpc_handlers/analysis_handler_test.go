@@ -115,7 +115,7 @@ func TestHandlerRunAnalysis_Success(t *testing.T) {
 	// Dedup: return empty SHA → dedup skipped, normal analysis proceeds.
 	repoClient.On("GetBranchSHA", mock.Anything, repoID, "main").Return("", nil)
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
-	enqueuer.On("EnqueueAnalysis", mock.Anything, summaryID, repoID, uint64(0), mock.Anything, mock.Anything).Return(nil)
+	enqueuer.On("EnqueueAnalysis", mock.Anything, summaryID, repoID, uint64(0), mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID})
 	require.NoError(t, err)
@@ -190,7 +190,7 @@ func TestHandlerRunAnalysis_Force_BypassesDedup(t *testing.T) {
 	repoClient.On("ProbeConnection", mock.Anything, repoID).Return(nil)
 	repoClient.On("GetRemoteURL", mock.Anything, repoID).Return("https://github.com/org/repo.git", "main", nil)
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
-	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, Force: true})
 	require.NoError(t, err)

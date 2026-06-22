@@ -71,6 +71,9 @@ const (
 	MigrationStateRestructuringReady = migrationv1.MigrationState_MIGRATION_STATE_RESTRUCTURING_READY
 	TargetLanguageUnspecified        = migrationv1.TargetLanguage_TARGET_LANGUAGE_UNSPECIFIED
 	TargetLanguageGo                 = migrationv1.TargetLanguage_TARGET_LANGUAGE_GO
+	TargetLanguageRust               = migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST
+	TargetLanguagePython             = migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON
+	TargetLanguageNode               = migrationv1.TargetLanguage_TARGET_LANGUAGE_NODE
 	TargetDatabaseUnspecified        = migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED
 	TargetDatabaseMongoDB            = migrationv1.TargetDatabase_TARGET_DATABASE_MONGODB
 	TransportUnspecified             = migrationv1.Transport_TRANSPORT_UNSPECIFIED
@@ -78,4 +81,25 @@ const (
 	OutputTargetUnspecified          = migrationv1.OutputTarget_OUTPUT_TARGET_UNSPECIFIED
 	OutputTargetNewBranch            = migrationv1.OutputTarget_OUTPUT_TARGET_NEW_BRANCH
 	OutputTargetNewRepository        = migrationv1.OutputTarget_OUTPUT_TARGET_NEW_REPOSITORY
+	TargetTopologyUnspecified        = migrationv1.TargetTopology_TARGET_TOPOLOGY_UNSPECIFIED
+	TargetTopologyMicroservices      = migrationv1.TargetTopology_TARGET_TOPOLOGY_MICROSERVICES
+	TargetTopologyMonolith           = migrationv1.TargetTopology_TARGET_TOPOLOGY_MONOLITH
 )
+
+// generableTargetLanguages is the set of target languages that have a real code
+// generator profile (profile doc + generator prompt + reference monorepo). It is
+// the single source of truth for the CreateMigration guard and must stay in
+// lockstep with outputProfileLabel/generatorPromptRef in the application layer.
+// Node and Rust are intentionally excluded — their enum values exist but their
+// generators are holes, so a migration targeting them must be rejected rather
+// than silently emit Go.
+var generableTargetLanguages = map[TargetLanguage]struct{}{
+	TargetLanguageGo:     {},
+	TargetLanguagePython: {},
+}
+
+// IsGenerableLanguage reports whether lang has a code generator profile today.
+func IsGenerableLanguage(lang TargetLanguage) bool {
+	_, ok := generableTargetLanguages[lang]
+	return ok
+}

@@ -36,6 +36,7 @@ type mongoMigrationDoc struct {
 	RepositoryURL           string              `bson:"repository_url,omitempty"`
 	OwnerUserID             uint64              `bson:"owner_user_id"`
 	SourceBranch            string              `bson:"source_branch,omitempty"`
+	RootSubdirectory        string              `bson:"root_subdirectory,omitempty"`
 	State                   int32               `bson:"state"`
 	TargetBytes             []byte              `bson:"target_bytes,omitempty"`
 	AnalysisSummaryID       uint64              `bson:"analysis_summary_id,omitempty"`
@@ -45,6 +46,7 @@ type mongoMigrationDoc struct {
 	AssessmentBytes         []byte              `bson:"assessment_bytes,omitempty"`
 	MigrabilityOverride     bool                `bson:"migrability_override,omitempty"`
 	AnalysisReused          bool                `bson:"analysis_reused,omitempty"`
+	AutoApprove             bool                `bson:"auto_approve,omitempty"`
 	RoadmapBytes            []byte              `bson:"roadmap_bytes,omitempty"`
 	EnrichmentBytes         []byte              `bson:"enrichment_bytes,omitempty"`
 	BlueprintBytes          []byte              `bson:"blueprint_bytes,omitempty"`
@@ -218,6 +220,22 @@ func (r *MongoMigrationRepository) SetMigrabilityOverride(ctx context.Context, i
 	return nil
 }
 
+func (r *MongoMigrationRepository) SetAutoApprove(ctx context.Context, identifier uint64, autoApprove bool) error {
+	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+	res, err := r.coll.UpdateOne(
+		ctx,
+		bson.M{"identifier": identifier, "delete_time": nil},
+		bson.M{"$set": bson.M{"auto_approve": autoApprove, "update_time": now}},
+	)
+	if err != nil {
+		return fmt.Errorf("migration: set_auto_approve failed: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrMigrationNotFound
+	}
+	return nil
+}
+
 func (r *MongoMigrationRepository) SetRestructuringRoadmap(ctx context.Context, identifier uint64, roadmap *domain.RestructuringRoadmap) error {
 	b, err := proto.Marshal(roadmap)
 	if err != nil {
@@ -298,6 +316,21 @@ func (r *MongoMigrationRepository) SoftDelete(ctx context.Context, identifier ui
 	return nil
 }
 
+// CountByOwnerSince counts non-deleted migrations owned by ownerID with
+// create_time >= since. Used for billing plan quota enforcement.
+func (r *MongoMigrationRepository) CountByOwnerSince(ctx context.Context, ownerID uint64, since time.Time) (int64, error) {
+	q := bson.M{
+		"owner_user_id": ownerID,
+		"delete_time":   nil,
+		"create_time":   bson.M{"$gte": primitive.NewDateTimeFromTime(since.UTC())},
+	}
+	n, err := r.coll.CountDocuments(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("migration: count by owner since: %w", err)
+	}
+	return n, nil
+}
+
 func (r *MongoMigrationRepository) AdoptAnalysis(ctx context.Context, migrationID, analysisSummaryID uint64, sourceBranch string) error {
 	now := primitive.NewDateTimeFromTime(time.Now().UTC())
 	set := bson.M{
@@ -333,10 +366,12 @@ func migrationToDoc(m *domain.Migration) (*mongoMigrationDoc, error) {
 		RepositoryURL:           m.GetRepositoryUrl(),
 		OwnerUserID:             m.GetOwnerUserId(),
 		SourceBranch:            m.GetSourceBranch(),
+		RootSubdirectory:        m.GetRootSubdirectory(),
 		State:                   int32(m.GetState()),
 		AnalysisSummaryID:       m.GetAnalysisSummaryId(),
 		SourceAnalysisSummaryID: m.GetSourceAnalysisSummaryId(),
 		MigrabilityOverride:     m.GetMigrabilityOverride(),
+		AutoApprove:             m.GetAutoApprove(),
 	}
 	if m.GetTarget() != nil {
 		b, err := proto.Marshal(m.GetTarget())
@@ -400,6 +435,7 @@ func migrationDocToDomain(d *mongoMigrationDoc) (*domain.Migration, error) {
 		RepositoryUrl:           d.RepositoryURL,
 		OwnerUserId:             d.OwnerUserID,
 		SourceBranch:            d.SourceBranch,
+		RootSubdirectory:        d.RootSubdirectory,
 		State:                   migrationv1.MigrationState(d.State),
 		AnalysisSummaryId:       d.AnalysisSummaryID,
 		SourceAnalysisSummaryId: d.SourceAnalysisSummaryID,
@@ -455,6 +491,7 @@ func migrationDocToDomain(d *mongoMigrationDoc) (*domain.Migration, error) {
 	}
 	out.MigrabilityOverride = d.MigrabilityOverride
 	out.AnalysisReused = d.AnalysisReused
+	out.AutoApprove = d.AutoApprove
 	if d.CreateTime != 0 {
 		out.CreateTime = timestamppb.New(d.CreateTime.Time())
 	}

@@ -95,6 +95,48 @@ service AnalysisService {
       description: "Runs the opt-in LLM migrability assessment for a completed analysis summary. Makes one LLM API call (~$0.003). Persists and returns the MigrabilityAssessment."
     };
   }
+
+  // SelectRoot resolves the project root for an analysis that is awaiting a
+  // root selection (a monorepo with multiple detected project roots). The
+  // chosen root_directory must be one of the analysis's root_candidates;
+  // an empty or unlisted value is rejected (fail closed). On success the root
+  // is persisted on the analysis and the analysis is re-enqueued scoped to the
+  // chosen root, transitioning back to ANALYSIS_STATE_RUNNING. Returns the
+  // updated AnalysisSummary.
+  rpc SelectRoot(SelectRootRequest) returns (milton_prism.types.analysis.v1.AnalysisSummary) {
+    option (google.api.http) = {
+      post: "/v1/analysis_summaries/{identifier}:selectRoot"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Select analysis root directory"
+      description: "Picks one of the detected candidate project roots for an analysis in ANALYSIS_STATE_AWAITING_ROOT_SELECTION, persists it, and re-enqueues the analysis scoped to that root. The choice must be among root_candidates; invalid/empty choices are rejected."
+    };
+  }
+}
+
+// SelectRootRequest selects the project root for an awaiting-selection analysis.
+message SelectRootRequest {
+  // Numeric identifier of the AnalysisSummary awaiting root selection.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Analysis summary identifier."
+      example: {yaml: "42"}
+    }
+  ];
+
+  // Repository-relative root directory to scope the analysis to. Must be one of
+  // the analysis's root_candidates. Required and non-empty: the awaiting state
+  // exists precisely because there is no single obvious root, so an empty choice
+  // is rejected.
+  string root_directory = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Chosen repository-relative project root. Must be one of root_candidates."
+      example: {yaml: "services/api"}
+    }
+  ];
 }
 
 // EvaluateMigrabilityRequest identifies the analysis summary to assess.
@@ -183,6 +225,17 @@ message RunAnalysisRequest {
     description: "Owner user identifier. Injected server-side; ignored when sent by clients."
     example: {yaml: "42"}
   }];
+  // Optional repository-relative subdirectory to scope the analysis to.
+  // Empty (the default) analyses the whole repository root. Used for monorepos
+  // where only one directory holds the codebase to migrate. Must stay inside
+  // the repository (no leading slash, no ".." traversal).
+  string root_subdirectory = 6 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {
+      description: "Optional repository-relative subdirectory to scope analysis to (monorepos). Empty means the whole repository root."
+      example: {yaml: "backend"}
+    }
+  ];
 }
 
 // RunAnalysisResponse is the result of a RunAnalysis call.

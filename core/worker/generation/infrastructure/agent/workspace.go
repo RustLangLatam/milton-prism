@@ -284,18 +284,50 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// promptProfileBindings resolves the language-specific fragments of the
+// combined prompt from the output profile label. The generation worker holds
+// no per-language templates; this is the only place where the worker is aware
+// of the target language, and it derives everything from the profile string so
+// adding a language is a profile-doc + mapping change, not a worker rewrite.
+//
+// Go is the only certified profile. Python has a real profile doc and generator
+// prompt but is not yet end-to-end certified. Unknown profiles fall back to Go.
+func promptProfileBindings(outputProfile string) (langLabel, profileDoc, buildSteps string) {
+	switch outputProfile {
+	case "python":
+		return "Python",
+			"docs/prism/milton-prism-python-profile.md",
+			"write protos, run buf generate, write service code, run ruff/mypy, run pytest."
+	default:
+		return "Go",
+			"docs/prism/milton-prism-go-profile.md",
+			"write protos, run buf generate, write service code, run go build, run go test."
+	}
+}
+
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.
 // The prompt references the generator prompt file and includes boundary spec
 // and proto content inline so the agent has everything without a round-trip.
 func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, errorPrefix, outputProfile, boundarySpec, protoContent string) (string, error) {
+	// The combined prompt is profile-parametrised: the worker carries no
+	// language-specific templates, so the per-language coupling lives only in
+	// the profile doc and the language label resolved here. Defaults to Go.
+	langLabel, profileDoc, buildSteps := promptProfileBindings(outputProfile)
+
 	var buf bytes.Buffer
-	buf.WriteString("You are a code-generation agent. Your task is to materialise a complete Go microservice into this workspace by WRITING FILES using the Write and Edit tools. ")
+	buf.WriteString("You are a code-generation agent. Your task is to materialise a complete ")
+	buf.WriteString(langLabel)
+	buf.WriteString(" microservice into this workspace by WRITING FILES using the Write and Edit tools. ")
 	buf.WriteString("Do NOT output code as text blocks in your response — every file must be created on disk via tool calls.\n\n")
 	buf.WriteString("Step 1: Read ")
 	buf.WriteString(generatorPromptRef)
 	buf.WriteString(" for the complete step-by-step generation workflow.\n")
-	buf.WriteString("Step 2: Read docs/prism/milton-prism-architecture-canon.md and docs/prism/milton-prism-go-profile.md in full before writing any code.\n")
-	buf.WriteString("Step 3: Follow the workflow exactly — write protos, run buf generate, write service code, run go build, run go test.\n\n")
+	buf.WriteString("Step 2: Read docs/prism/milton-prism-architecture-canon.md and ")
+	buf.WriteString(profileDoc)
+	buf.WriteString(" in full before writing any code.\n")
+	buf.WriteString("Step 3: Follow the workflow exactly — ")
+	buf.WriteString(buildSteps)
+	buf.WriteString("\n\n")
 	buf.WriteString("Generate a new service with the following inputs:\n\n")
 	buf.WriteString("Service Name: ")
 	buf.WriteString(serviceName)

@@ -82,7 +82,7 @@ func (h *AnalysisHandler) RunAnalysis(ctx context.Context, req *anlsvcv1.RunAnal
 	if req.GetRepositoryId() == 0 {
 		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingRepositoryID, domain.ErrMissingRepositoryID.Message)
 	}
-	result, err := h.svc.RunAnalysis(ctx, req.GetRepositoryId(), req.GetMigrationId(), callerID, req.GetSourceBranch(), req.GetForce())
+	result, err := h.svc.RunAnalysis(ctx, req.GetRepositoryId(), req.GetMigrationId(), callerID, req.GetSourceBranch(), req.GetRootSubdirectory(), req.GetForce())
 	if err != nil {
 		return nil, h.mapError(err)
 	}
@@ -120,6 +120,33 @@ func (h *AnalysisHandler) EvaluateMigrability(ctx context.Context, req *anlsvcv1
 	return assessment, nil
 }
 
+// SelectRoot resolves the project root for an analysis awaiting a root
+// selection. Auth + ownership are enforced here (mirroring EvaluateMigrability):
+// the caller must own the analysis unless it is a system user.
+func (h *AnalysisHandler) SelectRoot(ctx context.Context, req *anlsvcv1.SelectRootRequest) (*analysisv1.AnalysisSummary, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: SelectRoot authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetIdentifier() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingIdentifier, domain.ErrMissingIdentifier.Message)
+	}
+	s, err := h.svc.GetAnalysisSummary(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if !isSystem && s.GetOwnerUserId() != callerID {
+		// Hide existence from non-owners, same as GetAnalysisSummary.
+		return nil, h.mapError(domain.ErrAnalysisSummaryNotFound)
+	}
+	updated, err := h.svc.SelectRoot(ctx, req.GetIdentifier(), req.GetRootDirectory())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	return updated, nil
+}
+
 func (h *AnalysisHandler) mapError(err error) error {
 	if err == nil {
 		return nil
@@ -135,7 +162,14 @@ func (h *AnalysisHandler) mapError(err error) error {
 			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
 		case domain.ErrCodeNoDeepData:
 			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
-		case domain.ErrCodeMissingIdentifier, domain.ErrCodeMissingRepositoryID:
+		case domain.ErrCodePlanLimitExceeded:
+			// Hard block: the owner's monthly analysis quota is exhausted. The
+			// client must upgrade the plan or wait for the next billing month.
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeInvalidRootSelection:
+			// Wrong state or unlisted/empty choice: a precondition the client must fix.
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeMissingIdentifier, domain.ErrCodeMissingRepositoryID, domain.ErrCodeInvalidRootSubdirectory:
 			return coreerror.NewInvalidArgumentError(dErr.Code, dErr.Message)
 		case domain.ErrCodeInternal:
 			applog.Warningf("internal analysis error: code=%s error=%v", dErr.Code, err)

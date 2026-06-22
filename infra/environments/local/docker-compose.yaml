@@ -188,6 +188,15 @@ services:
       PRISM_WORKSPACE_PATH: "${PRISM_WORKSPACE_PATH:-/tmp/prism-workspaces}"
       PRISM_GO_MOD_CACHE: "${PRISM_GO_MOD_CACHE:-}"
       PRISM_GENERATION_CONCURRENCY: "${PRISM_GENERATION_CONCURRENCY:-2}"
+      # Remote Docker host (Camino B, pending B2). Empty → spawn ephemeral agent
+      # containers on the LOCAL daemon via the /var/run/docker.sock mount below
+      # (default, no-regression). Set to tcp://HOST:2376 (+TLS paths) to spawn
+      # them on a REMOTE daemon instead. For TLS over a remote host the three
+      # PEM files must also be mounted into this container.
+      PRISM_DOCKER_HOST: "${PRISM_DOCKER_HOST:-}"
+      PRISM_DOCKER_TLS_CA: "${PRISM_DOCKER_TLS_CA:-}"
+      PRISM_DOCKER_TLS_CERT: "${PRISM_DOCKER_TLS_CERT:-}"
+      PRISM_DOCKER_TLS_KEY: "${PRISM_DOCKER_TLS_KEY:-}"
     networks:
       - milton-prism-network
       - cache-network

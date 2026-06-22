@@ -55,6 +55,7 @@ func CustomHTTPError(ctx context.Context, mux *runtime.ServeMux, marshaler runti
 		Detail: errorMessage.Detail,
 		Status: errorMessage.Status,
 		Title:  errorMessage.Title,
+		Code:   errorMessage.Code,
 	})
 
 	_, _ = w.Write(body)

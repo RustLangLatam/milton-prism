@@ -9,6 +9,7 @@ import (
 	analysisgrpc "milton_prism/core/services/analysis/infrastructure/grpc_handlers"
 	analysisrepo "milton_prism/core/services/analysis/infrastructure/repositories"
 	"milton_prism/core/services/analysis/ports"
+	"milton_prism/core/services/billing"
 	"milton_prism/core/shared/grpc_client_sdk"
 	applog "milton_prism/pkg/log"
 	anlsvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
@@ -42,9 +43,24 @@ func BuildAnalysisServer(ctx context.Context, svc *services.Services, server *gr
 
 	app := analysisapp.NewService(repo, repositoryClient, enqueuer)
 
+	// Co-locate the billing capability on this gRPC server and share its usage
+	// repository (same milton_prism_analysis database) so the assessment spend is
+	// recorded in-process. BillingService also exposes RecordUsage for the
+	// migration / generation workers to report their spend best-effort.
+	usageRepo, billingSvc, bErr := billing.BuildBillingServer(svc, server)
+	if bErr != nil {
+		return bErr
+	}
+	usageRecorder := analysisrepo.NewBillingUsageRecorderAdapter(usageRepo)
+	// Enforce per-month analysis plan quotas in-process against the co-located
+	// billing service (hard block; Unlimited plans never blocked).
+	app.WithPlanProvider(analysisrepo.NewBillingPlanProviderAdapter(billingSvc))
+	applog.Infof("analysis: billing service co-located (usage accounting + plan quota enforcement enabled)")
+
 	// Wire migrability assessor when ANTHROPIC_API_KEY is present.
 	// Opt-in LLM call (~$0.003/call); gracefully absent when key is missing.
 	if assessor, aErr := analysisrepo.NewAnalysisMigrabilityAssessorAdapter(db, repo); aErr == nil {
+		assessor.WithUsageRecorder(usageRecorder)
 		app.WithMigrabilityAssessor(assessor)
 		applog.Infof("analysis: migrability assessor wired (ANTHROPIC_API_KEY present)")
 	} else {

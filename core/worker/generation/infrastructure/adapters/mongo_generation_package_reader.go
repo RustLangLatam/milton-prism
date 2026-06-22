@@ -76,7 +76,7 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 		if err := proto.Unmarshal(migDoc.TargetBytes, &tc); err == nil {
 			if tc.GetLanguage() == migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON {
 				profile = "python"
-				promptRef = "docs/prism/milton-prism-python-service-generator-prompt.md"
+				promptRef = "docs/prism/milton-prism-service-generator-prompt-python.md"
 			}
 		}
 	}

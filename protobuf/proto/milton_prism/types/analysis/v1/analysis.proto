@@ -27,6 +27,12 @@ enum AnalysisState {
   ANALYSIS_STATE_COMPLETED = 2;
   // Analysis failed; see the associated error details.
   ANALYSIS_STATE_FAILED = 3;
+  // The repository has multiple distinct project roots (monorepo) and no root
+  // has been selected yet. The heavy analysis pipeline did NOT run; root_candidates
+  // lists the detected options. The analysis stays in this terminal-until-action
+  // state (no retry loop) until the user picks a root via SelectRoot, which
+  // re-enqueues the analysis scoped to the chosen root.
+  ANALYSIS_STATE_AWAITING_ROOT_SELECTION = 4;
 }
 
 // TechnologyStatus reflects how current a detected technology version is.
@@ -308,6 +314,29 @@ message AnalysisSummary {
   // scanner is a pure deterministic function of file contents. Empty when nothing was
   // found (an honest zero, never a guess). Additive: scores/verdicts are unaffected.
   repeated SecurityFinding security_findings = 31 [(openapi.v3.property) = {description: "Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean."}];
+
+  // Repository-relative subdirectory the analysis was scoped to (monorepos).
+  // Empty means the whole repository root was analysed. Snapshotted from the
+  // triggering migration/request so the report shows what was actually analysed.
+  string root_subdirectory = 32 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Repository-relative subdirectory the analysis was scoped to. Empty means the whole repository root."
+      example: {yaml: "backend"}
+    }
+  ];
+
+  // Candidate project-root subdirectories detected after cloning, when the
+  // repository contains more than one distinct project root (monorepo) and no
+  // root has been selected yet. Repo-relative paths ("" never appears here; an
+  // entry like "services/api" is relative to the repository root). Populated
+  // only while the analysis is ANALYSIS_STATE_AWAITING_ROOT_SELECTION; empty
+  // once a root is chosen (single-root repos always leave this empty). The
+  // client presents these to the user, who picks one via SelectRoot.
+  repeated string root_candidates = 33 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Detected candidate project-root subdirectories when the repository has multiple roots and none is selected yet. Repo-relative. Empty for single-root repos or once a root is chosen. The user selects one via SelectRoot."}
+  ];
 }
 
 // CodebaseKind classifies what kind of project a repository is, deterministically,

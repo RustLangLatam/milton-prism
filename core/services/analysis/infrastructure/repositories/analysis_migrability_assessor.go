@@ -13,6 +13,7 @@ import (
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	decompadapters "milton_prism/core/worker/decomposition/infrastructure/adapters"
 	decompports "milton_prism/core/worker/decomposition/ports"
+	applog "milton_prism/pkg/log"
 	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	"milton_prism/pkg/utils/pointers"
 
@@ -27,12 +28,25 @@ var _ ports.AnalysisMigrabilityAssessor = (*AnalysisMigrabilityAssessorAdapter)(
 // runs the PHPAware detect → Louvain cluster → guardrail → distill → score
 // pipeline, calls the LLM assessor, persists the result, and returns it.
 type AnalysisMigrabilityAssessorAdapter struct {
-	graphLoader *decompadapters.MongoGraphLoader
-	detector    decompports.InfraDetector
-	clusterer   *decompadapters.LouvainClusterer
-	assessor    *workerapp.Assessor
-	repo        *MongoAnalysisSummaryRepository
+	graphLoader   *decompadapters.MongoGraphLoader
+	detector      decompports.InfraDetector
+	clusterer     *decompadapters.LouvainClusterer
+	assessor      *workerapp.Assessor
+	repo          *MongoAnalysisSummaryRepository
+	usageRecorder ports.UsageRecorder
 }
+
+// WithUsageRecorder attaches a best-effort usage recorder. When set, each
+// migrability-assessment LLM call records a usage_record attributed to the
+// summary owner. A nil recorder disables accounting (the assessment still runs).
+func (a *AnalysisMigrabilityAssessorAdapter) WithUsageRecorder(r ports.UsageRecorder) *AnalysisMigrabilityAssessorAdapter {
+	a.usageRecorder = r
+	return a
+}
+
+// assessmentModel is the model the assessor's ModelClient defaults to; recorded
+// on the usage_record for cost attribution.
+const assessmentModel = "claude-haiku-4-5-20251001"
 
 // NewAnalysisMigrabilityAssessorAdapter constructs the adapter.
 // analysisDB must be the analysis database (milton_prism_analysis).
@@ -138,15 +152,24 @@ func (a *AnalysisMigrabilityAssessorAdapter) Assess(ctx context.Context, analysi
 	// Anchor the LLM prose to the deterministic classifiers' output (DB engine,
 	// architectural pattern) so the model confirms them instead of inventing its
 	// own. These never affect the score — they only enrich the prompt. Loaded
-	// best-effort: a read error leaves AnchorFacts empty.
+	// best-effort: a read error leaves AnchorFacts empty. The same load captures
+	// the owner user id + migration id for usage attribution.
+	var ownerUserID, migrationID uint64
 	if stored, loadErr := a.repo.GetByID(ctx, analysisSummaryID, false); loadErr == nil && stored != nil {
 		digest.AnchorFacts = buildAnchorFacts(stored)
+		ownerUserID = stored.GetOwnerUserId()
+		migrationID = stored.GetMigrationId()
 	}
 
 	result, err := a.assessor.Assess(ctx, digest, scoreResult, language)
 	if err != nil {
 		return nil, fmt.Errorf("analysis migrability assessor: llm: %w", err)
 	}
+
+	// Best-effort usage accounting. A recording failure must never break the
+	// assessment flow — it is logged and swallowed. Attributed to the summary
+	// owner and to the analysis (and migration, when migration-triggered).
+	a.recordSpend(ctx, ownerUserID, analysisSummaryID, migrationID, result)
 
 	protoScore := analysisconverters.ToProtoMigrabilityScore(scoreResult)
 
@@ -190,6 +213,35 @@ func (a *AnalysisMigrabilityAssessorAdapter) Assess(ctx context.Context, analysi
 	}
 
 	return assessment, nil
+}
+
+// recordSpend writes a best-effort usage_record for an assessment LLM call.
+// Never returns an error: a recorder failure is logged and swallowed so it
+// cannot break the assessment flow. A nil recorder or a zero owner short-circuit
+// without logging (no recorder wired, or a pre-owner summary).
+func (a *AnalysisMigrabilityAssessorAdapter) recordSpend(ctx context.Context, ownerUserID, analysisID, migrationID uint64, result workerapp.AssessResult) {
+	if a.usageRecorder == nil || ownerUserID == 0 {
+		return
+	}
+	// Skip recording when the call reported no tokens (e.g. a degrade path that
+	// somehow reached here): nothing was spent.
+	if result.InputTokens == 0 && result.OutputTokens == 0 && result.CostUSD == 0 {
+		return
+	}
+	err := a.usageRecorder.RecordSpend(ctx, ports.UsageSpend{
+		UserID:      ownerUserID,
+		AnalysisID:  analysisID,
+		MigrationID: migrationID,
+		Operation:   "assessment",
+		TokensIn:    int64(result.InputTokens),
+		TokensOut:   int64(result.OutputTokens),
+		CostUSD:     result.CostUSD,
+		Model:       assessmentModel,
+	})
+	if err != nil {
+		applog.Warningf("analysis: usage record failed (best-effort) analysis_id=%d user_id=%d: %v",
+			analysisID, ownerUserID, err)
+	}
 }
 
 // buildAnchorFacts renders the deterministic database-engine and architectural-pattern

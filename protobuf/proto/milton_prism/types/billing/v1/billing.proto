@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package milton_prism.types.billing.v1;
+
+import "google/api/field_behavior.proto";
+import "google/protobuf/timestamp.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Types.Billing.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1;billingv1";
+option java_multiple_files = true;
+option java_outer_classname = "BillingProtoV1";
+option java_package = "com.miltonprism.types.billing.v1";
+option objc_class_prefix = "MPR";
+
+// ========== BILLING / USAGE TYPES ==========
+
+// UsageOperation identifies the kind of LLM-backed operation that produced a
+// usage record. Used for cost attribution and per-operation reporting.
+enum UsageOperation {
+  // Default value; should not be used explicitly.
+  USAGE_OPERATION_UNSPECIFIED = 0;
+  // Migrability assessment (analysis service, LLM verdict over structural digest).
+  USAGE_OPERATION_ASSESSMENT = 1;
+  // Generic analysis-side LLM spend (reserved for future analysis sub-steps).
+  USAGE_OPERATION_ANALYSIS = 2;
+  // Migration-side derivation (roadmap enrichment, blueprint / contract generation).
+  USAGE_OPERATION_MIGRATION = 3;
+  // Code generation (Camino B, generation worker / Claude Code agent).
+  USAGE_OPERATION_GENERATION = 4;
+}
+
+// UsageRecord is a single accounted LLM spend event, attributed to the owning
+// user and to the originating analysis or migration. It is the atomic fact the
+// aggregation endpoints sum over.
+message UsageRecord {
+  // Platform-assigned numeric identifier of the record. Immutable after creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (google.api.field_behavior) = IMMUTABLE,
+    (google.api.field_behavior) = IDENTIFIER,
+    (openapi.v3.property) = {
+      description: "Platform-assigned unique usage-record identifier."
+      format: "uint64"
+      read_only: true
+    }
+  ];
+
+  // Owner user the spend is attributed to.
+  uint64 user_id = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Identifier of the user the spend is attributed to."}
+  ];
+
+  // Analysis summary the spend originated from, when applicable (0 = none).
+  uint64 analysis_id = 3 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {description: "Analysis summary identifier the spend originated from (0 if not analysis-bound)."}
+  ];
+
+  // Migration the spend originated from, when applicable (0 = none).
+  uint64 migration_id = 4 [
+    (google.api.field_behavior) = OPTIONAL,
+    (openapi.v3.property) = {description: "Migration identifier the spend originated from (0 if not migration-bound)."}
+  ];
+
+  // The operation that produced the spend.
+  UsageOperation operation = 5 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {description: "Operation kind that produced the spend."}
+  ];
+
+  // Input (prompt) tokens reported by the provider.
+  int64 tokens_in = 6 [(openapi.v3.property) = {description: "Input (prompt) tokens reported by the provider."}];
+
+  // Output (completion) tokens reported by the provider.
+  int64 tokens_out = 7 [(openapi.v3.property) = {description: "Output (completion) tokens reported by the provider."}];
+
+  // Estimated cost in US dollars for this record.
+  double cost_usd = 8 [(openapi.v3.property) = {description: "Estimated cost in US dollars for this record."}];
+
+  // Model identifier used (e.g. "claude-haiku-4-5").
+  string model = 9 [(openapi.v3.property) = {description: "Model identifier used to produce the spend."}];
+
+  // When the spend occurred / was recorded.
+  google.protobuf.Timestamp create_time = 10 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Time the spend was recorded."
+      read_only: true
+    }
+  ];
+}
+
+// UsageTotals is an aggregate of usage records: summed tokens and cost plus the
+// number of records folded into the total.
+message UsageTotals {
+  // Number of usage records folded into this total.
+  int64 record_count = 1 [(openapi.v3.property) = {description: "Number of usage records in the aggregate."}];
+
+  // Summed input tokens.
+  int64 tokens_in = 2 [(openapi.v3.property) = {description: "Summed input tokens."}];
+
+  // Summed output tokens.
+  int64 tokens_out = 3 [(openapi.v3.property) = {description: "Summed output tokens."}];
+
+  // Summed cost in US dollars.
+  double cost_usd = 4 [(openapi.v3.property) = {description: "Summed cost in US dollars."}];
+}
+
+// OperationUsage breaks a usage total down by a single operation kind.
+message OperationUsage {
+  // The operation this breakdown line is for.
+  UsageOperation operation = 1;
+
+  // The totals for this operation.
+  UsageTotals totals = 2;
+}
+
+// Plan is a named usage tier with monthly limits. Limits use -1 to mean
+// "unlimited"; a value of 0 means "not allowed".
+message Plan {
+  // Stable, machine-readable plan code (e.g. "free", "pro", "enterprise").
+  string code = 1 [
+    (google.api.field_behavior) = IDENTIFIER,
+    (openapi.v3.property) = {description: "Stable machine-readable plan code (free | pro | enterprise)."}
+  ];
+
+  // Human-readable plan name.
+  string display_name = 2 [(openapi.v3.property) = {description: "Human-readable plan name."}];
+
+  // Maximum number of analyses per calendar month (-1 = unlimited).
+  int64 max_analyses_per_month = 3 [(openapi.v3.property) = {description: "Maximum analyses per month (-1 = unlimited)."}];
+
+  // Maximum number of migrations per calendar month (-1 = unlimited).
+  int64 max_migrations_per_month = 4 [(openapi.v3.property) = {description: "Maximum migrations per month (-1 = unlimited)."}];
+
+  // Maximum LLM tokens (in + out) per calendar month (-1 = unlimited).
+  int64 max_tokens_per_month = 5 [(openapi.v3.property) = {description: "Maximum LLM tokens per month (-1 = unlimited)."}];
+
+  // Maximum concurrent generation jobs (-1 = unlimited).
+  int64 max_concurrency = 6 [(openapi.v3.property) = {description: "Maximum concurrent generation jobs (-1 = unlimited)."}];
+
+  // Soft monthly cost ceiling in US dollars (-1 = unlimited).
+  double monthly_cost_cap_usd = 7 [(openapi.v3.property) = {description: "Soft monthly cost ceiling in US dollars (-1 = unlimited)."}];
+}

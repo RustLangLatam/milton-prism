@@ -8,6 +8,7 @@ import (
 	"milton_prism/pkg/gateway"
 	"milton_prism/pkg/log"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/services/billing/v1"
 	identityv1 "milton_prism/pkg/pb/gen/milton_prism/services/identity/v1"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/services/migration/v1"
 	repositoryv1 "milton_prism/pkg/pb/gen/milton_prism/services/repository/v1"
@@ -20,6 +21,9 @@ var serviceHandlers = map[string]gateway.RegisterServiceFunc{
 	"identity":   identityv1.RegisterIdentityServiceHandlerFromEndpoint,
 	"repository": repositoryv1.RegisterRepositoryServiceHandlerFromEndpoint,
 	"migration":  migrationv1.RegisterMigrationServiceHandlerFromEndpoint,
+	// billing is co-located on the analysis service's gRPC server; its REST
+	// surface maps to the same backend endpoint (see config.toml).
+	"billing": billingv1.RegisterBillingServiceHandlerFromEndpoint,
 }
 
 func main() {

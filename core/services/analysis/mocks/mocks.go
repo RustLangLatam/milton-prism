@@ -5,10 +5,12 @@ package mocks
 
 import (
 	"context"
+	"time"
 
 	"milton_prism/core/services/analysis/domain"
 	"milton_prism/core/services/analysis/ports"
 	analysissvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
 	paginationv1 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
 	queryparamsv1 "milton_prism/pkg/pb/gen/milton_prism/types/query_params/v1"
 
@@ -20,6 +22,7 @@ var (
 	_ ports.AnalysisSummaryRepository = (*MockAnalysisSummaryRepository)(nil)
 	_ ports.RepositoryClient          = (*MockRepositoryClient)(nil)
 	_ ports.JobEnqueuer               = (*MockJobEnqueuer)(nil)
+	_ ports.PlanProvider              = (*MockPlanProvider)(nil)
 )
 
 // MockAnalysisSummaryRepository is a testify mock for ports.AnalysisSummaryRepository.
@@ -54,6 +57,30 @@ func (m *MockAnalysisSummaryRepository) UpdateMigrabilityAssessment(ctx context.
 	return m.Called(ctx, identifier, assessment).Error(0)
 }
 
+func (m *MockAnalysisSummaryRepository) MarkRootSelected(ctx context.Context, identifier uint64, rootSubdirectory string) (*domain.AnalysisSummary, error) {
+	args := m.Called(ctx, identifier, rootSubdirectory)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.AnalysisSummary), args.Error(1)
+}
+
+func (m *MockAnalysisSummaryRepository) CountByOwnerSince(ctx context.Context, ownerID uint64, since time.Time) (int64, error) {
+	args := m.Called(ctx, ownerID, since)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+// MockPlanProvider is a testify mock for ports.PlanProvider.
+type MockPlanProvider struct {
+	mock.Mock
+}
+
+func (m *MockPlanProvider) GetUserPlan(ctx context.Context, userID uint64) (*billingv1.Plan, error) {
+	args := m.Called(ctx, userID)
+	v, _ := args.Get(0).(*billingv1.Plan)
+	return v, args.Error(1)
+}
+
 // MockRepositoryClient is a testify mock for ports.RepositoryClient.
 type MockRepositoryClient struct {
 	mock.Mock
@@ -82,6 +109,6 @@ type MockJobEnqueuer struct {
 	mock.Mock
 }
 
-func (m *MockJobEnqueuer) EnqueueAnalysis(ctx context.Context, summaryID, repositoryID, migrationID uint64, remoteURL, defaultBranch string) error {
-	return m.Called(ctx, summaryID, repositoryID, migrationID, remoteURL, defaultBranch).Error(0)
+func (m *MockJobEnqueuer) EnqueueAnalysis(ctx context.Context, summaryID, repositoryID, migrationID uint64, remoteURL, defaultBranch, rootSubdirectory string) error {
+	return m.Called(ctx, summaryID, repositoryID, migrationID, remoteURL, defaultBranch, rootSubdirectory).Error(0)
 }

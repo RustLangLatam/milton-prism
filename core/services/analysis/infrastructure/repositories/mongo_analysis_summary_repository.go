@@ -39,6 +39,8 @@ type mongoAnalysisSummaryDoc struct {
 	OwnerUserID                uint64              `bson:"owner_user_id,omitempty"`
 	RepositoryURL              string              `bson:"repository_url,omitempty"`
 	SourceBranch               string              `bson:"source_branch,omitempty"`
+	RootSubdirectory           string              `bson:"root_subdirectory,omitempty"`
+	RootCandidates             []string            `bson:"root_candidates,omitempty"`
 	CommitSHA                  string              `bson:"commit_sha,omitempty"`
 	State                      int32               `bson:"state"`
 	TechnologiesBytes          []byte              `bson:"technologies_bytes,omitempty"`
@@ -238,10 +240,12 @@ func summaryToDoc(s *domain.AnalysisSummary) (*mongoAnalysisSummaryDoc, error) {
 		RepositoryID:  s.GetRepositoryId(),
 		MigrationID:   s.GetMigrationId(),
 		OwnerUserID:   s.GetOwnerUserId(),
-		RepositoryURL: s.GetRepositoryUrl(),
-		SourceBranch:  s.GetSourceBranch(),
-		CommitSHA:     s.GetCommitSha(),
-		State:         int32(s.GetState()),
+		RepositoryURL:    s.GetRepositoryUrl(),
+		SourceBranch:     s.GetSourceBranch(),
+		RootSubdirectory: s.GetRootSubdirectory(),
+		RootCandidates:   s.GetRootCandidates(),
+		CommitSHA:        s.GetCommitSha(),
+		State:            int32(s.GetState()),
 		TotalFiles:    s.GetTotalFiles(),
 		TotalLines:    s.GetTotalLines(),
 	}
@@ -281,6 +285,8 @@ func summaryDocToDomain(d *mongoAnalysisSummaryDoc) (*domain.AnalysisSummary, er
 		OwnerUserId:           d.OwnerUserID,
 		RepositoryUrl:         d.RepositoryURL,
 		SourceBranch:          d.SourceBranch,
+		RootSubdirectory:      d.RootSubdirectory,
+		RootCandidates:        d.RootCandidates,
 		CommitSha:             d.CommitSHA,
 		State:                 analysisv1.AnalysisState(d.State),
 		TotalFiles:            d.TotalFiles,
@@ -533,6 +539,55 @@ func (r *MongoAnalysisSummaryRepository) UpdateMigrabilityAssessment(ctx context
 		return domain.ErrAnalysisSummaryNotFound
 	}
 	return nil
+}
+
+// MarkRootSelected transitions an analysis from AWAITING_ROOT_SELECTION to
+// RUNNING, persisting the chosen root_subdirectory and clearing root_candidates.
+// The state guard makes the operation fail closed: a double selection or a
+// selection on a non-awaiting analysis matches nothing and returns
+// ErrInvalidRootSelection. Returns the post-update document.
+func (r *MongoAnalysisSummaryRepository) MarkRootSelected(ctx context.Context, identifier uint64, rootSubdirectory string) (*domain.AnalysisSummary, error) {
+	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+	var doc mongoAnalysisSummaryDoc
+	err := r.coll.FindOneAndUpdate(
+		ctx,
+		bson.M{
+			"identifier":  identifier,
+			"state":       int32(domain.AnalysisStateAwaitingRootSelection),
+			"delete_time": nil,
+		},
+		bson.M{
+			"$set": bson.M{
+				"state":             int32(domain.AnalysisStateRunning),
+				"root_subdirectory": rootSubdirectory,
+				"root_candidates":   []string{},
+				"update_time":       now,
+			},
+		},
+		options.FindOneAndUpdate().SetReturnDocument(options.After),
+	).Decode(&doc)
+	if err == mongo.ErrNoDocuments {
+		return nil, domain.ErrInvalidRootSelection
+	}
+	if err != nil {
+		return nil, fmt.Errorf("analysis: mark root selected: %w", err)
+	}
+	return summaryDocToDomain(&doc)
+}
+
+// CountByOwnerSince counts non-deleted analysis summaries owned by ownerID with
+// create_time >= since. Used for billing plan quota enforcement.
+func (r *MongoAnalysisSummaryRepository) CountByOwnerSince(ctx context.Context, ownerID uint64, since time.Time) (int64, error) {
+	q := bson.M{
+		"owner_user_id": ownerID,
+		"delete_time":   nil,
+		"create_time":   bson.M{"$gte": primitive.NewDateTimeFromTime(since.UTC())},
+	}
+	n, err := r.coll.CountDocuments(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("analysis: count by owner since: %w", err)
+	}
+	return n, nil
 }
 
 func unmarshalSharedStateHubs(b []byte) ([]*analysisv1.SharedStateHub, error) {

@@ -92,6 +92,35 @@ service MigrationService {
     };
   }
 
+  // RunMigration executes the full restructuring roadmap end-to-end from the
+  // platform in a single shot, with no intermediate manual steps.
+  //
+  // It is the one-shot orchestration trigger: from the migration's current
+  // state it kicks off the pipeline (PENDING starts analysis) and records an
+  // auto-approve intent so that, the moment decomposition reaches
+  // AWAITING_APPROVAL, the design plan is approved automatically and generation
+  // begins — without a human approval click. When the migration is already at
+  // AWAITING_APPROVAL the plan is approved immediately.
+  //
+  // The final publish (git push) is NEVER automated: the run drives the
+  // migration only as far as READY (or FAILED). The migrability gate still
+  // applies — a NOT_MIGRABLE verdict without an override blocks the
+  // auto-approval, just like a manual ApproveDesign.
+  //
+  // Idempotent: re-running from a state that is already in flight is a no-op
+  // that re-asserts the auto-approve intent. Only the owner or a system user
+  // may call this.
+  rpc RunMigration(RunMigrationRequest) returns (milton_prism.types.migration.v1.Migration) {
+    option (google.api.http) = {
+      post: "/v1/migrations/{identifier}:run"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Run the full roadmap end-to-end from the platform"
+      description: "One-shot orchestration: starts the pipeline and auto-approves the plan when design completes so analysis → design → generation runs without manual steps. Stops at READY; never auto-publishes. The migrability gate still blocks a NOT_MIGRABLE verdict without an override."
+    };
+  }
+
   // ApproveDesign transitions a migration from AWAITING_APPROVAL.
   //
   // When approved is true the migration advances to GENERATING.
@@ -379,6 +408,24 @@ message StartMigrationRequest {
       example: {yaml: "7"}
     }
   ];
+}
+
+// RunMigrationRequest triggers the single-shot end-to-end roadmap execution.
+message RunMigrationRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Migration identifier."
+      example: {yaml: "7"}
+    }
+  ];
+
+  // Optional allowlist of service names to generate once the plan is
+  // auto-approved. Empty = generate all services. Mirrors
+  // ApproveDesignRequest.service_filter so a one-shot run can still trial a
+  // subset of services.
+  repeated string service_filter = 2 [(openapi.v3.property) = {description: "Optional subset of service names to generate when the plan is auto-approved. Empty = generate all."}];
 }
 
 // ApproveDesignRequest carries the owner's decision on the restructure plan.

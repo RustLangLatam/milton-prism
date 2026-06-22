@@ -71,7 +71,13 @@ func main() {
 		WithAcquirer(decompadapters.NewGitWorkspaceAcquirer("")).
 		WithContractDeriver(decompadapters.NewContractDeriverHub()).
 		WithPlanWriter(decompadapters.NewMongoPlanWriter(migrationDB)).
-		WithArtifactStore(decompadapters.NewMongoArtifactStore(migrationDB))
+		WithArtifactStore(decompadapters.NewMongoArtifactStore(migrationDB)).
+		WithTopologyLoader(decompadapters.NewMongoTopologyLoader(migrationDB)).
+		// One-shot RunMigration continuation: when a migration carries the
+		// auto_approve intent, advance it to GENERATING and enqueue generation
+		// the moment the plan reaches AWAITING_APPROVAL — same shared Asynq
+		// client and migration DB the rest of the pipeline already uses.
+		WithAutoApprover(decompadapters.NewMongoAutoApprover(migrationDB, asynqClient))
 
 	// M2 — Migrability assessor: wired only when ANTHROPIC_API_KEY is available.
 	// One LLM call per decomposition run (~cents); skipped gracefully when absent.

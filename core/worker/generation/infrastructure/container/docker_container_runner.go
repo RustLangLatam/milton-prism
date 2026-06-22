@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -43,21 +44,120 @@ const (
 
 var _ ports.ContainerRunner = (*DockerContainerRunner)(nil)
 
-// DockerContainerRunner implements ContainerRunner against the local Docker
-// daemon. It connects via the DOCKER_HOST environment variable or the default
-// Unix socket (/var/run/docker.sock).
+// DockerContainerRunner implements ContainerRunner against a Docker daemon.
+// By default it targets the LOCAL daemon (DOCKER_HOST env or the
+// /var/run/docker.sock Unix socket). When a RemoteConfig with a non-empty Host
+// is supplied, it instead targets that REMOTE daemon over tcp:// (optionally
+// with TLS), enabling ephemeral generation containers to be spawned on a remote
+// Docker host (Camino B, pending B2).
 type DockerContainerRunner struct {
 	cli *client.Client
 }
 
-// NewDockerContainerRunner creates a runner connected to the local Docker daemon.
-func NewDockerContainerRunner() (*DockerContainerRunner, error) {
-	cli, err := client.NewClientWithOpts(
+// RemoteConfig declares how to reach a remote Docker daemon. A zero value
+// (empty Host) means "use the local daemon" — the historical default, kept for
+// no-regression with the local generation pipeline.
+//
+// When Host is set it must be a daemon URL the Docker SDK understands natively:
+//   - tcp://HOST:2375        (plaintext, no TLS)
+//   - tcp://HOST:2376        (mutual TLS — requires TLSCA, TLSCert and TLSKey)
+//
+// ssh://USER@HOST is NOT yet supported here: it requires the
+// github.com/docker/cli connection helper, which is a separate (heavy)
+// dependency. See the package docs / last-verification for the sub-pendiente.
+type RemoteConfig struct {
+	// Host is the daemon URL, e.g. "tcp://10.0.0.5:2376". Empty → local daemon.
+	Host string
+	// TLSCA / TLSCert / TLSKey are filesystem paths to the CA cert, client cert
+	// and client key. All three must be set together to enable mutual TLS. When
+	// any is empty, the connection is made without TLS (plaintext tcp://).
+	TLSCA   string
+	TLSCert string
+	TLSKey  string
+}
+
+// IsRemote reports whether this config points the runner at a remote daemon.
+func (c RemoteConfig) IsRemote() bool { return c.Host != "" }
+
+// useTLS reports whether a full TLS triple (CA + cert + key) was provided.
+func (c RemoteConfig) useTLS() bool {
+	return c.TLSCA != "" && c.TLSCert != "" && c.TLSKey != ""
+}
+
+// RemoteConfigFromEnv reads the remote-host configuration from the worker's
+// environment. It returns a zero (local) RemoteConfig when PRISM_DOCKER_HOST is
+// unset, so the default behaviour is unchanged.
+//
+// Environment variables:
+//   - PRISM_DOCKER_HOST     daemon URL, e.g. tcp://10.0.0.5:2376 (empty → local)
+//   - PRISM_DOCKER_TLS_CA   path to ca.pem
+//   - PRISM_DOCKER_TLS_CERT path to cert.pem
+//   - PRISM_DOCKER_TLS_KEY  path to key.pem
+func RemoteConfigFromEnv() RemoteConfig {
+	return RemoteConfig{
+		Host:    os.Getenv("PRISM_DOCKER_HOST"),
+		TLSCA:   os.Getenv("PRISM_DOCKER_TLS_CA"),
+		TLSCert: os.Getenv("PRISM_DOCKER_TLS_CERT"),
+		TLSKey:  os.Getenv("PRISM_DOCKER_TLS_KEY"),
+	}
+}
+
+// clientOpts builds the ordered Docker SDK option list for a RemoteConfig.
+// It is pure (no daemon connection) so the endpoint-selection logic is unit
+// testable without a running daemon.
+func (c RemoteConfig) clientOpts() ([]client.Opt, error) {
+	// Always start from the environment so DOCKER_API_VERSION and any other
+	// standard knobs keep working, then layer explicit overrides on top.
+	opts := []client.Opt{
 		client.FromEnv,
 		client.WithAPIVersionNegotiation(),
-	)
+	}
+
+	if !c.IsRemote() {
+		// Local daemon: env / default socket. No-regression path.
+		return opts, nil
+	}
+
+	// Remote daemon: override the host explicitly so config beats DOCKER_HOST.
+	opts = append(opts, client.WithHost(c.Host))
+
+	// Partial TLS (some but not all of the triple) is a misconfiguration we
+	// refuse loudly rather than silently downgrading to plaintext.
+	someTLS := c.TLSCA != "" || c.TLSCert != "" || c.TLSKey != ""
+	if someTLS && !c.useTLS() {
+		return nil, fmt.Errorf(
+			"container runner: remote TLS requires all of PRISM_DOCKER_TLS_CA/CERT/KEY (got ca=%t cert=%t key=%t)",
+			c.TLSCA != "", c.TLSCert != "", c.TLSKey != "")
+	}
+	if c.useTLS() {
+		opts = append(opts, client.WithTLSClientConfig(c.TLSCA, c.TLSCert, c.TLSKey))
+	}
+	return opts, nil
+}
+
+// NewDockerContainerRunner creates a runner connected to the local Docker daemon
+// (DOCKER_HOST env or the default Unix socket). It is the no-regression default
+// used by existing call sites.
+func NewDockerContainerRunner() (*DockerContainerRunner, error) {
+	return NewDockerContainerRunnerWithConfig(RemoteConfig{})
+}
+
+// NewDockerContainerRunnerWithConfig creates a runner targeting the daemon
+// described by cfg: the local daemon when cfg is zero, or a remote daemon over
+// tcp:// (optionally TLS) when cfg.Host is set.
+func NewDockerContainerRunnerWithConfig(cfg RemoteConfig) (*DockerContainerRunner, error) {
+	opts, err := cfg.clientOpts()
+	if err != nil {
+		return nil, err
+	}
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("container runner: docker client: %w", err)
+	}
+	if cfg.IsRemote() {
+		applog.Infof("container runner: targeting REMOTE docker host=%s tls=%t", cfg.Host, cfg.useTLS())
+	} else {
+		applog.Infof("container runner: targeting LOCAL docker daemon host=%s", cli.DaemonHost())
 	}
 	return &DockerContainerRunner{cli: cli}, nil
 }

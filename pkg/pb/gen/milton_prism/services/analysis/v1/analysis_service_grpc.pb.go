@@ -25,6 +25,7 @@ const (
 	AnalysisService_ListAnalysisSummaries_FullMethodName = "/milton_prism.services.analysis.v1.AnalysisService/ListAnalysisSummaries"
 	AnalysisService_RunAnalysis_FullMethodName           = "/milton_prism.services.analysis.v1.AnalysisService/RunAnalysis"
 	AnalysisService_EvaluateMigrability_FullMethodName   = "/milton_prism.services.analysis.v1.AnalysisService/EvaluateMigrability"
+	AnalysisService_SelectRoot_FullMethodName            = "/milton_prism.services.analysis.v1.AnalysisService/SelectRoot"
 )
 
 // AnalysisServiceClient is the client API for AnalysisService service.
@@ -75,6 +76,14 @@ type AnalysisServiceClient interface {
 	// Requires: the analysis must be in COMPLETED state with a non-empty
 	// dependency graph. Returns the assessment immediately.
 	EvaluateMigrability(ctx context.Context, in *EvaluateMigrabilityRequest, opts ...grpc.CallOption) (*v11.MigrabilityAssessment, error)
+	// SelectRoot resolves the project root for an analysis that is awaiting a
+	// root selection (a monorepo with multiple detected project roots). The
+	// chosen root_directory must be one of the analysis's root_candidates;
+	// an empty or unlisted value is rejected (fail closed). On success the root
+	// is persisted on the analysis and the analysis is re-enqueued scoped to the
+	// chosen root, transitioning back to ANALYSIS_STATE_RUNNING. Returns the
+	// updated AnalysisSummary.
+	SelectRoot(ctx context.Context, in *SelectRootRequest, opts ...grpc.CallOption) (*v1.AnalysisSummary, error)
 }
 
 type analysisServiceClient struct {
@@ -119,6 +128,16 @@ func (c *analysisServiceClient) EvaluateMigrability(ctx context.Context, in *Eva
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(v11.MigrabilityAssessment)
 	err := c.cc.Invoke(ctx, AnalysisService_EvaluateMigrability_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *analysisServiceClient) SelectRoot(ctx context.Context, in *SelectRootRequest, opts ...grpc.CallOption) (*v1.AnalysisSummary, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(v1.AnalysisSummary)
+	err := c.cc.Invoke(ctx, AnalysisService_SelectRoot_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +192,14 @@ type AnalysisServiceServer interface {
 	// Requires: the analysis must be in COMPLETED state with a non-empty
 	// dependency graph. Returns the assessment immediately.
 	EvaluateMigrability(context.Context, *EvaluateMigrabilityRequest) (*v11.MigrabilityAssessment, error)
+	// SelectRoot resolves the project root for an analysis that is awaiting a
+	// root selection (a monorepo with multiple detected project roots). The
+	// chosen root_directory must be one of the analysis's root_candidates;
+	// an empty or unlisted value is rejected (fail closed). On success the root
+	// is persisted on the analysis and the analysis is re-enqueued scoped to the
+	// chosen root, transitioning back to ANALYSIS_STATE_RUNNING. Returns the
+	// updated AnalysisSummary.
+	SelectRoot(context.Context, *SelectRootRequest) (*v1.AnalysisSummary, error)
 	mustEmbedUnimplementedAnalysisServiceServer()
 }
 
@@ -194,6 +221,9 @@ func (UnimplementedAnalysisServiceServer) RunAnalysis(context.Context, *RunAnaly
 }
 func (UnimplementedAnalysisServiceServer) EvaluateMigrability(context.Context, *EvaluateMigrabilityRequest) (*v11.MigrabilityAssessment, error) {
 	return nil, status.Error(codes.Unimplemented, "method EvaluateMigrability not implemented")
+}
+func (UnimplementedAnalysisServiceServer) SelectRoot(context.Context, *SelectRootRequest) (*v1.AnalysisSummary, error) {
+	return nil, status.Error(codes.Unimplemented, "method SelectRoot not implemented")
 }
 func (UnimplementedAnalysisServiceServer) mustEmbedUnimplementedAnalysisServiceServer() {}
 func (UnimplementedAnalysisServiceServer) testEmbeddedByValue()                         {}
@@ -288,6 +318,24 @@ func _AnalysisService_EvaluateMigrability_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AnalysisService_SelectRoot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SelectRootRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AnalysisServiceServer).SelectRoot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AnalysisService_SelectRoot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AnalysisServiceServer).SelectRoot(ctx, req.(*SelectRootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AnalysisService_ServiceDesc is the grpc.ServiceDesc for AnalysisService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -310,6 +358,10 @@ var AnalysisService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EvaluateMigrability",
 			Handler:    _AnalysisService_EvaluateMigrability_Handler,
+		},
+		{
+			MethodName: "SelectRoot",
+			Handler:    _AnalysisService_SelectRoot_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -56,6 +56,14 @@ func NewAnalysisGRPCClient(ctx context.Context, cfg *config.GrpcClientCfg) (*Ana
 	return c, nil
 }
 
+// Conn returns the underlying gRPC client connection. It is exposed so a
+// co-served service (e.g. BillingService, which is registered on the same
+// analysis-services gRPC endpoint) can build a client over the SAME connection
+// without opening a second dial or requiring extra config.
+func (c *AnalysisGrpcClient) Conn() *grpc.ClientConn {
+	return c.conn
+}
+
 // Close shuts down the background monitor and releases the connection.
 func (c *AnalysisGrpcClient) Close() {
 	c.cancel()

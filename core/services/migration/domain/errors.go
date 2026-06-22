@@ -23,8 +23,10 @@ const (
 	ErrCodeMissingIdentifier   = "MIG101"
 	ErrCodeMissingPayload      = "MIG102"
 	ErrCodeMissingOwnerUserID  = "MIG103"
-	ErrCodeMissingRepositoryID = "MIG104"
-	ErrCodeInvalidTargetConfig = "MIG105"
+	ErrCodeMissingRepositoryID     = "MIG104"
+	ErrCodeInvalidTargetConfig     = "MIG105"
+	ErrCodeInvalidRootSubdirectory = "MIG106"
+	ErrCodeUnsupportedTargetLanguage = "MIG107"
 )
 
 var (
@@ -33,6 +35,13 @@ var (
 	ErrMissingOwnerUserID  = newError(ErrCodeMissingOwnerUserID, "Failure_Missing_Owner_User_ID")
 	ErrMissingRepositoryID = newError(ErrCodeMissingRepositoryID, "Failure_Missing_Repository_ID")
 	ErrInvalidTargetConfig = newError(ErrCodeInvalidTargetConfig, "Failure_Invalid_Target_Config")
+	// ErrInvalidRootSubdirectory: the requested monorepo root subdirectory is not
+	// a safe repository-relative path (absolute or contains a ".." traversal).
+	ErrInvalidRootSubdirectory = newError(ErrCodeInvalidRootSubdirectory, "Failure_Invalid_Root_Subdirectory")
+	// ErrUnsupportedTargetLanguage: the requested target language has no code
+	// generator profile yet (only Go and Python are generable). Rejected at
+	// creation so a migration never silently falls back to Go.
+	ErrUnsupportedTargetLanguage = newError(ErrCodeUnsupportedTargetLanguage, "Failure_Unsupported_Target_Language")
 )
 
 // ── Domain errors (MIG2xx) ────────────────────────────────────────────────────
@@ -89,6 +98,10 @@ const (
 	// has no completed analysis summary. The analysis pipeline must finish first.
 	ErrCodeNoBlueprintAnalysis = "MIG220"
 	ErrCodeNoActionPlan        = "MIG221"
+	// ErrCodePlanLimitExceeded: CreateMigration rejected because the owner's billing
+	// plan count limit (migrations-per-month) has been reached. Hard block; the user
+	// must upgrade their plan or wait for the next billing month.
+	ErrCodePlanLimitExceeded = "MIG222"
 )
 
 var (
@@ -112,7 +125,19 @@ var (
 	ErrNoRoadmap              = newError(ErrCodeNoRoadmap, "Failure_No_Roadmap")
 	ErrNoBlueprintAnalysis    = newError(ErrCodeNoBlueprintAnalysis, "Failure_No_Blueprint_Analysis")
 	ErrNoActionPlan           = newError(ErrCodeNoActionPlan, "Failure_No_Action_Plan")
+	// ErrPlanLimitExceeded carries an actionable default message; use
+	// NewErrPlanLimitExceeded to embed the concrete monthly cap.
+	ErrPlanLimitExceeded = newError(ErrCodePlanLimitExceeded, "Failure_Plan_Limit_Exceeded")
 )
+
+// NewErrPlanLimitExceeded builds a plan-limit error whose message names the
+// concrete monthly migration cap so the panel can show an actionable notice.
+func NewErrPlanLimitExceeded(limit int64) *Error {
+	return &Error{
+		Code:    ErrCodePlanLimitExceeded,
+		Message: fmt.Sprintf("Plan limit reached: %d migrations per month. Upgrade your plan.", limit),
+	}
+}
 
 // NewErrArtifactConflict builds a conflict error that names the paths whose
 // content diverges across services. writeToken is never part of the message.

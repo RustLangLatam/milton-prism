@@ -37,6 +37,12 @@ const (
 	AnalysisState_ANALYSIS_STATE_COMPLETED AnalysisState = 2
 	// Analysis failed; see the associated error details.
 	AnalysisState_ANALYSIS_STATE_FAILED AnalysisState = 3
+	// The repository has multiple distinct project roots (monorepo) and no root
+	// has been selected yet. The heavy analysis pipeline did NOT run; root_candidates
+	// lists the detected options. The analysis stays in this terminal-until-action
+	// state (no retry loop) until the user picks a root via SelectRoot, which
+	// re-enqueues the analysis scoped to the chosen root.
+	AnalysisState_ANALYSIS_STATE_AWAITING_ROOT_SELECTION AnalysisState = 4
 )
 
 // Enum value maps for AnalysisState.
@@ -46,12 +52,14 @@ var (
 		1: "ANALYSIS_STATE_RUNNING",
 		2: "ANALYSIS_STATE_COMPLETED",
 		3: "ANALYSIS_STATE_FAILED",
+		4: "ANALYSIS_STATE_AWAITING_ROOT_SELECTION",
 	}
 	AnalysisState_value = map[string]int32{
-		"ANALYSIS_STATE_UNSPECIFIED": 0,
-		"ANALYSIS_STATE_RUNNING":     1,
-		"ANALYSIS_STATE_COMPLETED":   2,
-		"ANALYSIS_STATE_FAILED":      3,
+		"ANALYSIS_STATE_UNSPECIFIED":             0,
+		"ANALYSIS_STATE_RUNNING":                 1,
+		"ANALYSIS_STATE_COMPLETED":               2,
+		"ANALYSIS_STATE_FAILED":                  3,
+		"ANALYSIS_STATE_AWAITING_ROOT_SELECTION": 4,
 	}
 )
 
@@ -668,8 +676,20 @@ type AnalysisSummary struct {
 	// scanner is a pure deterministic function of file contents. Empty when nothing was
 	// found (an honest zero, never a guess). Additive: scores/verdicts are unaffected.
 	SecurityFindings []*SecurityFinding `protobuf:"bytes,31,rep,name=security_findings,json=securityFindings,proto3" json:"security_findings,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Repository-relative subdirectory the analysis was scoped to (monorepos).
+	// Empty means the whole repository root was analysed. Snapshotted from the
+	// triggering migration/request so the report shows what was actually analysed.
+	RootSubdirectory string `protobuf:"bytes,32,opt,name=root_subdirectory,json=rootSubdirectory,proto3" json:"root_subdirectory,omitempty"`
+	// Candidate project-root subdirectories detected after cloning, when the
+	// repository contains more than one distinct project root (monorepo) and no
+	// root has been selected yet. Repo-relative paths ("" never appears here; an
+	// entry like "services/api" is relative to the repository root). Populated
+	// only while the analysis is ANALYSIS_STATE_AWAITING_ROOT_SELECTION; empty
+	// once a root is chosen (single-root repos always leave this empty). The
+	// client presents these to the user, who picks one via SelectRoot.
+	RootCandidates []string `protobuf:"bytes,33,rep,name=root_candidates,json=rootCandidates,proto3" json:"root_candidates,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AnalysisSummary) Reset() {
@@ -915,6 +935,20 @@ func (x *AnalysisSummary) GetIntakeAssessment() *IntakeAssessment {
 func (x *AnalysisSummary) GetSecurityFindings() []*SecurityFinding {
 	if x != nil {
 		return x.SecurityFindings
+	}
+	return nil
+}
+
+func (x *AnalysisSummary) GetRootSubdirectory() string {
+	if x != nil {
+		return x.RootSubdirectory
+	}
+	return ""
+}
+
+func (x *AnalysisSummary) GetRootCandidates() []string {
+	if x != nil {
+		return x.RootCandidates
 	}
 	return nil
 }
@@ -2099,7 +2133,7 @@ var File_milton_prism_types_analysis_v1_analysis_proto protoreflect.FileDescript
 
 const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\n" +
-	"-milton_prism/types/analysis/v1/analysis.proto\x12\x1emilton_prism.types.analysis.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xb5(\n" +
+	"-milton_prism/types/analysis/v1/analysis.proto\x12\x1emilton_prism.types.analysis.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xed+\n" +
 	"\x0fAnalysisSummary\x12P\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B0\xe0A\b\xbaG*:\x03\x12\x011\x92\x02\"System-assigned unique identifier.R\n" +
@@ -2143,7 +2177,9 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\x12database_detection\x18\x1c \x01(\v21.milton_prism.types.analysis.v1.DatabaseDetectionB|\xbaGy\x92\x02vDeterministically detected database engine(s) with the evidence behind the detection. Honest 'unknown' when no signal.R\x11databaseDetection\x12\x86\x02\n" +
 	"\x15architectural_pattern\x18\x1d \x01(\v24.milton_prism.types.analysis.v1.ArchitecturalPatternB\x9a\x01\xbaG\x96\x01\x92\x02\x92\x01Deterministically classified architectural pattern (Clean/Hexagonal/Layered/MVC/Modular monolith/Spaghetti) with confidence and the evidence used.R\x14architecturalPattern\x12\x95\x02\n" +
 	"\x11intake_assessment\x18\x1e \x01(\v20.milton_prism.types.analysis.v1.IntakeAssessmentB\xb5\x01\xbaG\xb1\x01\x92\x02\xad\x01Deterministic intake gate: is this a migratable backend in a supported language? Carries codebase_kind, language support, migratable flag, and honest warnings. Non-blocking.R\x10intakeAssessment\x12\xb2\x02\n" +
-	"\x11security_findings\x18\x1f \x03(\v2/.milton_prism.types.analysis.v1.SecurityFindingB\xd3\x01\xbaG\xcf\x01\x92\x02\xcb\x01Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.R\x10securityFindings:j\xbaGgJ\x0fAnalysisSummary\x92\x02SOutput of a code analysis run: technologies, vulnerabilities, and dependency graph.B\x0e\n" +
+	"\x11security_findings\x18\x1f \x03(\v2/.milton_prism.types.analysis.v1.SecurityFindingB\xd3\x01\xbaG\xcf\x01\x92\x02\xcb\x01Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.R\x10securityFindings\x12\xa4\x01\n" +
+	"\x11root_subdirectory\x18  \x01(\tBw\xe0A\x03\xbaGq:\t\x12\abackend\x92\x02cRepository-relative subdirectory the analysis was scoped to. Empty means the whole repository root.R\x10rootSubdirectory\x12\x8e\x02\n" +
+	"\x0froot_candidates\x18! \x03(\tB\xe4\x01\xe0A\x03\xbaG\xdd\x01\x92\x02\xd9\x01Detected candidate project-root subdirectories when the repository has multiple roots and none is selected yet. Repo-relative. Empty for single-root repos or once a root is chosen. The user selects one via SelectRoot.R\x0erootCandidates:j\xbaGgJ\x0fAnalysisSummary\x92\x02SOutput of a code analysis run: technologies, vulnerabilities, and dependency graph.B\x0e\n" +
 	"\f_delete_timeB\r\n" +
 	"\v_purge_time\"\xf8\b\n" +
 	"\x10IntakeAssessment\x12\x95\x01\n" +
@@ -2244,12 +2280,13 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\vfrom_module\x18\x01 \x01(\tBO\xbaGL:\x10\x12\x0eservice/orders\x92\x027Fully qualified name of the module with the dependency.R\n" +
 	"fromModule\x12m\n" +
 	"\tto_module\x18\x02 \x01(\tBP\xbaGM:\x13\x12\x11service/inventory\x92\x025Fully qualified name of the module being depended on.R\btoModule\x12N\n" +
-	"\x06weight\x18\x03 \x01(\rB6\xbaG3:\x04\x12\x0212\x92\x02*Coupling strength (higher = more coupled).R\x06weight:P\xbaGMJ\x0eDependencyEdge\x92\x02:Directed edge between two modules in the dependency graph.*\x84\x01\n" +
+	"\x06weight\x18\x03 \x01(\rB6\xbaG3:\x04\x12\x0212\x92\x02*Coupling strength (higher = more coupled).R\x06weight:P\xbaGMJ\x0eDependencyEdge\x92\x02:Directed edge between two modules in the dependency graph.*\xb0\x01\n" +
 	"\rAnalysisState\x12\x1e\n" +
 	"\x1aANALYSIS_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16ANALYSIS_STATE_RUNNING\x10\x01\x12\x1c\n" +
 	"\x18ANALYSIS_STATE_COMPLETED\x10\x02\x12\x19\n" +
-	"\x15ANALYSIS_STATE_FAILED\x10\x03*\x97\x01\n" +
+	"\x15ANALYSIS_STATE_FAILED\x10\x03\x12*\n" +
+	"&ANALYSIS_STATE_AWAITING_ROOT_SELECTION\x10\x04*\x97\x01\n" +
 	"\x10TechnologyStatus\x12!\n" +
 	"\x1dTECHNOLOGY_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19TECHNOLOGY_STATUS_CURRENT\x10\x01\x12\x1e\n" +

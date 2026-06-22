@@ -130,3 +130,43 @@ func TestCopyMonorepo_ExcludesRootBinaries(t *testing.T) {
 	// Executable inside subdirectory must be kept.
 	assert.FileExists(t, filepath.Join(dst, "scripts", "build.sh"))
 }
+
+// TestWriteCombinedPrompt_GoProfile asserts the assembled prompt for the Go
+// profile references the Go profile doc and a Go build/test workflow.
+func TestWriteCombinedPrompt_GoProfile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p, err := agent.WriteCombinedPrompt(dir,
+		"docs/prism/milton-prism-service-generator-prompt.md",
+		"articles", "ART", "go", "spec", "proto")
+	require.NoError(t, err)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	s := string(b)
+	assert.Contains(t, s, "complete Go microservice")
+	assert.Contains(t, s, "milton-prism-go-profile.md")
+	assert.Contains(t, s, "go build")
+	assert.NotContains(t, s, "milton-prism-python-profile.md")
+}
+
+// TestWriteCombinedPrompt_PythonProfile asserts the assembled prompt for the
+// python profile is parametrised: it references the Python profile doc, a
+// Python tooling workflow, and the python-specific intro — not Go's. This
+// guards the regression where the combined prompt hardcoded "Go microservice"
+// and the Go profile doc regardless of the output profile.
+func TestWriteCombinedPrompt_PythonProfile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p, err := agent.WriteCombinedPrompt(dir,
+		"docs/prism/milton-prism-service-generator-prompt-python.md",
+		"articles", "ART", "python", "spec", "proto")
+	require.NoError(t, err)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	s := string(b)
+	assert.Contains(t, s, "complete Python microservice")
+	assert.Contains(t, s, "milton-prism-python-profile.md")
+	assert.Contains(t, s, "pytest")
+	assert.NotContains(t, s, "complete Go microservice")
+	assert.NotContains(t, s, "milton-prism-go-profile.md")
+}

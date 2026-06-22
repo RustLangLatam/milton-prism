@@ -34,7 +34,11 @@ func (s *Service) DownloadDeliverable(ctx context.Context, migrationID uint64) (
 	// Include the API gateway when Target is nil (field absent on old migrations)
 	// or when explicitly enabled. proto3 bool zero == false == "not set", so we
 	// default to include only when Target itself is missing; an explicit false excludes.
-	useApiGateway := m.GetTarget() == nil || m.GetTarget().GetUseApiGateway()
+	// MONOLITH topology is HTTP-native and is its own entry point: never emit a
+	// gateway regardless of use_api_gateway.
+	useApiGateway := m.GetTarget() == nil ||
+		(m.GetTarget().GetUseApiGateway() &&
+			m.GetTarget().GetTopology() != domain.TargetTopologyMonolith)
 
 	raw, err := s.fileArtifactReader.ListArtifacts(ctx, migrationID, "")
 	if err != nil {

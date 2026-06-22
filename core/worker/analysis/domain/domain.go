@@ -5,11 +5,16 @@ package domain
 
 // JobPayload is the Asynq task payload for analysis:run jobs.
 type JobPayload struct {
-	SummaryID     uint64 `json:"summary_id"`
-	RepositoryID  uint64 `json:"repository_id"`
-	MigrationID   uint64 `json:"migration_id"`
-	RemoteURL     string `json:"remote_url"`
+	SummaryID    uint64 `json:"summary_id"`
+	RepositoryID uint64 `json:"repository_id"`
+	MigrationID  uint64 `json:"migration_id"`
+	RemoteURL    string `json:"remote_url"`
 	DefaultBranch string `json:"default_branch"`
+	// RootSubdirectory optionally scopes the analysis to a repository-relative
+	// subdirectory (monorepo support). Empty means the whole repository root is
+	// analysed (the default; fully backward compatible). The whole repository is
+	// always cloned; only the file walk is scoped to this subdir.
+	RootSubdirectory string `json:"root_subdirectory,omitempty"`
 }
 
 // Ecosystem identifies a dependency-manager package ecosystem.

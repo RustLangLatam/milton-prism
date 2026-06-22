@@ -1,0 +1,274 @@
+syntax = "proto3";
+
+package milton_prism.services.billing.v1;
+
+import "google/api/annotations.proto";
+import "google/api/client.proto";
+import "google/api/field_behavior.proto";
+import "milton_prism/types/billing/v1/billing.proto";
+import "milton_prism/types/pagination/v1/pagination.proto";
+import "milton_prism/types/query_params/v1/query_params.proto";
+import "openapiv3/annotations.proto";
+
+option cc_enable_arenas = true;
+option csharp_namespace = "MiltonPrism.Services.Billing.V1";
+option go_package = "milton_prism/pkg/pb/gen/milton_prism/services/billing/v1;billing";
+option java_multiple_files = true;
+option java_outer_classname = "BillingServiceProtoV1";
+option java_package = "com.miltonprism.services.billing.v1";
+option objc_class_prefix = "MPR";
+
+// BillingService records and aggregates LLM token / cost usage and exposes the
+// usage-plan catalog and per-user plan association.
+//
+// Usage records are written best-effort by the spend sites (assessment,
+// migration derivation, code generation). The read methods aggregate those
+// records by user, by analysis, and by migration.
+service BillingService {
+  option (google.api.default_host) = "api.miltonprism.com";
+
+  // RecordUsage persists a single usage record. System-user only; intended for
+  // cross-service spend reporting (migration / generation workers).
+  rpc RecordUsage(RecordUsageRequest) returns (milton_prism.types.billing.v1.UsageRecord) {
+    option (google.api.http) = {
+      post: "/v1/usageRecords"
+      body: "usage_record"
+    };
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // ListUsageRecords returns a paginated list of raw usage records. Non-system
+  // callers see only their own records; system users may filter by any user.
+  rpc ListUsageRecords(ListUsageRecordsRequest) returns (ListUsageRecordsResponse) {
+    option (google.api.http) = {get: "/v1/usageRecords"};
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // GetUserUsage returns the aggregate usage for a user, with an operation
+  // breakdown. Non-system callers may only query their own usage.
+  rpc GetUserUsage(GetUserUsageRequest) returns (UsageAggregateResponse) {
+    option (google.api.http) = {get: "/v1/users/{user_id}/usage"};
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // GetAnalysisUsage returns the aggregate usage attributed to a single analysis.
+  rpc GetAnalysisUsage(GetAnalysisUsageRequest) returns (UsageAggregateResponse) {
+    option (google.api.http) = {get: "/v1/analyses/{analysis_id}/usage"};
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // GetMigrationUsage returns the aggregate usage attributed to a single migration.
+  rpc GetMigrationUsage(GetMigrationUsageRequest) returns (UsageAggregateResponse) {
+    option (google.api.http) = {get: "/v1/migrations/{migration_id}/usage"};
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // ListPlans returns the full plan catalog.
+  rpc ListPlans(ListPlansRequest) returns (ListPlansResponse) {
+    option (google.api.http) = {get: "/v1/plans"};
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // GetUserPlan returns the plan a user is associated with (defaulting to the
+  // free plan when no explicit association exists). Non-system callers may only
+  // query their own plan.
+  rpc GetUserPlan(GetUserPlanRequest) returns (milton_prism.types.billing.v1.Plan) {
+    option (google.api.http) = {get: "/v1/users/{user_id}/plan"};
+    option (openapi.v3.operation) = {
+      security: [
+        {
+          additional_properties: [
+            {
+              name: "ApiKey"
+              value: {
+                value: []
+              }
+            },
+            {
+              name: "Authorization"
+              value: {
+                value: []
+              }
+            }
+          ]
+        }
+      ]
+    };
+  }
+}
+
+// ── Request / Response messages ────────────────────────────────────────────────
+
+// RecordUsageRequest carries the usage record to persist. Server fills
+// identifier and create_time.
+message RecordUsageRequest {
+  milton_prism.types.billing.v1.UsageRecord usage_record = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// ListUsageRecordsRequest filters and paginates raw usage records.
+message ListUsageRecordsRequest {
+  // Optional: restrict to a single user (system users only; ignored otherwise).
+  uint64 user_id = 1 [(google.api.field_behavior) = OPTIONAL];
+  // Optional: restrict to a single analysis.
+  uint64 analysis_id = 2 [(google.api.field_behavior) = OPTIONAL];
+  // Optional: restrict to a single migration.
+  uint64 migration_id = 3 [(google.api.field_behavior) = OPTIONAL];
+  // Pagination parameters.
+  milton_prism.types.query_params.v1.PageQueryParams page_params = 4 [(google.api.field_behavior) = OPTIONAL];
+}
+
+// ListUsageRecordsResponse wraps a page of usage records.
+message ListUsageRecordsResponse {
+  repeated milton_prism.types.billing.v1.UsageRecord usage_records = 1;
+  milton_prism.types.pagination.v1.Pagination pagination = 2;
+}
+
+// GetUserUsageRequest identifies the user whose usage to aggregate.
+message GetUserUsageRequest {
+  uint64 user_id = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// GetAnalysisUsageRequest identifies the analysis whose usage to aggregate.
+message GetAnalysisUsageRequest {
+  uint64 analysis_id = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// GetMigrationUsageRequest identifies the migration whose usage to aggregate.
+message GetMigrationUsageRequest {
+  uint64 migration_id = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// UsageAggregateResponse carries a grand total plus a per-operation breakdown.
+message UsageAggregateResponse {
+  // Grand total across all matched records.
+  milton_prism.types.billing.v1.UsageTotals total = 1;
+  // Breakdown by operation.
+  repeated milton_prism.types.billing.v1.OperationUsage by_operation = 2;
+}
+
+// ListPlansRequest is intentionally empty.
+message ListPlansRequest {}
+
+// ListPlansResponse wraps the plan catalog.
+message ListPlansResponse {
+  repeated milton_prism.types.billing.v1.Plan plans = 1;
+}
+
+// GetUserPlanRequest identifies the user whose plan to fetch.
+message GetUserPlanRequest {
+  uint64 user_id = 1 [(google.api.field_behavior) = REQUIRED];
+}

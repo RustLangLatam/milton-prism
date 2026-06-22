@@ -2,13 +2,18 @@ package application_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"milton_prism/core/services/migration/application"
+	billingdomain "milton_prism/core/services/billing/domain"
 	"milton_prism/core/services/migration/domain"
 	"milton_prism/core/services/migration/mocks"
 	"milton_prism/core/services/migration/ports"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
 	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 	queryparamsv1 "milton_prism/pkg/pb/gen/milton_prism/types/query_params/v1"
@@ -107,12 +112,150 @@ func TestCreateMigration_InvalidTargetConfig_UnspecifiedLanguage(t *testing.T) {
 	assertDomainError(t, err, domain.ErrCodeInvalidTargetConfig)
 }
 
+func TestCreateMigration_UnsupportedTargetLanguage_Rust(t *testing.T) {
+	svc, _, _, _, _, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguageRust
+	_, err := svc.CreateMigration(context.Background(), m)
+	assertDomainError(t, err, domain.ErrCodeUnsupportedTargetLanguage)
+}
+
+func TestCreateMigration_UnsupportedTargetLanguage_Node(t *testing.T) {
+	svc, _, _, _, _, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguageNode
+	_, err := svc.CreateMigration(context.Background(), m)
+	assertDomainError(t, err, domain.ErrCodeUnsupportedTargetLanguage)
+}
+
+func TestCreateMigration_Python_Generable_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguagePython
+	stored := &domain.Migration{Identifier: 10002, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10002), out.GetIdentifier())
+}
+
 func TestCreateMigration_OwnerNotFound(t *testing.T) {
 	svc, _, _, identity, _, _ := newSvc(t)
 	m := validMigration()
 	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(domain.ErrOwnerNotFound)
 	_, err := svc.CreateMigration(context.Background(), m)
 	assertDomainError(t, err, domain.ErrCodeOwnerNotFound)
+}
+
+// ── CreateMigration billing plan quota ──────────────────────────────────────────
+
+// newSvcWithBilling wires a BillingClient so migration quota enforcement is active.
+func newSvcWithBilling(t *testing.T) (*application.Service, *mocks.MockMigrationRepository, *mocks.MockIdentityClient, *mocks.MockRepositoryClient, *mocks.MockBillingClient) {
+	t.Helper()
+	repo := &mocks.MockMigrationRepository{}
+	tx := &mocks.MockTransactionManager{}
+	tx.On("WithTransaction", mock.Anything, mock.Anything).Return(nil)
+	identity := &mocks.MockIdentityClient{}
+	repoClient := &mocks.MockRepositoryClient{}
+	billing := &mocks.MockBillingClient{}
+	svc := application.NewService(repo, tx, identity, repoClient, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "").
+		WithBillingClient(billing)
+	return svc, repo, identity, repoClient, billing
+}
+
+func freePlan() *billingv1.Plan {
+	return &billingv1.Plan{Code: billingdomain.PlanCodeFree, MaxAnalysesPerMonth: 5, MaxMigrationsPerMonth: 1}
+}
+
+func enterprisePlan() *billingv1.Plan {
+	return &billingv1.Plan{Code: billingdomain.PlanCodeEnterprise, MaxAnalysesPerMonth: billingdomain.Unlimited, MaxMigrationsPerMonth: billingdomain.Unlimited}
+}
+
+func TestCreateMigration_PlanLimit_FreeAtLimit_Rejected(t *testing.T) {
+	svc, repo, identity, repoClient, billing := newSvcWithBilling(t)
+	m := validMigration()
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	billing.On("GetUserPlan", mock.Anything, uint64(1)).Return(freePlan(), nil)
+	// Free cap is 1 migration/mo; already at 1 → reject.
+	repo.On("CountByOwnerSince", mock.Anything, uint64(1), mock.Anything).Return(int64(1), nil)
+
+	_, err := svc.CreateMigration(context.Background(), m)
+	assertDomainError(t, err, domain.ErrCodePlanLimitExceeded)
+	// Nothing persisted when over quota.
+	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
+func TestCreateMigration_PlanLimit_FreeUnderLimit_Allowed(t *testing.T) {
+	svc, repo, identity, repoClient, billing := newSvcWithBilling(t)
+	m := validMigration()
+	stored := &domain.Migration{Identifier: 30001, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	billing.On("GetUserPlan", mock.Anything, uint64(1)).Return(freePlan(), nil)
+	repo.On("CountByOwnerSince", mock.Anything, uint64(1), mock.Anything).Return(int64(0), nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(30001), out.GetIdentifier())
+}
+
+func TestCreateMigration_PlanLimit_Enterprise_NeverBlocked(t *testing.T) {
+	svc, repo, identity, repoClient, billing := newSvcWithBilling(t)
+	m := validMigration()
+	stored := &domain.Migration{Identifier: 30002, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	billing.On("GetUserPlan", mock.Anything, uint64(1)).Return(enterprisePlan(), nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(30002), out.GetIdentifier())
+	// Unlimited plan: count is never consulted.
+	repo.AssertNotCalled(t, "CountByOwnerSince", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestCreateMigration_PlanLimit_MonthBoundary_LastMonthDoesNotCount(t *testing.T) {
+	svc, repo, identity, repoClient, billing := newSvcWithBilling(t)
+	m := validMigration()
+	stored := &domain.Migration{Identifier: 30003, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	billing.On("GetUserPlan", mock.Anything, uint64(1)).Return(freePlan(), nil)
+	// since must be start-of-current-month UTC; a migration created last month is
+	// outside this window and is not counted → count 0 → allowed.
+	repo.On("CountByOwnerSince", mock.Anything, uint64(1), mock.MatchedBy(func(since time.Time) bool {
+		now := time.Now().UTC()
+		want := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return since.Equal(want)
+	})).Return(int64(0), nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(30003), out.GetIdentifier())
+	repo.AssertExpectations(t)
+}
+
+func TestCreateMigration_PlanLimit_BillingLookupFails_DegradesOpen(t *testing.T) {
+	svc, repo, identity, repoClient, billing := newSvcWithBilling(t)
+	m := validMigration()
+	stored := &domain.Migration{Identifier: 30004, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	// Transient billing error must not block the user (degrade open).
+	billing.On("GetUserPlan", mock.Anything, uint64(1)).Return(nil, domain.ErrInternal)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(30004), out.GetIdentifier())
+	repo.AssertNotCalled(t, "CountByOwnerSince", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestCreateMigration_RepositoryNotFound(t *testing.T) {
@@ -221,7 +364,7 @@ func TestStartMigration_FromPending_Success(t *testing.T) {
 	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(nil)
 	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateAnalyzing).Return(nil)
 	// source_branch is empty when not set on the migration — worker falls back to repo default.
-	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "").Return(nil)
+	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "", "").Return(nil)
 	out, err := svc.StartMigration(context.Background(), 7)
 	require.NoError(t, err)
 	assert.Equal(t, domain.MigrationStateAnalyzing, out.GetState())
@@ -234,7 +377,7 @@ func TestStartMigration_SourceBranch_Forwarded(t *testing.T) {
 	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(nil)
 	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateAnalyzing).Return(nil)
 	// source_branch must be forwarded to the analysis dispatch.
-	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "develop").Return(nil)
+	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "develop", "").Return(nil)
 	out, err := svc.StartMigration(context.Background(), 7)
 	require.NoError(t, err)
 	assert.Equal(t, domain.MigrationStateAnalyzing, out.GetState())
@@ -247,7 +390,7 @@ func TestStartMigration_DispatchFailure_RollsBackToPending(t *testing.T) {
 	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(nil)
 	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateAnalyzing).Return(nil)
 	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStatePending).Return(nil)
-	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "").Return(domain.ErrInternal)
+	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "", "").Return(domain.ErrInternal)
 	// dispatch failure must roll back to PENDING and surface the error.
 	_, err := svc.StartMigration(context.Background(), 7)
 	require.Error(t, err)
@@ -546,6 +689,43 @@ func TestGetGenerationPackage_OK(t *testing.T) {
 	assert.Equal(t, "ART", pkg.GetServices()[0].GetErrorPrefix())
 	assert.Equal(t, "proto...", pkg.GetServices()[0].GetProtoContent())
 	assert.Contains(t, pkg.GetServices()[0].GetGeneratorPromptRef(), "service-generator-prompt")
+}
+
+// TestGetGenerationPackage_PythonProfile asserts a PYTHON-target migration routes
+// to the python output profile and the python generator prompt, and that the
+// referenced prompt file actually exists on disk. This guards the dangling-path
+// regression where the code referenced a non-existent
+// milton-prism-python-service-generator-prompt.md.
+func TestGetGenerationPackage_PythonProfile(t *testing.T) {
+	t.Parallel()
+	svc, repo, artifacts := newSvcWithArtifacts(t)
+	plan := &migrationv1.RestructurePlan{
+		Services: []*migrationv1.ProposedService{{Name: "articles", ErrorPrefix: "ART"}},
+	}
+	m := &domain.Migration{
+		Identifier: 8,
+		State:      domain.MigrationStateGenerating,
+		Plan:       plan,
+		Target:     &migrationv1.TargetConfig{Language: domain.TargetLanguagePython},
+	}
+	repo.On("GetByID", mock.Anything, uint64(8), false).Return(m, nil)
+	artifacts.On("ReadArtifacts", mock.Anything, uint64(8)).Return([]domain.ServiceArtifact{
+		{ServiceName: "articles", ProtoContent: "proto...", BoundarySpec: "spec..."},
+	}, nil)
+
+	pkg, err := svc.GetGenerationPackage(context.Background(), 8)
+	require.NoError(t, err)
+	require.NotNil(t, pkg)
+	assert.Equal(t, "python", pkg.GetOutputProfile())
+	require.Len(t, pkg.GetServices(), 1)
+	promptRef := pkg.GetServices()[0].GetGeneratorPromptRef()
+	assert.Equal(t, "docs/prism/milton-prism-service-generator-prompt-python.md", promptRef)
+
+	// The prompt ref is repo-root-relative; tests run from the package dir, so
+	// resolve up to the repo root (4 levels: application → migration → services → core).
+	abs := filepath.Join("..", "..", "..", "..", promptRef)
+	_, statErr := os.Stat(abs)
+	assert.NoError(t, statErr, "python generator prompt file must exist: %s", promptRef)
 }
 
 func TestGetGenerationPackage_WrongState(t *testing.T) {
@@ -1624,4 +1804,146 @@ func assertDomainError(t *testing.T, err error, code string) {
 	var de *domain.Error
 	require.ErrorAs(t, err, &de, "expected domain.Error, got %T: %v", err, err)
 	assert.Equal(t, code, de.Code)
+}
+
+// ── RunMigration (single-shot roadmap orchestration) ───────────────────────────
+
+// runSvc builds a service with the repo, repository-client, analysis-client and
+// generation enqueuer wired — the ports RunMigration drives across states.
+func runSvc(t *testing.T) (*application.Service, *mocks.MockMigrationRepository, *mocks.MockRepositoryClient, *mocks.MockAnalysisClient, *mocks.MockGenerationJobEnqueuer) {
+	t.Helper()
+	repo := &mocks.MockMigrationRepository{}
+	tx := &mocks.MockTransactionManager{}
+	repoClient := &mocks.MockRepositoryClient{}
+	analysis := &mocks.MockAnalysisClient{}
+	enqueuer := &mocks.MockGenerationJobEnqueuer{}
+	tx.On("WithTransaction", mock.Anything, mock.Anything).Return(nil)
+	svc := application.NewService(repo, tx, nil, repoClient, analysis, nil, enqueuer, nil, nil, nil, nil, nil, nil, nil, "")
+	return svc, repo, repoClient, analysis, enqueuer
+}
+
+func TestRunMigration_FromPending_SetsAutoApproveAndStarts(t *testing.T) {
+	svc, repo, repoClient, analysis, _ := runSvc(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{Identifier: 7, RepositoryId: 42, State: domain.MigrationStatePending}, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(nil)
+	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateAnalyzing).Return(nil)
+	analysis.On("RunAnalysis", mock.Anything, uint64(42), uint64(7), uint64(0), "", "").Return(nil)
+
+	out, err := svc.RunMigration(context.Background(), 7, nil)
+	require.NoError(t, err)
+	assert.Equal(t, domain.MigrationStateAnalyzing, out.GetState())
+	assert.True(t, out.GetAutoApprove())
+	repo.AssertCalled(t, "SetAutoApprove", mock.Anything, uint64(7), true)
+}
+
+func TestRunMigration_FromDesigning_ArmsAutoApproveOnly(t *testing.T) {
+	svc, repo, _, _, _ := runSvc(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{Identifier: 7, State: domain.MigrationStateDesigning}, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+
+	out, err := svc.RunMigration(context.Background(), 7, nil)
+	require.NoError(t, err)
+	// Still DESIGNING — the worker auto-approves when AWAITING_APPROVAL is reached.
+	assert.Equal(t, domain.MigrationStateDesigning, out.GetState())
+	assert.True(t, out.GetAutoApprove())
+	// No StartMigration side effects.
+	repo.AssertNotCalled(t, "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRunMigration_FromAwaitingApproval_ApprovesImmediately(t *testing.T) {
+	svc, repo, _, _, enqueuer := runSvc(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{Identifier: 7, State: domain.MigrationStateAwaitingApproval}, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateGenerating).Return(nil)
+	enqueuer.On("EnqueueGeneration", mock.Anything, uint64(7), mock.Anything).Return(nil)
+
+	out, err := svc.RunMigration(context.Background(), 7, nil)
+	require.NoError(t, err)
+	assert.Equal(t, domain.MigrationStateGenerating, out.GetState())
+	enqueuer.AssertCalled(t, "EnqueueGeneration", mock.Anything, uint64(7), mock.Anything)
+}
+
+func TestRunMigration_FromAwaitingApproval_ServiceFilterForwarded(t *testing.T) {
+	svc, repo, _, _, enqueuer := runSvc(t)
+	filter := []string{"articles", "users"}
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{Identifier: 7, State: domain.MigrationStateAwaitingApproval}, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+	repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateGenerating).Return(nil)
+	enqueuer.On("EnqueueGeneration", mock.Anything, uint64(7), filter).Return(nil)
+
+	_, err := svc.RunMigration(context.Background(), 7, filter)
+	require.NoError(t, err)
+	enqueuer.AssertCalled(t, "EnqueueGeneration", mock.Anything, uint64(7), filter)
+}
+
+func TestRunMigration_Gate_NOT_MIGRABLE_Blocked(t *testing.T) {
+	svc, repo, _, _, _ := runSvc(t)
+	m := &domain.Migration{
+		Identifier:            7,
+		State:                 domain.MigrationStateAwaitingApproval,
+		MigrabilityAssessment: &commonv1.MigrabilityAssessment{Verdict: domain.MigrabilityVerdictNotMigrable},
+		MigrabilityOverride:   false,
+	}
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+
+	// The one-shot run must NOT bypass the migrability gate: it still blocks.
+	_, err := svc.RunMigration(context.Background(), 7, nil)
+	assertDomainError(t, err, domain.ErrCodeNotMigrableBlocked)
+	// No state advance.
+	repo.AssertNotCalled(t, "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRunMigration_NoServiceBoundaries_Blocked(t *testing.T) {
+	svc, repo, _, _, _ := runSvc(t)
+	m := &domain.Migration{
+		Identifier: 7,
+		State:      domain.MigrationStateAwaitingApproval,
+		Plan:       &migrationv1.RestructurePlan{NoServiceBoundaries: true},
+	}
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+
+	_, err := svc.RunMigration(context.Background(), 7, nil)
+	assertDomainError(t, err, domain.ErrCodeNoServiceBoundaries)
+}
+
+func TestRunMigration_FromGenerating_NoOpReassert(t *testing.T) {
+	svc, repo, _, _, _ := runSvc(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{Identifier: 7, State: domain.MigrationStateGenerating}, nil)
+	repo.On("SetAutoApprove", mock.Anything, uint64(7), true).Return(nil)
+
+	out, err := svc.RunMigration(context.Background(), 7, nil)
+	require.NoError(t, err)
+	assert.Equal(t, domain.MigrationStateGenerating, out.GetState())
+	// Already past the approval gate — no re-approval, no re-enqueue.
+	repo.AssertNotCalled(t, "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRunMigration_TerminalStates_Rejected(t *testing.T) {
+	svc, repo, _, _, _ := runSvc(t)
+	terminal := []domain.MigrationState{
+		domain.MigrationStatePushed,
+		domain.MigrationStateFailed,
+		domain.MigrationStateCancelled,
+		domain.MigrationStateRestructuringReady,
+	}
+	for _, state := range terminal {
+		repo.ExpectedCalls = nil
+		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.Migration{Identifier: 7, State: state}, nil)
+		_, err := svc.RunMigration(context.Background(), 7, nil)
+		assertDomainError(t, err, domain.ErrCodeInvalidStateTransition)
+	}
+}
+
+func TestRunMigration_MissingIdentifier_Rejected(t *testing.T) {
+	svc, _, _, _, _ := runSvc(t)
+	_, err := svc.RunMigration(context.Background(), 0, nil)
+	assertDomainError(t, err, domain.ErrCodeMissingIdentifier)
 }

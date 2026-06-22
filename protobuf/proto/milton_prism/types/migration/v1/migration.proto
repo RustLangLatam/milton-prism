@@ -48,15 +48,35 @@ enum MigrationState {
 }
 
 // TargetLanguage is the output language for the generated microservices.
+//
+// Support status per language (v1) — the generator is prompt-parametrised
+// (Camino B): adding a language is a language profile doc + generator prompt +
+// enum→profile mapping, not new templates. The status reflects how far each
+// language profile is from end-to-end certification:
+//
+//   GO     — STABLE. Certified target (Go + MongoDB + gRPC). Filled profile and
+//            generator prompt from working reference code.
+//   PYTHON — EXPERIMENTAL. Real language profile + generator prompt exist
+//            (milton-prism-python-profile.md, generator-prompt-python.md) and a
+//            hand-written reference monorepo (python/) passes its gate, but the
+//            generator path is NOT yet end-to-end certified (no containerised
+//            generation run validated). Selectable so the profile can be
+//            exercised; the UI should mark it EXPERIMENTAL.
+//   RUST   — GENERATOR HOLE. No language profile doc and no generator prompt.
+//            Enum value is registered so the selector can list it, but the
+//            generator cannot produce Rust output. UI must mark it NOT SUPPORTED.
+//   NODE   — GENERATOR HOLE. Same as Rust: no profile, no prompt, not generable.
 enum TargetLanguage {
   // Default unspecified.
   TARGET_LANGUAGE_UNSPECIFIED = 0;
-  // Go — fully supported in v1.
+  // Go — STABLE. Certified output profile (Go + MongoDB + gRPC).
   TARGET_LANGUAGE_GO = 1;
-  // Rust — profile hole; not supported in v1.
+  // Rust — GENERATOR HOLE. Registered for selection; no profile/prompt yet.
   TARGET_LANGUAGE_RUST = 2;
-  // Python — profile hole; not supported in v1.
+  // Python — EXPERIMENTAL. Real profile + generator prompt; not end-to-end certified.
   TARGET_LANGUAGE_PYTHON = 3;
+  // Node/TypeScript — GENERATOR HOLE. Registered for selection; no profile/prompt yet.
+  TARGET_LANGUAGE_NODE = 4;
 }
 
 // TargetDatabase is the storage engine for the generated microservices.
@@ -81,6 +101,25 @@ enum Transport {
   TRANSPORT_HTTP = 2;
   // NATS messaging — out of scope for v1.
   TRANSPORT_NATS = 3;
+}
+
+// TargetTopology is the architectural shape of the generated output.
+//
+// MICROSERVICES (default): the decomposition engine partitions the monolith
+// into N services that communicate over the inter_service_transport and are
+// fronted by an HTTP/gRPC API gateway (the single entry point).
+//
+// MONOLITH: the plan is NOT partitioned — every domain module is grouped into a
+// single service that exposes HTTP natively and is itself the entry point, with
+// NO separate API gateway. A monolith-to-monolith modernisation: the output
+// keeps a single-process topology but is regenerated on the target stack.
+enum TargetTopology {
+  // Default — treated as MICROSERVICES so existing flows are unaffected.
+  TARGET_TOPOLOGY_UNSPECIFIED = 0;
+  // Decompose into N microservices behind an API gateway (current/default).
+  TARGET_TOPOLOGY_MICROSERVICES = 1;
+  // Generate a single HTTP-native service with no API gateway.
+  TARGET_TOPOLOGY_MONOLITH = 2;
 }
 
 // OutputTarget controls where migration output is pushed.
@@ -263,6 +302,31 @@ message Migration {
       example: {yaml: "0"}
     }
   ];
+
+  // auto_approve records that the whole roadmap is being executed in a single
+  // shot from the platform (RunMigration). When true, the design plan is
+  // approved automatically the moment decomposition reaches AWAITING_APPROVAL,
+  // so the pipeline flows analysis → design → generation without a human
+  // approval click. The human gate that is NEVER lifted is the final publish
+  // (git push): the run stops at READY/FAILED, never auto-pushing. The
+  // migrability gate still applies — a NOT_MIGRABLE verdict without an override
+  // blocks the auto-approval, exactly as a manual ApproveDesign would.
+  bool auto_approve = 22 [(openapi.v3.property) = {
+    description: "When true, the design plan is auto-approved on reaching AWAITING_APPROVAL so the full roadmap runs end-to-end (stops before the human-gated publish). Set by RunMigration."
+    example: {yaml: "false"}
+  }];
+
+  // Optional repository-relative subdirectory to scope the analysis to.
+  // Use this for monorepos where only one directory (e.g. "backend",
+  // "services/api") holds the codebase to migrate. Empty (the default) means
+  // the whole repository root is analysed — fully backward compatible.
+  // The path is relative to the clone root, forward-slash separated, and must
+  // stay inside the repository (no leading "/", no ".." traversal); an invalid
+  // value is rejected at migration creation.
+  string root_subdirectory = 23 [(openapi.v3.property) = {
+    description: "Optional repository-relative subdirectory to scope the analysis to (monorepos). Empty means the whole repository root. Forward-slash separated, must stay inside the repo (no leading slash, no '..')."
+    example: {yaml: "backend"}
+  }];
 }
 
 // TargetConfig specifies the desired output stack for the generated microservices.
@@ -276,7 +340,7 @@ message TargetConfig {
   TargetLanguage language = 1 [
     (google.api.field_behavior) = REQUIRED,
     (openapi.v3.property) = {
-      description: "Output language. Only TARGET_LANGUAGE_GO is supported in v1."
+      description: "Output language. GO is the only certified target in v1. PYTHON is experimental (profile + generator prompt exist, not end-to-end certified). RUST and NODE are registered for selection but are generator holes (no profile/prompt; not generable). See the TargetLanguage enum for per-language status."
       example: {yaml: "TARGET_LANGUAGE_GO"}
     }
   ];
@@ -297,9 +361,23 @@ message TargetConfig {
   }];
 
   // When true, the generated stack is exposed through an API gateway.
+  // Ignored when topology is TARGET_TOPOLOGY_MONOLITH (a monolith is HTTP-native
+  // and is its own entry point — no gateway is generated regardless of this flag).
   bool use_api_gateway = 4 [(openapi.v3.property) = {
-    description: "Wrap generated services with an HTTP/gRPC gateway."
+    description: "Wrap generated services with an HTTP/gRPC gateway. Ignored for MONOLITH topology."
     example: {yaml: "true"}
+  }];
+
+  // Architectural target of the generated output. Selected when the migration is
+  // created. Defaults to MICROSERVICES (TARGET_TOPOLOGY_UNSPECIFIED is treated as
+  // MICROSERVICES) so existing migrations and the default flow are unaffected.
+  //
+  // MONOLITH instructs the decomposition engine to emit a single-service plan
+  // (one service owning every domain module) and the generator to produce an
+  // HTTP-native service with no API gateway.
+  TargetTopology topology = 5 [(openapi.v3.property) = {
+    description: "Architectural target: MICROSERVICES (default, decompose + gateway) or MONOLITH (single HTTP-native service, no gateway)."
+    example: {yaml: "TARGET_TOPOLOGY_MICROSERVICES"}
   }];
 }
 

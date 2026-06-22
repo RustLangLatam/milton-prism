@@ -18,7 +18,7 @@ func NewNoOpJobEnqueuer() *NoOpJobEnqueuer {
 }
 
 // EnqueueAnalysis logs the intent and returns nil without dispatching a job.
-func (e *NoOpJobEnqueuer) EnqueueAnalysis(_ context.Context, summaryID, repositoryID, migrationID uint64, _, _ string) error {
+func (e *NoOpJobEnqueuer) EnqueueAnalysis(_ context.Context, summaryID, repositoryID, migrationID uint64, _, _, _ string) error {
 	applog.Infof("analysis: job enqueued (stub): summary_id=%d repository_id=%d migration_id=%d", summaryID, repositoryID, migrationID)
 	return nil
 }

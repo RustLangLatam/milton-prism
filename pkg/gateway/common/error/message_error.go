@@ -16,6 +16,7 @@ type ErrorMessage struct {
 	Detail string `json:"detail,omitempty"` // Human-readable error message
 	Status int    `json:"status,omitempty"` // HTTP status code
 	Title  string `json:"title,omitempty"`  // Short, human-readable error title
+	Code   string `json:"code,omitempty"`   // Domain error code (e.g. MIG107, ANL301) for client-side handling
 }
 
 // Error returns the JSON representation of the ErrorMessage.
@@ -42,11 +43,41 @@ func HandlerErrorMessage(st status.Status) ErrorMessage {
 		message = customMsg
 	}
 
+	// Surface the domain error code (e.g. MIG107, ANL301) to the client so the
+	// panel can branch/localize on it. Only when a real "CODE: message" prefix was
+	// present and parts[0] looks like a domain code (avoids leaking arbitrary text
+	// from gRPC errors that merely happen to contain ": ").
+	emittedCode := ""
+	if len(parts) > 1 && looksLikeErrorCode(code) {
+		emittedCode = code
+	}
+
 	return ErrorMessage{
 		Detail: message,
 		Status: statusCode,
 		Title:  st.Code().String(),
+		Code:   emittedCode,
 	}
+}
+
+// looksLikeErrorCode reports whether s matches the domain error-code convention
+// (2–5 uppercase letters followed by 2–4 digits, e.g. MIG107, ANL301, MIG222).
+func looksLikeErrorCode(s string) bool {
+	i := 0
+	for i < len(s) && s[i] >= 'A' && s[i] <= 'Z' {
+		i++
+	}
+	if i < 2 || i > 5 || i == len(s) {
+		return false
+	}
+	digits := 0
+	for ; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+		digits++
+	}
+	return digits >= 2 && digits <= 4
 }
 
 // formatErrorMessage converts Failure_X_Y style messages into readable form.
@@ -91,6 +122,7 @@ func lookupErrorMessage(code string) (string, bool) {
 		migrationErrorMessages,
 		analysisErrorMessages,
 		articlesErrorMessages,
+		billingErrorMessages,
 	}
 	for _, m := range maps {
 		if msg, ok := m[code]; ok {

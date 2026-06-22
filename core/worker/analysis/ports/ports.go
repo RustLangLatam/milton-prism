@@ -110,6 +110,12 @@ type SummaryWriter interface {
 	// and records the human-readable failure reason. Called on the final Asynq
 	// retry for both standalone and migration-linked analyses.
 	MarkAnalysisFailed(ctx context.Context, summaryID uint64, reason string) error
+	// MarkAwaitingRootSelection transitions the AnalysisSummary from RUNNING to
+	// AWAITING_ROOT_SELECTION and persists the detected candidate roots. Called
+	// when a monorepo has multiple distinct project roots and none was chosen:
+	// the heavy pipeline is skipped and the user must pick one via SelectRoot.
+	// Idempotent (guarded on RUNNING state) and must NOT advance the migration.
+	MarkAwaitingRootSelection(ctx context.Context, summaryID uint64, candidates []string) error
 	// FindCompletedForBranch returns the most recent COMPLETED AnalysisSummary
 	// for the given repository and branch, or nil when none exists.
 	// Used by the dedup check before deciding whether to re-analyse.
@@ -134,8 +140,10 @@ type ModuleClassifier interface {
 // pipeline completes and the migration advances to DESIGNING.
 // remoteURL and defaultBranch are forwarded so the decomposition worker
 // can re-acquire the source workspace for contract derivation (stage 5).
+// rootSubdirectory carries the monorepo scope so stage 5 walks the same
+// subdirectory the analysis did; empty means the whole repository root.
 type DecomposeJobEnqueuer interface {
-	EnqueueDecompose(ctx context.Context, migrationID, summaryID uint64, remoteURL, defaultBranch string) error
+	EnqueueDecompose(ctx context.Context, migrationID, summaryID uint64, remoteURL, defaultBranch, rootSubdirectory string) error
 }
 
 // RepositoryCredentialReader returns the stored git credential (a PAT or

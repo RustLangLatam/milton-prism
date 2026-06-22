@@ -43,3 +43,11 @@ host        = "analysis-services"
 port        = 50051
 enabled     = true
 healthCheck = false
+
+# billing is co-located on the analysis service's gRPC server (same endpoint).
+[[grpcServices]]
+name        = "billing"
+host        = "analysis-services"
+port        = 50051
+enabled     = true
+healthCheck = false

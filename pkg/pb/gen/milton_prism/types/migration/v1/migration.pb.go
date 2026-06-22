@@ -117,17 +117,37 @@ func (MigrationState) EnumDescriptor() ([]byte, []int) {
 }
 
 // TargetLanguage is the output language for the generated microservices.
+//
+// Support status per language (v1) — the generator is prompt-parametrised
+// (Camino B): adding a language is a language profile doc + generator prompt +
+// enum→profile mapping, not new templates. The status reflects how far each
+// language profile is from end-to-end certification:
+//
+//	GO     — STABLE. Certified target (Go + MongoDB + gRPC). Filled profile and
+//	         generator prompt from working reference code.
+//	PYTHON — EXPERIMENTAL. Real language profile + generator prompt exist
+//	         (milton-prism-python-profile.md, generator-prompt-python.md) and a
+//	         hand-written reference monorepo (python/) passes its gate, but the
+//	         generator path is NOT yet end-to-end certified (no containerised
+//	         generation run validated). Selectable so the profile can be
+//	         exercised; the UI should mark it EXPERIMENTAL.
+//	RUST   — GENERATOR HOLE. No language profile doc and no generator prompt.
+//	         Enum value is registered so the selector can list it, but the
+//	         generator cannot produce Rust output. UI must mark it NOT SUPPORTED.
+//	NODE   — GENERATOR HOLE. Same as Rust: no profile, no prompt, not generable.
 type TargetLanguage int32
 
 const (
 	// Default unspecified.
 	TargetLanguage_TARGET_LANGUAGE_UNSPECIFIED TargetLanguage = 0
-	// Go — fully supported in v1.
+	// Go — STABLE. Certified output profile (Go + MongoDB + gRPC).
 	TargetLanguage_TARGET_LANGUAGE_GO TargetLanguage = 1
-	// Rust — profile hole; not supported in v1.
+	// Rust — GENERATOR HOLE. Registered for selection; no profile/prompt yet.
 	TargetLanguage_TARGET_LANGUAGE_RUST TargetLanguage = 2
-	// Python — profile hole; not supported in v1.
+	// Python — EXPERIMENTAL. Real profile + generator prompt; not end-to-end certified.
 	TargetLanguage_TARGET_LANGUAGE_PYTHON TargetLanguage = 3
+	// Node/TypeScript — GENERATOR HOLE. Registered for selection; no profile/prompt yet.
+	TargetLanguage_TARGET_LANGUAGE_NODE TargetLanguage = 4
 )
 
 // Enum value maps for TargetLanguage.
@@ -137,12 +157,14 @@ var (
 		1: "TARGET_LANGUAGE_GO",
 		2: "TARGET_LANGUAGE_RUST",
 		3: "TARGET_LANGUAGE_PYTHON",
+		4: "TARGET_LANGUAGE_NODE",
 	}
 	TargetLanguage_value = map[string]int32{
 		"TARGET_LANGUAGE_UNSPECIFIED": 0,
 		"TARGET_LANGUAGE_GO":          1,
 		"TARGET_LANGUAGE_RUST":        2,
 		"TARGET_LANGUAGE_PYTHON":      3,
+		"TARGET_LANGUAGE_NODE":        4,
 	}
 )
 
@@ -287,6 +309,68 @@ func (Transport) EnumDescriptor() ([]byte, []int) {
 	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{3}
 }
 
+// TargetTopology is the architectural shape of the generated output.
+//
+// MICROSERVICES (default): the decomposition engine partitions the monolith
+// into N services that communicate over the inter_service_transport and are
+// fronted by an HTTP/gRPC API gateway (the single entry point).
+//
+// MONOLITH: the plan is NOT partitioned — every domain module is grouped into a
+// single service that exposes HTTP natively and is itself the entry point, with
+// NO separate API gateway. A monolith-to-monolith modernisation: the output
+// keeps a single-process topology but is regenerated on the target stack.
+type TargetTopology int32
+
+const (
+	// Default — treated as MICROSERVICES so existing flows are unaffected.
+	TargetTopology_TARGET_TOPOLOGY_UNSPECIFIED TargetTopology = 0
+	// Decompose into N microservices behind an API gateway (current/default).
+	TargetTopology_TARGET_TOPOLOGY_MICROSERVICES TargetTopology = 1
+	// Generate a single HTTP-native service with no API gateway.
+	TargetTopology_TARGET_TOPOLOGY_MONOLITH TargetTopology = 2
+)
+
+// Enum value maps for TargetTopology.
+var (
+	TargetTopology_name = map[int32]string{
+		0: "TARGET_TOPOLOGY_UNSPECIFIED",
+		1: "TARGET_TOPOLOGY_MICROSERVICES",
+		2: "TARGET_TOPOLOGY_MONOLITH",
+	}
+	TargetTopology_value = map[string]int32{
+		"TARGET_TOPOLOGY_UNSPECIFIED":   0,
+		"TARGET_TOPOLOGY_MICROSERVICES": 1,
+		"TARGET_TOPOLOGY_MONOLITH":      2,
+	}
+)
+
+func (x TargetTopology) Enum() *TargetTopology {
+	p := new(TargetTopology)
+	*p = x
+	return p
+}
+
+func (x TargetTopology) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TargetTopology) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_migration_v1_migration_proto_enumTypes[4].Descriptor()
+}
+
+func (TargetTopology) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_migration_v1_migration_proto_enumTypes[4]
+}
+
+func (x TargetTopology) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TargetTopology.Descriptor instead.
+func (TargetTopology) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{4}
+}
+
 // OutputTarget controls where migration output is pushed.
 type OutputTarget int32
 
@@ -324,11 +408,11 @@ func (x OutputTarget) String() string {
 }
 
 func (OutputTarget) Descriptor() protoreflect.EnumDescriptor {
-	return file_milton_prism_types_migration_v1_migration_proto_enumTypes[4].Descriptor()
+	return file_milton_prism_types_migration_v1_migration_proto_enumTypes[5].Descriptor()
 }
 
 func (OutputTarget) Type() protoreflect.EnumType {
-	return &file_milton_prism_types_migration_v1_migration_proto_enumTypes[4]
+	return &file_milton_prism_types_migration_v1_migration_proto_enumTypes[5]
 }
 
 func (x OutputTarget) Number() protoreflect.EnumNumber {
@@ -337,7 +421,7 @@ func (x OutputTarget) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OutputTarget.Descriptor instead.
 func (OutputTarget) EnumDescriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{4}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{5}
 }
 
 // Migration is the central aggregate that drives the end-to-end migration
@@ -401,8 +485,25 @@ type Migration struct {
 	// COMPLETED analysis (same repo, same owner) instead of dispatching a new run.
 	// The migration jumps directly to DESIGNING. Write-once; absent after adoption.
 	SourceAnalysisSummaryId uint64 `protobuf:"varint,21,opt,name=source_analysis_summary_id,json=sourceAnalysisSummaryId,proto3" json:"source_analysis_summary_id,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// auto_approve records that the whole roadmap is being executed in a single
+	// shot from the platform (RunMigration). When true, the design plan is
+	// approved automatically the moment decomposition reaches AWAITING_APPROVAL,
+	// so the pipeline flows analysis → design → generation without a human
+	// approval click. The human gate that is NEVER lifted is the final publish
+	// (git push): the run stops at READY/FAILED, never auto-pushing. The
+	// migrability gate still applies — a NOT_MIGRABLE verdict without an override
+	// blocks the auto-approval, exactly as a manual ApproveDesign would.
+	AutoApprove bool `protobuf:"varint,22,opt,name=auto_approve,json=autoApprove,proto3" json:"auto_approve,omitempty"`
+	// Optional repository-relative subdirectory to scope the analysis to.
+	// Use this for monorepos where only one directory (e.g. "backend",
+	// "services/api") holds the codebase to migrate. Empty (the default) means
+	// the whole repository root is analysed — fully backward compatible.
+	// The path is relative to the clone root, forward-slash separated, and must
+	// stay inside the repository (no leading "/", no ".." traversal); an invalid
+	// value is rejected at migration creation.
+	RootSubdirectory string `protobuf:"bytes,23,opt,name=root_subdirectory,json=rootSubdirectory,proto3" json:"root_subdirectory,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Migration) Reset() {
@@ -582,6 +683,20 @@ func (x *Migration) GetSourceAnalysisSummaryId() uint64 {
 	return 0
 }
 
+func (x *Migration) GetAutoApprove() bool {
+	if x != nil {
+		return x.AutoApprove
+	}
+	return false
+}
+
+func (x *Migration) GetRootSubdirectory() string {
+	if x != nil {
+		return x.RootSubdirectory
+	}
+	return ""
+}
+
 // TargetConfig specifies the desired output stack for the generated microservices.
 type TargetConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -592,7 +707,17 @@ type TargetConfig struct {
 	// Inter-service transport for generated services. Defaults to gRPC.
 	InterServiceTransport Transport `protobuf:"varint,3,opt,name=inter_service_transport,json=interServiceTransport,proto3,enum=milton_prism.types.migration.v1.Transport" json:"inter_service_transport,omitempty"`
 	// When true, the generated stack is exposed through an API gateway.
+	// Ignored when topology is TARGET_TOPOLOGY_MONOLITH (a monolith is HTTP-native
+	// and is its own entry point — no gateway is generated regardless of this flag).
 	UseApiGateway bool `protobuf:"varint,4,opt,name=use_api_gateway,json=useApiGateway,proto3" json:"use_api_gateway,omitempty"`
+	// Architectural target of the generated output. Selected when the migration is
+	// created. Defaults to MICROSERVICES (TARGET_TOPOLOGY_UNSPECIFIED is treated as
+	// MICROSERVICES) so existing migrations and the default flow are unaffected.
+	//
+	// MONOLITH instructs the decomposition engine to emit a single-service plan
+	// (one service owning every domain module) and the generator to produce an
+	// HTTP-native service with no API gateway.
+	Topology      TargetTopology `protobuf:"varint,5,opt,name=topology,proto3,enum=milton_prism.types.migration.v1.TargetTopology" json:"topology,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -653,6 +778,13 @@ func (x *TargetConfig) GetUseApiGateway() bool {
 		return x.UseApiGateway
 	}
 	return false
+}
+
+func (x *TargetConfig) GetTopology() TargetTopology {
+	if x != nil {
+		return x.Topology
+	}
+	return TargetTopology_TARGET_TOPOLOGY_UNSPECIFIED
 }
 
 // RestructurePlan is the design engine's proposed decomposition of the monolith.
@@ -2365,7 +2497,7 @@ var File_milton_prism_types_migration_v1_migration_proto protoreflect.FileDescri
 
 const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\n" +
-	"/milton_prism/types/migration/v1/migration.proto\x12\x1fmilton_prism.types.migration.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xca\x18\n" +
+	"/milton_prism/types/migration/v1/migration.proto\x12\x1fmilton_prism.types.migration.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xb6\x1c\n" +
 	"\tMigration\x12P\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B0\xe0A\b\xbaG*:\x03\x12\x017\x92\x02\"System-assigned unique identifier.R\n" +
@@ -2394,14 +2526,17 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x14migrability_override\x18\x12 \x01(\bBZ\xbaGW:\a\x12\x05false\x92\x02KWhen true, overrides a NOT_MIGRABLE block and allows generation to proceed.R\x13migrabilityOverride\x12}\n" +
 	"\x0fanalysis_reused\x18\x13 \x01(\bBT\xe0A\x03\xbaGN:\a\x12\x05false\x92\x02BTrue when analysis was reused from a prior run on the same commit.R\x0eanalysisReused\x12\xeb\x01\n" +
 	"\x15restructuring_roadmap\x18\x14 \x01(\v25.milton_prism.types.migration.v1.RestructuringRoadmapB\x7f\xe0A\x03\xbaGy\x92\x02vRestructuring roadmap for NOT_MIGRABLE or no-boundary migrations. Absent until GenerateRestructuringRoadmap is called.R\x14restructuringRoadmap\x12\xdd\x01\n" +
-	"\x1asource_analysis_summary_id\x18\x15 \x01(\x04B\x9f\x01\xe0A\x04\xbaG\x98\x01:\x03\x12\x010\x92\x02\x8f\x01Optional: identifier of a completed AnalysisSummary to reuse. When set, StartMigration skips re-analysis and transitions directly to DESIGNING.R\x17sourceAnalysisSummaryId:O\xbaGLJ\tMigration\x92\x02>A migration run that decomposes a monolith into microservices.B\x0e\n" +
+	"\x1asource_analysis_summary_id\x18\x15 \x01(\x04B\x9f\x01\xe0A\x04\xbaG\x98\x01:\x03\x12\x010\x92\x02\x8f\x01Optional: identifier of a completed AnalysisSummary to reuse. When set, StartMigration skips re-analysis and transitions directly to DESIGNING.R\x17sourceAnalysisSummaryId\x12\xdf\x01\n" +
+	"\fauto_approve\x18\x16 \x01(\bB\xbb\x01\xbaG\xb7\x01:\a\x12\x05false\x92\x02\xaa\x01When true, the design plan is auto-approved on reaching AWAITING_APPROVAL so the full roadmap runs end-to-end (stops before the human-gated publish). Set by RunMigration.R\vautoApprove\x12\x87\x02\n" +
+	"\x11root_subdirectory\x18\x17 \x01(\tB\xd9\x01\xbaG\xd5\x01:\t\x12\abackend\x92\x02\xc6\x01Optional repository-relative subdirectory to scope the analysis to (monorepos). Empty means the whole repository root. Forward-slash separated, must stay inside the repo (no leading slash, no '..').R\x10rootSubdirectory:O\xbaGLJ\tMigration\x92\x02>A migration run that decomposes a monolith into microservices.B\x0e\n" +
 	"\f_delete_timeB\r\n" +
-	"\v_purge_time\"\xfc\x05\n" +
-	"\fTargetConfig\x12\xa8\x01\n" +
-	"\blanguage\x18\x01 \x01(\x0e2/.milton_prism.types.migration.v1.TargetLanguageB[\xe0A\x02\xbaGU:\x14\x12\x12TARGET_LANGUAGE_GO\x92\x02<Output language. Only TARGET_LANGUAGE_GO is supported in v1.R\blanguage\x12\xb1\x01\n" +
+	"\v_purge_time\"\xfc\t\n" +
+	"\fTargetConfig\x12\x97\x03\n" +
+	"\blanguage\x18\x01 \x01(\x0e2/.milton_prism.types.migration.v1.TargetLanguageB\xc9\x02\xe0A\x02\xbaG\xc2\x02:\x14\x12\x12TARGET_LANGUAGE_GO\x92\x02\xa8\x02Output language. GO is the only certified target in v1. PYTHON is experimental (profile + generator prompt exist, not end-to-end certified). RUST and NODE are registered for selection but are generator holes (no profile/prompt; not generable). See the TargetLanguage enum for per-language status.R\blanguage\x12\xb1\x01\n" +
 	"\bdatabase\x18\x02 \x01(\x0e2/.milton_prism.types.migration.v1.TargetDatabaseBd\xe0A\x02\xbaG^:\x19\x12\x17TARGET_DATABASE_MONGODB\x92\x02@Storage engine. Only TARGET_DATABASE_MONGODB is supported in v1.R\bdatabase\x12\xce\x01\n" +
-	"\x17inter_service_transport\x18\x03 \x01(\x0e2*.milton_prism.types.migration.v1.TransportBj\xbaGg:\x10\x12\x0eTRANSPORT_GRPC\x92\x02RInter-service transport. Defaults to TRANSPORT_GRPC (only supported option in v1).R\x15interServiceTransport\x12h\n" +
-	"\x0fuse_api_gateway\x18\x04 \x01(\bB@\xbaG=:\x06\x12\x04true\x92\x022Wrap generated services with an HTTP/gRPC gateway.R\ruseApiGateway:R\xbaGOJ\fTargetConfig\x92\x02>Target stack: language, database, and inter-service transport.\"\xd7\x0e\n" +
+	"\x17inter_service_transport\x18\x03 \x01(\x0e2*.milton_prism.types.migration.v1.TransportBj\xbaGg:\x10\x12\x0eTRANSPORT_GRPC\x92\x02RInter-service transport. Defaults to TRANSPORT_GRPC (only supported option in v1).R\x15interServiceTransport\x12\x87\x01\n" +
+	"\x0fuse_api_gateway\x18\x04 \x01(\bB_\xbaG\\:\x06\x12\x04true\x92\x02QWrap generated services with an HTTP/gRPC gateway. Ignored for MONOLITH topology.R\ruseApiGateway\x12\xee\x01\n" +
+	"\btopology\x18\x05 \x01(\x0e2/.milton_prism.types.migration.v1.TargetTopologyB\xa0\x01\xbaG\x9c\x01:\x1f\x12\x1dTARGET_TOPOLOGY_MICROSERVICES\x92\x02xArchitectural target: MICROSERVICES (default, decompose + gateway) or MONOLITH (single HTTP-native service, no gateway).R\btopology:R\xbaGOJ\fTargetConfig\x92\x02>Target stack: language, database, and inter-service transport.\"\xd7\x0e\n" +
 	"\x0fRestructurePlan\x12\x80\x01\n" +
 	"\bservices\x18\x01 \x03(\v20.milton_prism.types.migration.v1.ProposedServiceB2\xbaG/\x92\x02,Proposed microservices in the decomposition.R\bservices\x12\xb4\x01\n" +
 	"\trationale\x18\x02 \x01(\tB\x95\x01\xbaG\x91\x01:P\x12NOrders and inventory are decoupled by domain and have different scaling needs.\x92\x02<Design rationale explaining the proposed service boundaries.R\trationale\x12\xe7\x01\n" +
@@ -2554,12 +2689,13 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x16MIGRATION_STATE_FAILED\x10\t\x12\x1d\n" +
 	"\x19MIGRATION_STATE_CANCELLED\x10\n" +
 	"\x12'\n" +
-	"#MIGRATION_STATE_RESTRUCTURING_READY\x10\v*\x7f\n" +
+	"#MIGRATION_STATE_RESTRUCTURING_READY\x10\v*\x99\x01\n" +
 	"\x0eTargetLanguage\x12\x1f\n" +
 	"\x1bTARGET_LANGUAGE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12TARGET_LANGUAGE_GO\x10\x01\x12\x18\n" +
 	"\x14TARGET_LANGUAGE_RUST\x10\x02\x12\x1a\n" +
-	"\x16TARGET_LANGUAGE_PYTHON\x10\x03*\x89\x01\n" +
+	"\x16TARGET_LANGUAGE_PYTHON\x10\x03\x12\x18\n" +
+	"\x14TARGET_LANGUAGE_NODE\x10\x04*\x89\x01\n" +
 	"\x0eTargetDatabase\x12\x1f\n" +
 	"\x1bTARGET_DATABASE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TARGET_DATABASE_MONGODB\x10\x01\x12\x1c\n" +
@@ -2569,7 +2705,11 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x15TRANSPORT_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eTRANSPORT_GRPC\x10\x01\x12\x12\n" +
 	"\x0eTRANSPORT_HTTP\x10\x02\x12\x12\n" +
-	"\x0eTRANSPORT_NATS\x10\x03*m\n" +
+	"\x0eTRANSPORT_NATS\x10\x03*r\n" +
+	"\x0eTargetTopology\x12\x1f\n" +
+	"\x1bTARGET_TOPOLOGY_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dTARGET_TOPOLOGY_MICROSERVICES\x10\x01\x12\x1c\n" +
+	"\x18TARGET_TOPOLOGY_MONOLITH\x10\x02*m\n" +
 	"\fOutputTarget\x12\x1d\n" +
 	"\x19OUTPUT_TARGET_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18OUTPUT_TARGET_NEW_BRANCH\x10\x01\x12 \n" +
@@ -2588,80 +2728,82 @@ func file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP() []byte {
 	return file_milton_prism_types_migration_v1_migration_proto_rawDescData
 }
 
-var file_milton_prism_types_migration_v1_migration_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_milton_prism_types_migration_v1_migration_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
 var file_milton_prism_types_migration_v1_migration_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_milton_prism_types_migration_v1_migration_proto_goTypes = []any{
 	(MigrationState)(0),                // 0: milton_prism.types.migration.v1.MigrationState
 	(TargetLanguage)(0),                // 1: milton_prism.types.migration.v1.TargetLanguage
 	(TargetDatabase)(0),                // 2: milton_prism.types.migration.v1.TargetDatabase
 	(Transport)(0),                     // 3: milton_prism.types.migration.v1.Transport
-	(OutputTarget)(0),                  // 4: milton_prism.types.migration.v1.OutputTarget
-	(*Migration)(nil),                  // 5: milton_prism.types.migration.v1.Migration
-	(*TargetConfig)(nil),               // 6: milton_prism.types.migration.v1.TargetConfig
-	(*RestructurePlan)(nil),            // 7: milton_prism.types.migration.v1.RestructurePlan
-	(*CandidateGrouping)(nil),          // 8: milton_prism.types.migration.v1.CandidateGrouping
-	(*RestructureRecommendation)(nil),  // 9: milton_prism.types.migration.v1.RestructureRecommendation
-	(*ProposedService)(nil),            // 10: milton_prism.types.migration.v1.ProposedService
-	(*CrossServiceFk)(nil),             // 11: milton_prism.types.migration.v1.CrossServiceFk
-	(*OperationalCoupling)(nil),        // 12: milton_prism.types.migration.v1.OperationalCoupling
-	(*MigrationOutput)(nil),            // 13: milton_prism.types.migration.v1.MigrationOutput
-	(*ServiceGenerationRecord)(nil),    // 14: milton_prism.types.migration.v1.ServiceGenerationRecord
-	(*FileArtifact)(nil),               // 15: milton_prism.types.migration.v1.FileArtifact
-	(*ServiceGenerationArtifacts)(nil), // 16: milton_prism.types.migration.v1.ServiceGenerationArtifacts
-	(*ServiceGenerationSpec)(nil),      // 17: milton_prism.types.migration.v1.ServiceGenerationSpec
-	(*GenerationPackage)(nil),          // 18: milton_prism.types.migration.v1.GenerationPackage
-	(*RoadmapDiagnosis)(nil),           // 19: milton_prism.types.migration.v1.RoadmapDiagnosis
-	(*StructuralProblem)(nil),          // 20: milton_prism.types.migration.v1.StructuralProblem
-	(*ActionItem)(nil),                 // 21: milton_prism.types.migration.v1.ActionItem
-	(*EnrichedStep)(nil),               // 22: milton_prism.types.migration.v1.EnrichedStep
-	(*RoadmapEnrichment)(nil),          // 23: milton_prism.types.migration.v1.RoadmapEnrichment
-	(*RestructuringRoadmap)(nil),       // 24: milton_prism.types.migration.v1.RestructuringRoadmap
-	(*BlueprintService)(nil),           // 25: milton_prism.types.migration.v1.BlueprintService
-	(*ServiceBlueprint)(nil),           // 26: milton_prism.types.migration.v1.ServiceBlueprint
-	(*MigrationsFilter)(nil),           // 27: milton_prism.types.migration.v1.MigrationsFilter
-	(*timestamppb.Timestamp)(nil),      // 28: google.protobuf.Timestamp
-	(*v1.MigrabilityAssessment)(nil),   // 29: milton_prism.types.common.v1.MigrabilityAssessment
+	(TargetTopology)(0),                // 4: milton_prism.types.migration.v1.TargetTopology
+	(OutputTarget)(0),                  // 5: milton_prism.types.migration.v1.OutputTarget
+	(*Migration)(nil),                  // 6: milton_prism.types.migration.v1.Migration
+	(*TargetConfig)(nil),               // 7: milton_prism.types.migration.v1.TargetConfig
+	(*RestructurePlan)(nil),            // 8: milton_prism.types.migration.v1.RestructurePlan
+	(*CandidateGrouping)(nil),          // 9: milton_prism.types.migration.v1.CandidateGrouping
+	(*RestructureRecommendation)(nil),  // 10: milton_prism.types.migration.v1.RestructureRecommendation
+	(*ProposedService)(nil),            // 11: milton_prism.types.migration.v1.ProposedService
+	(*CrossServiceFk)(nil),             // 12: milton_prism.types.migration.v1.CrossServiceFk
+	(*OperationalCoupling)(nil),        // 13: milton_prism.types.migration.v1.OperationalCoupling
+	(*MigrationOutput)(nil),            // 14: milton_prism.types.migration.v1.MigrationOutput
+	(*ServiceGenerationRecord)(nil),    // 15: milton_prism.types.migration.v1.ServiceGenerationRecord
+	(*FileArtifact)(nil),               // 16: milton_prism.types.migration.v1.FileArtifact
+	(*ServiceGenerationArtifacts)(nil), // 17: milton_prism.types.migration.v1.ServiceGenerationArtifacts
+	(*ServiceGenerationSpec)(nil),      // 18: milton_prism.types.migration.v1.ServiceGenerationSpec
+	(*GenerationPackage)(nil),          // 19: milton_prism.types.migration.v1.GenerationPackage
+	(*RoadmapDiagnosis)(nil),           // 20: milton_prism.types.migration.v1.RoadmapDiagnosis
+	(*StructuralProblem)(nil),          // 21: milton_prism.types.migration.v1.StructuralProblem
+	(*ActionItem)(nil),                 // 22: milton_prism.types.migration.v1.ActionItem
+	(*EnrichedStep)(nil),               // 23: milton_prism.types.migration.v1.EnrichedStep
+	(*RoadmapEnrichment)(nil),          // 24: milton_prism.types.migration.v1.RoadmapEnrichment
+	(*RestructuringRoadmap)(nil),       // 25: milton_prism.types.migration.v1.RestructuringRoadmap
+	(*BlueprintService)(nil),           // 26: milton_prism.types.migration.v1.BlueprintService
+	(*ServiceBlueprint)(nil),           // 27: milton_prism.types.migration.v1.ServiceBlueprint
+	(*MigrationsFilter)(nil),           // 28: milton_prism.types.migration.v1.MigrationsFilter
+	(*timestamppb.Timestamp)(nil),      // 29: google.protobuf.Timestamp
+	(*v1.MigrabilityAssessment)(nil),   // 30: milton_prism.types.common.v1.MigrabilityAssessment
 }
 var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	0,  // 0: milton_prism.types.migration.v1.Migration.state:type_name -> milton_prism.types.migration.v1.MigrationState
-	6,  // 1: milton_prism.types.migration.v1.Migration.target:type_name -> milton_prism.types.migration.v1.TargetConfig
-	7,  // 2: milton_prism.types.migration.v1.Migration.plan:type_name -> milton_prism.types.migration.v1.RestructurePlan
-	13, // 3: milton_prism.types.migration.v1.Migration.output:type_name -> milton_prism.types.migration.v1.MigrationOutput
-	14, // 4: milton_prism.types.migration.v1.Migration.generation_records:type_name -> milton_prism.types.migration.v1.ServiceGenerationRecord
-	28, // 5: milton_prism.types.migration.v1.Migration.create_time:type_name -> google.protobuf.Timestamp
-	28, // 6: milton_prism.types.migration.v1.Migration.update_time:type_name -> google.protobuf.Timestamp
-	28, // 7: milton_prism.types.migration.v1.Migration.delete_time:type_name -> google.protobuf.Timestamp
-	28, // 8: milton_prism.types.migration.v1.Migration.purge_time:type_name -> google.protobuf.Timestamp
-	29, // 9: milton_prism.types.migration.v1.Migration.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
-	24, // 10: milton_prism.types.migration.v1.Migration.restructuring_roadmap:type_name -> milton_prism.types.migration.v1.RestructuringRoadmap
+	7,  // 1: milton_prism.types.migration.v1.Migration.target:type_name -> milton_prism.types.migration.v1.TargetConfig
+	8,  // 2: milton_prism.types.migration.v1.Migration.plan:type_name -> milton_prism.types.migration.v1.RestructurePlan
+	14, // 3: milton_prism.types.migration.v1.Migration.output:type_name -> milton_prism.types.migration.v1.MigrationOutput
+	15, // 4: milton_prism.types.migration.v1.Migration.generation_records:type_name -> milton_prism.types.migration.v1.ServiceGenerationRecord
+	29, // 5: milton_prism.types.migration.v1.Migration.create_time:type_name -> google.protobuf.Timestamp
+	29, // 6: milton_prism.types.migration.v1.Migration.update_time:type_name -> google.protobuf.Timestamp
+	29, // 7: milton_prism.types.migration.v1.Migration.delete_time:type_name -> google.protobuf.Timestamp
+	29, // 8: milton_prism.types.migration.v1.Migration.purge_time:type_name -> google.protobuf.Timestamp
+	30, // 9: milton_prism.types.migration.v1.Migration.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
+	25, // 10: milton_prism.types.migration.v1.Migration.restructuring_roadmap:type_name -> milton_prism.types.migration.v1.RestructuringRoadmap
 	1,  // 11: milton_prism.types.migration.v1.TargetConfig.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
 	2,  // 12: milton_prism.types.migration.v1.TargetConfig.database:type_name -> milton_prism.types.migration.v1.TargetDatabase
 	3,  // 13: milton_prism.types.migration.v1.TargetConfig.inter_service_transport:type_name -> milton_prism.types.migration.v1.Transport
-	10, // 14: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
-	12, // 15: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
-	8,  // 16: milton_prism.types.migration.v1.RestructurePlan.candidate_groupings:type_name -> milton_prism.types.migration.v1.CandidateGrouping
-	9,  // 17: milton_prism.types.migration.v1.RestructurePlan.restructure_recommendations:type_name -> milton_prism.types.migration.v1.RestructureRecommendation
-	11, // 18: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
-	4,  // 19: milton_prism.types.migration.v1.MigrationOutput.output_target:type_name -> milton_prism.types.migration.v1.OutputTarget
-	15, // 20: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
-	17, // 21: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
-	22, // 22: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
-	28, // 23: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
-	19, // 24: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
-	20, // 25: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
-	21, // 26: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
-	28, // 27: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
-	23, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
-	26, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
-	25, // 30: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
-	28, // 31: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
-	0,  // 32: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
-	0,  // 33: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
-	34, // [34:34] is the sub-list for method output_type
-	34, // [34:34] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	4,  // 14: milton_prism.types.migration.v1.TargetConfig.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
+	11, // 15: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
+	13, // 16: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
+	9,  // 17: milton_prism.types.migration.v1.RestructurePlan.candidate_groupings:type_name -> milton_prism.types.migration.v1.CandidateGrouping
+	10, // 18: milton_prism.types.migration.v1.RestructurePlan.restructure_recommendations:type_name -> milton_prism.types.migration.v1.RestructureRecommendation
+	12, // 19: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
+	5,  // 20: milton_prism.types.migration.v1.MigrationOutput.output_target:type_name -> milton_prism.types.migration.v1.OutputTarget
+	16, // 21: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
+	18, // 22: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
+	23, // 23: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
+	29, // 24: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
+	20, // 25: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
+	21, // 26: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
+	22, // 27: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
+	29, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
+	24, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
+	27, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
+	26, // 31: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
+	29, // 32: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
+	0,  // 33: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
+	0,  // 34: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
+	35, // [35:35] is the sub-list for method output_type
+	35, // [35:35] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_milton_prism_types_migration_v1_migration_proto_init() }
@@ -2677,7 +2819,7 @@ func file_milton_prism_types_migration_v1_migration_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_types_migration_v1_migration_proto_rawDesc), len(file_milton_prism_types_migration_v1_migration_proto_rawDesc)),
-			NumEnums:      5,
+			NumEnums:      6,
 			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,

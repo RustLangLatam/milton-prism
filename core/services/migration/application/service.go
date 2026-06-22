@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	billingdomain "milton_prism/core/services/billing/domain"
 	"milton_prism/core/services/migration/domain"
 	"milton_prism/core/services/migration/ports"
 	applog "milton_prism/pkg/log"
@@ -39,7 +41,16 @@ type Service struct {
 	roadmapEnricher        ports.RoadmapEnricher
 	blueprintGenerator     ports.BlueprintGenerator
 	stackDetector          ports.StackDetector
+	billing                ports.BillingClient
 	monorepoPath           string // PRISM_MONOREPO_PATH — skeleton root for deliverable assembly
+}
+
+// WithBillingClient wires the billing client used for per-month migration quota
+// enforcement. When nil, no quota check is performed (enforcement is a no-op) so
+// the service degrades open if billing is unavailable.
+func (s *Service) WithBillingClient(b ports.BillingClient) *Service {
+	s.billing = b
+	return s
 }
 
 // NewService wires port implementations into the application service.
@@ -96,6 +107,27 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 		m.GetTarget().GetDatabase() == domain.TargetDatabaseUnspecified {
 		return nil, domain.ErrInvalidTargetConfig
 	}
+	// Reject target languages without a real generator profile (Node/Rust are enum
+	// values but generator holes). Without this guard CreateMigration would accept
+	// them and the generation step would silently fall back to Go (outputProfileLabel
+	// defaults to "go"), producing the wrong language with no signal to the user.
+	if !domain.IsGenerableLanguage(m.GetTarget().GetLanguage()) {
+		return nil, domain.ErrUnsupportedTargetLanguage
+	}
+	// Validate and canonicalise the monorepo root subdirectory up front so a bad
+	// value is rejected at creation instead of failing the async analysis job.
+	// Empty = whole repository root (the default).
+	normalizedSubdir, subErr := domain.NormalizeRootSubdirectory(m.GetRootSubdirectory())
+	if subErr != nil {
+		return nil, subErr
+	}
+	m.RootSubdirectory = normalizedSubdir
+	// Default the architectural topology to MICROSERVICES so the persisted
+	// TargetConfig is explicit and the decomposition worker never has to infer it.
+	// UNSPECIFIED is treated as MICROSERVICES (no break to the existing flow).
+	if m.GetTarget().GetTopology() == domain.TargetTopologyUnspecified {
+		m.Target.Topology = domain.TargetTopologyMicroservices
+	}
 	if s.identity != nil {
 		if err := s.identity.ValidateUserExists(ctx, m.GetOwnerUserId()); err != nil {
 			return nil, err
@@ -108,6 +140,17 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 		}
 		m.RepositoryUrl = repoURL
 	}
+
+	// Billing quota gate (hard block, count-based, per-month). Runs after all
+	// validations and ownership/repo checks, before persisting. Unlimited (-1)
+	// plans (enterprise) are never blocked. Skipped when no billing client is
+	// wired (degrade open).
+	if s.billing != nil {
+		if qErr := s.enforceMigrationQuota(ctx, m.GetOwnerUserId()); qErr != nil {
+			return nil, qErr
+		}
+	}
+
 	m.State = domain.MigrationStatePending
 
 	var out *domain.Migration
@@ -120,6 +163,43 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 		return nil, fmt.Errorf("create migration: %w", err)
 	}
 	return out, nil
+}
+
+// enforceMigrationQuota resolves the owner's plan via the billing service and
+// rejects the operation when the migrations-per-month count limit has been
+// reached. Unlimited (-1) plans are never blocked. A plan-resolution or count
+// error degrades open (logged, not fatal) so a transient billing/store failure
+// never blocks a paying user.
+func (s *Service) enforceMigrationQuota(ctx context.Context, ownerUserID uint64) error {
+	if ownerUserID == 0 {
+		return nil
+	}
+	plan, err := s.billing.GetUserPlan(ctx, ownerUserID)
+	if err != nil {
+		applog.Warningf("migration: plan lookup failed owner_user_id=%d: %v — quota check skipped", ownerUserID, err)
+		return nil
+	}
+	limit := plan.GetMaxMigrationsPerMonth()
+	if limit == billingdomain.Unlimited {
+		return nil
+	}
+	since := startOfMonthUTC(time.Now())
+	count, err := s.repo.CountByOwnerSince(ctx, ownerUserID, since)
+	if err != nil {
+		applog.Warningf("migration: quota count failed owner_user_id=%d: %v — quota check skipped", ownerUserID, err)
+		return nil
+	}
+	if count >= limit {
+		applog.Infof("migration: plan limit reached owner_user_id=%d count=%d limit=%d", ownerUserID, count, limit)
+		return domain.NewErrPlanLimitExceeded(limit)
+	}
+	return nil
+}
+
+// startOfMonthUTC returns the first instant of the current calendar month in UTC.
+func startOfMonthUTC(now time.Time) time.Time {
+	u := now.UTC()
+	return time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // GetMigration fetches a migration by identifier. For GENERATING, READY, and
@@ -281,7 +361,7 @@ func (s *Service) startNormal(ctx context.Context, m *domain.Migration) (*domain
 		return nil, err
 	}
 	if s.analysis != nil {
-		if dispatchErr := s.analysis.RunAnalysis(ctx, m.GetRepositoryId(), m.GetIdentifier(), m.GetOwnerUserId(), m.GetSourceBranch()); dispatchErr != nil {
+		if dispatchErr := s.analysis.RunAnalysis(ctx, m.GetRepositoryId(), m.GetIdentifier(), m.GetOwnerUserId(), m.GetSourceBranch(), m.GetRootSubdirectory()); dispatchErr != nil {
 			applog.Errorf("migration: RunAnalysis dispatch failed migration_id=%d repository_id=%d: %v — rolling back to PENDING",
 				m.GetIdentifier(), m.GetRepositoryId(), dispatchErr)
 			_ = s.repo.UpdateState(ctx, m.GetIdentifier(), domain.MigrationStatePending)
@@ -290,6 +370,84 @@ func (s *Service) startNormal(ctx context.Context, m *domain.Migration) (*domain
 	}
 	m.State = domain.MigrationStateAnalyzing
 	return m, nil
+}
+
+// RunMigration is the single-shot orchestration trigger: it runs the full
+// restructuring roadmap end-to-end from the platform with no intermediate
+// manual steps. From the migration's current state it advances the pipeline as
+// far as it synchronously can and records an auto-approve intent so the design
+// plan is approved automatically the moment decomposition reaches
+// AWAITING_APPROVAL (honored by the decomposition worker, which owns that
+// transition). The run stops at READY/FAILED — the final publish (git push)
+// is NEVER automated; that human gate is preserved.
+//
+// State-by-state behaviour (idempotent — re-running re-asserts the intent):
+//   - PENDING            → persist auto_approve, then StartMigration (kicks off
+//     analysis → decomposition asynchronously).
+//   - ANALYZING/DESIGNING→ persist auto_approve; the worker will auto-approve
+//     when it reaches AWAITING_APPROVAL.
+//   - AWAITING_APPROVAL  → persist auto_approve, then approve immediately. The
+//     migrability gate still applies: a NOT_MIGRABLE
+//     verdict without an override returns MIG212.
+//   - GENERATING/TESTING/READY → already past the approval gate; persist the
+//     intent and return the current record (no-op advance).
+//   - terminal states (PUSHED/FAILED/CANCELLED/RESTRUCTURING_READY) → MIG202.
+func (s *Service) RunMigration(ctx context.Context, identifier uint64, serviceFilter []string) (*domain.Migration, error) {
+	if identifier == 0 {
+		return nil, domain.ErrMissingIdentifier
+	}
+	m, err := s.repo.GetByID(ctx, identifier, false)
+	if err != nil {
+		return nil, err
+	}
+
+	switch m.GetState() {
+	case domain.MigrationStatePending:
+		if err := s.repo.SetAutoApprove(ctx, identifier, true); err != nil {
+			return nil, fmt.Errorf("migration: run set auto_approve: %w", err)
+		}
+		out, startErr := s.StartMigration(ctx, identifier)
+		if startErr != nil {
+			return nil, startErr
+		}
+		out.AutoApprove = true
+		applog.Infof("migration: RunMigration started pipeline migration_id=%d (auto_approve set)", identifier)
+		return out, nil
+
+	case domain.MigrationStateAnalyzing, domain.MigrationStateDesigning:
+		if err := s.repo.SetAutoApprove(ctx, identifier, true); err != nil {
+			return nil, fmt.Errorf("migration: run set auto_approve: %w", err)
+		}
+		m.AutoApprove = true
+		applog.Infof("migration: RunMigration auto_approve armed mid-pipeline migration_id=%d state=%s", identifier, m.GetState())
+		return m, nil
+
+	case domain.MigrationStateAwaitingApproval:
+		if err := s.repo.SetAutoApprove(ctx, identifier, true); err != nil {
+			return nil, fmt.Errorf("migration: run set auto_approve: %w", err)
+		}
+		// Approve right now — the plan is already available. The migrability and
+		// no-service-boundaries gates inside ApproveDesign still apply.
+		out, approveErr := s.ApproveDesign(ctx, identifier, true, serviceFilter)
+		if approveErr != nil {
+			return nil, approveErr
+		}
+		out.AutoApprove = true
+		applog.Infof("migration: RunMigration approved plan immediately migration_id=%d → GENERATING", identifier)
+		return out, nil
+
+	case domain.MigrationStateGenerating, domain.MigrationStateTesting, domain.MigrationStateReady:
+		// Already past the approval gate; re-assert the intent and report current.
+		if err := s.repo.SetAutoApprove(ctx, identifier, true); err != nil {
+			return nil, fmt.Errorf("migration: run set auto_approve: %w", err)
+		}
+		m.AutoApprove = true
+		return m, nil
+
+	default:
+		// Terminal states (PUSHED, FAILED, CANCELLED, RESTRUCTURING_READY).
+		return nil, domain.ErrInvalidStateTransition
+	}
 }
 
 // ApproveDesign transitions a migration from AWAITING_APPROVAL. When approved
@@ -675,7 +833,7 @@ func outputProfileLabel(tc *migrationv1.TargetConfig) string {
 func generatorPromptRef(profile string) string {
 	switch profile {
 	case "python":
-		return "docs/prism/milton-prism-python-service-generator-prompt.md"
+		return "docs/prism/milton-prism-service-generator-prompt-python.md"
 	default:
 		return "docs/prism/milton-prism-service-generator-prompt.md"
 	}

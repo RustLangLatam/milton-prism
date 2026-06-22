@@ -9,6 +9,17 @@ import (
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 )
 
+// TargetTopologyLoader reads the architectural target topology selected for a
+// migration at creation time. The pipeline uses it to decide whether to emit a
+// microservices partition (default) or a single collapsed monolith plan.
+// When not wired, the pipeline defaults to MICROSERVICES (the existing flow).
+type TargetTopologyLoader interface {
+	// LoadTopology returns the migration's TargetTopology. Implementations must
+	// map an absent/unspecified value to TARGET_TOPOLOGY_MICROSERVICES so the
+	// default flow is never broken.
+	LoadTopology(ctx context.Context, migrationID uint64) (workerdomain.TargetTopology, error)
+}
+
 // GraphLoader reads the weighted dependency graph from a persisted
 // AnalysisSummary. The graph is the primary input to the decomposition pipeline.
 type GraphLoader interface {
@@ -88,6 +99,24 @@ type PlanWriter interface {
 	// a human-readable failure reason. Called when the decomposition job exhausts
 	// all Asynq retries and the failure is definitively permanent.
 	MarkFailed(ctx context.Context, migrationID uint64, reason string) error
+}
+
+// AutoApprover continues a one-shot, platform-driven roadmap run after the plan
+// reaches AWAITING_APPROVAL. The migration service's RunMigration RPC records an
+// auto_approve intent; once decomposition writes the plan and flips the state to
+// AWAITING_APPROVAL, the worker invokes MaybeAutoApprove to honor that intent
+// without a human approval click.
+//
+// The adapter MUST re-apply the same gates a manual ApproveDesign applies:
+//   - skip (do nothing) when auto_approve is not set;
+//   - skip and report when the plan has no service boundaries (nothing to
+//     generate) or the migrability verdict is NOT_MIGRABLE without an override;
+//   - otherwise advance the migration to GENERATING and enqueue generation.
+//
+// It NEVER advances past GENERATING and NEVER triggers a publish — the final git
+// push stays a human-gated step. Returns true when generation was kicked off.
+type AutoApprover interface {
+	MaybeAutoApprove(ctx context.Context, migrationID uint64) (approved bool, err error)
 }
 
 // ArtifactStore persists design-time artifacts (proto text + boundary spec) for

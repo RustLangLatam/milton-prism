@@ -66,6 +66,12 @@ func (w *MongoSummaryWriter) Write(ctx context.Context, summary *analysisdomain.
 	if sha := summary.GetCommitSha(); sha != "" {
 		setDoc["commit_sha"] = sha
 	}
+	// Persist the monorepo scope the worker actually analysed. The field was set
+	// at summary creation (RUNNING) by the analysis service; re-asserting it here
+	// keeps the completion write self-describing even if creation predated it.
+	if sub := summary.GetRootSubdirectory(); sub != "" {
+		setDoc["root_subdirectory"] = sub
+	}
 
 	// Persist repeated fields as wrapped proto bytes — same encoding as the
 	// analysis service repository so both readers produce consistent output.
@@ -216,6 +222,28 @@ func (w *MongoSummaryWriter) MarkAnalysisFailed(ctx context.Context, summaryID u
 			"state":          int32(analysisdomain.AnalysisStateFailed),
 			"failure_reason": reason,
 			"update_time":    now,
+		}},
+	)
+	return err
+}
+
+// MarkAwaitingRootSelection transitions the AnalysisSummary from RUNNING to
+// AWAITING_ROOT_SELECTION and persists the detected candidate roots so the
+// client can present them. Guarded on RUNNING state for idempotency. The
+// associated migration (if any) is intentionally left in ANALYZING: it advances
+// only once a root is chosen and the analysis re-runs to COMPLETED.
+func (w *MongoSummaryWriter) MarkAwaitingRootSelection(ctx context.Context, summaryID uint64, candidates []string) error {
+	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+	_, err := w.analysisColl.UpdateOne(
+		ctx,
+		bson.M{
+			"identifier": summaryID,
+			"state":      int32(analysisdomain.AnalysisStateRunning),
+		},
+		bson.M{"$set": bson.M{
+			"state":           int32(analysisdomain.AnalysisStateAwaitingRootSelection),
+			"root_candidates": candidates,
+			"update_time":     now,
 		}},
 	)
 	return err

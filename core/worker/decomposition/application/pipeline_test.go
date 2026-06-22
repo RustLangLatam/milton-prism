@@ -62,7 +62,7 @@ func TestAssemblePlan_Conduit(t *testing.T) {
 		},
 	}
 
-	plan := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: false})
+	plan := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: false}, false)
 
 	if len(plan.GetServices()) != 3 {
 		t.Fatalf("expected 3 services, got %d", len(plan.GetServices()))
@@ -157,7 +157,7 @@ func TestAssemblePlan_CrossServiceFkMapping(t *testing.T) {
 		},
 	}
 
-	plan := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: false})
+	plan := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: false}, false)
 
 	var artSvc *migrationv1.ProposedService
 	var usrSvc *migrationv1.ProposedService
@@ -211,7 +211,7 @@ func TestAssemblePlan_LowConfidence(t *testing.T) {
 	}
 	ownership := workerdomain.DataOwnership{SharedDatabase: true}
 
-	plan := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: true})
+	plan := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: true}, false)
 
 	if !strings.Contains(plan.GetRationale(), "LOW CONFIDENCE") {
 		t.Errorf("rationale should be prefixed with LOW CONFIDENCE, got: %q", plan.GetRationale())
@@ -221,7 +221,7 @@ func TestAssemblePlan_LowConfidence(t *testing.T) {
 	}
 
 	// High-confidence plan must NOT set the flag or the prefix.
-	planHigh := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: false})
+	planHigh := assemblePlan(candidates, ownership, &workerdomain.ClusteringResult{LowConfidence: false}, false)
 	if planHigh.GetIsLowConfidence() {
 		t.Errorf("expected IsLowConfidence=false when lowConfidence=false, got true")
 	}
@@ -266,7 +266,7 @@ func TestAnalyzeDataOwnership_Conduit(t *testing.T) {
 		},
 	}
 
-	ownership := analyzeDataOwnership(candidates, contracts)
+	ownership := analyzeDataOwnership(candidates, contracts, false)
 
 	if !ownership.SharedDatabase {
 		t.Error("SharedDatabase must be true in v1")
@@ -417,7 +417,7 @@ func TestAugmentDataDeps(t *testing.T) {
 // TestAssemblePlan_NoServiceBoundaries verifies that a zero-candidate call sets
 // the structured flag and writes a plain-language explanation, without Louvain jargon.
 func TestAssemblePlan_NoServiceBoundaries(t *testing.T) {
-	plan := assemblePlan(nil, workerdomain.DataOwnership{SharedDatabase: true}, &workerdomain.ClusteringResult{})
+	plan := assemblePlan(nil, workerdomain.DataOwnership{SharedDatabase: true}, &workerdomain.ClusteringResult{}, false)
 
 	if !plan.GetNoServiceBoundaries() {
 		t.Error("expected NoServiceBoundaries=true when candidates=nil")
@@ -436,7 +436,7 @@ func TestAssemblePlan_NoServiceBoundaries(t *testing.T) {
 	}
 
 	// Empty candidates should also work.
-	plan2 := assemblePlan([]workerdomain.ServiceCandidate{}, workerdomain.DataOwnership{}, &workerdomain.ClusteringResult{})
+	plan2 := assemblePlan([]workerdomain.ServiceCandidate{}, workerdomain.DataOwnership{}, &workerdomain.ClusteringResult{}, false)
 	if !plan2.GetNoServiceBoundaries() {
 		t.Error("expected NoServiceBoundaries=true when candidates=[]")
 	}
@@ -458,13 +458,14 @@ func TestAssemblePlan_ModularityPropagated(t *testing.T) {
 		[]workerdomain.ServiceCandidate{candidate},
 		workerdomain.DataOwnership{},
 		&workerdomain.ClusteringResult{Modularity: q},
+		false,
 	)
 	if plan.GetPartitionModularity() != q {
 		t.Errorf("service-boundaries path: got modularity=%v, want %v", plan.GetPartitionModularity(), q)
 	}
 
 	// No-boundaries path must also carry the modularity (useful for notiplan Q=0.14).
-	planNoBound := assemblePlan(nil, workerdomain.DataOwnership{}, &workerdomain.ClusteringResult{Modularity: 0.14})
+	planNoBound := assemblePlan(nil, workerdomain.DataOwnership{}, &workerdomain.ClusteringResult{Modularity: 0.14}, false)
 	if planNoBound.GetPartitionModularity() != 0.14 {
 		t.Errorf("no-boundaries path: got modularity=%v, want 0.14", planNoBound.GetPartitionModularity())
 	}

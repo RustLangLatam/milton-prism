@@ -31,12 +31,21 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 	fileArtifactReader := migrationrepo.NewMongoGenerationFileArtifactReader(db)
 
 	var analysisClient ports.AnalysisClient
+	var billingClient ports.BillingClient
 	if cfg.GrpcServices != nil && cfg.GrpcServices.AnalysisClientConfig != nil && cfg.GrpcServices.AnalysisClientConfig.Enabled {
 		grpcAnalysis, err := grpc_client_sdk.NewAnalysisGRPCClient(ctx, cfg.GrpcServices.AnalysisClientConfig)
 		if err != nil {
 			return err
 		}
 		analysisClient = migrationrepo.NewAnalysisClientAdapter(grpcAnalysis)
+
+		// BillingService is co-served on the analysis-services gRPC endpoint, so
+		// build the billing client over the SAME connection — no new config or dial.
+		grpcBilling, err := grpc_client_sdk.NewBillingGRPCClientOnConn(grpcAnalysis.Conn())
+		if err != nil {
+			return err
+		}
+		billingClient = migrationrepo.NewBillingClientAdapter(grpcBilling)
 	}
 
 	var identityClient ports.IdentityClient
@@ -96,6 +105,14 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 	stackDetector := ports.StackDetector(migrationrepo.NewStackDetectorAdapter(analysisDB))
 
 	app := migrationapp.NewService(repo, tx, identityClient, repositoryClient, analysisClient, artifactReader, generationEnqueuer, decomposeEnqueuer, generationResultReader, fileArtifactReader, migrabilityAssessor, roadmapEnricher, blueprintGenerator, stackDetector, os.Getenv("PRISM_MONOREPO_PATH"))
+
+	// Enforce per-month migration plan quotas against the co-served billing
+	// service (hard block; Unlimited plans never blocked). No-op when no analysis/
+	// billing endpoint is configured.
+	if billingClient != nil {
+		app.WithBillingClient(billingClient)
+		applog.Infof("migration: plan quota enforcement enabled (billing client over analysis conn)")
+	}
 
 	// Backfill repository_url for records created before the snapshot feature.
 	// Runs in the background; the service is ready to handle requests immediately.

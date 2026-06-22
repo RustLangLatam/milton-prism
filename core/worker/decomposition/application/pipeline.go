@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -32,6 +33,13 @@ type Pipeline struct {
 	// Stage 7 — plan write + state advance.
 	planWriter    ports.PlanWriter
 	artifactStore ports.ArtifactStore
+	// Architectural target. When the loader reports MONOLITH the N-service
+	// partition is collapsed into a single HTTP-native service plan.
+	topologyLoader ports.TargetTopologyLoader
+	// One-shot platform run continuation. When set and the migration carries an
+	// auto_approve intent (RunMigration), the plan is approved automatically the
+	// moment it reaches AWAITING_APPROVAL. Default (nil) = manual approval only.
+	autoApprover ports.AutoApprover
 }
 
 // NewPipeline constructs a Pipeline wired with the given stage implementations.
@@ -75,6 +83,60 @@ func (p *Pipeline) WithPlanWriter(w ports.PlanWriter) *Pipeline {
 func (p *Pipeline) WithArtifactStore(s ports.ArtifactStore) *Pipeline {
 	p.artifactStore = s
 	return p
+}
+
+// WithTopologyLoader wires the TargetTopologyLoader. When set and the migration's
+// topology is MONOLITH, the characterised candidates are collapsed into a single
+// service before stages 5–7. Returns p for chaining. Default (nil) = MICROSERVICES.
+func (p *Pipeline) WithTopologyLoader(l ports.TargetTopologyLoader) *Pipeline {
+	p.topologyLoader = l
+	return p
+}
+
+// WithAutoApprover wires the AutoApprover continuation. When set, the pipeline
+// invokes it after the plan reaches AWAITING_APPROVAL so a one-shot RunMigration
+// run advances to GENERATING without a manual approval. Returns p for chaining.
+// Default (nil) = manual approval only (no auto-advance).
+func (p *Pipeline) WithAutoApprover(a ports.AutoApprover) *Pipeline {
+	p.autoApprover = a
+	return p
+}
+
+// maybeAutoApprove invokes the AutoApprover continuation when one is wired. It is
+// best-effort: a failure to auto-approve never fails the decomposition job — the
+// migration simply stays in AWAITING_APPROVAL for a manual ApproveDesign. The
+// migrability / no-boundaries gates are enforced inside the adapter.
+func (p *Pipeline) maybeAutoApprove(ctx context.Context, migrationID uint64) {
+	if p.autoApprover == nil {
+		return
+	}
+	approved, err := p.autoApprover.MaybeAutoApprove(ctx, migrationID)
+	if err != nil {
+		applog.Warningf("decomposition-worker: auto-approve continuation failed migration_id=%d: %v — left in AWAITING_APPROVAL", migrationID, err)
+		return
+	}
+	if approved {
+		applog.Infof("decomposition-worker: auto-approved plan migration_id=%d → GENERATING (RunMigration one-shot)", migrationID)
+	}
+}
+
+// resolveTopology reads the migration's target topology, defaulting to
+// MICROSERVICES when the loader is absent, errors, or reports UNSPECIFIED.
+// The default is never an error: a missing topology must not break the flow.
+func (p *Pipeline) resolveTopology(ctx context.Context, migrationID uint64) workerdomain.TargetTopology {
+	if p.topologyLoader == nil {
+		return workerdomain.TopologyMicroservices
+	}
+	t, err := p.topologyLoader.LoadTopology(ctx, migrationID)
+	if err != nil {
+		applog.Warningf("decomposition-worker: topology load failed migration_id=%d, defaulting to MICROSERVICES: %v",
+			migrationID, err)
+		return workerdomain.TopologyMicroservices
+	}
+	if t == workerdomain.TopologyUnspecified {
+		return workerdomain.TopologyMicroservices
+	}
+	return t
 }
 
 // WithSummaryLoader wires the SummaryLoader used by the M1 digest distiller.
@@ -254,6 +316,27 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 			svc.Name, svc.ErrorPrefix, len(svc.OwnedResources), svc.Deps)
 	}
 
+	// Architectural target. MONOLITH collapses the N-service partition into a
+	// single HTTP-native service: the plan stops being a decomposition and
+	// becomes a same-shape (monolith→monolith) regeneration target. The
+	// microservices path (default) is left untouched.
+	topology := p.resolveTopology(ctx, job.MigrationID)
+	monolith := topology == workerdomain.TopologyMonolith
+	if monolith && len(candidates) > 0 {
+		prefix := candidates[0].ErrorPrefix
+		if p.allocator != nil {
+			if pfx, allocErr := p.allocator.Allocate(ctx, workerdomain.MonolithServiceName); allocErr == nil {
+				prefix = pfx
+			}
+		}
+		candidates = workerdomain.CollapseToMonolith(candidates, prefix)
+		applog.Infof("decomposition-worker: topology=MONOLITH migration_id=%d — collapsed to single service %q resources=%d",
+			job.MigrationID, candidates[0].Name, len(candidates[0].OwnedResources))
+	} else {
+		applog.Infof("decomposition-worker: topology=MICROSERVICES migration_id=%d services=%d",
+			job.MigrationID, len(candidates))
+	}
+
 	// When clustering found no service boundaries skip stages 5–6 entirely.
 	// Workspace acquire would try to clone the remote (possibly private) repo
 	// for contract derivation — which is pointless and error-prone with 0
@@ -263,12 +346,16 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 			applog.Infof("decomposition-worker: no boundaries found — planWriter not wired, result not persisted")
 			return nil
 		}
-		plan := assemblePlan(candidates, workerdomain.DataOwnership{}, clusterResult)
+		plan := assemblePlan(candidates, workerdomain.DataOwnership{}, clusterResult, false)
 		if err := p.planWriter.WritePlan(ctx, job.MigrationID, plan, "", workerdomain.DataOwnership{}); err != nil {
 			applog.Warningf("decomposition-worker: plan write failed migration_id=%d: %v", job.MigrationID, err)
 			return fmt.Errorf("stage 7 (plan-write, no-boundaries): %w", err)
 		}
 		applog.Infof("decomposition-worker: AWAITING_APPROVAL migration_id=%d no_service_boundaries=true", job.MigrationID)
+		// A no-boundaries plan has nothing to generate; the adapter's gate skips
+		// the auto-approval, but call it so the auto_approve intent is observed
+		// (and logged) consistently with the normal path.
+		p.maybeAutoApprove(ctx, job.MigrationID)
 		return nil
 	}
 
@@ -288,6 +375,18 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		return fmt.Errorf("stage 5 (workspace-acquire): %w", err)
 	}
 	defer cleanupWS()
+
+	// Monorepo scoping: mirror the analysis scope so stage 5 (contract derivation)
+	// reads source from the same subdirectory the analysis used. Empty = repo root.
+	if job.RootSubdirectory != "" {
+		scoped, scopeErr := scopeWorkspace(workspacePath, job.RootSubdirectory)
+		if scopeErr != nil {
+			applog.Warningf("decomposition-worker: stage 5 subdir scoping failed migration_id=%d subdir=%q: %v",
+				job.MigrationID, job.RootSubdirectory, scopeErr)
+			return fmt.Errorf("stage 5 (workspace-acquire): scope to subdirectory %q: %w", job.RootSubdirectory, scopeErr)
+		}
+		workspacePath = scoped
+	}
 
 	applog.Infof("decomposition-worker: stage 5 workspace acquired path=%s", workspacePath)
 
@@ -323,7 +422,9 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// Stage 6 — data ownership.
 	// Assigns resources to services, declares shared_database=true, lists cross-
 	// service FKs, and aggregates operational couplings from all candidates.
-	ownership := analyzeDataOwnership(candidates, contracts)
+	// For MONOLITH there is a single service: every FK and coupling is internal,
+	// so no cross-service debt is emitted.
+	ownership := analyzeDataOwnership(candidates, contracts, monolith)
 	applog.Infof("decomposition-worker: stage 6 ownership shared_db=%v cross_fks=%d op_couplings=%d",
 		ownership.SharedDatabase, len(ownership.CrossServiceFKs), len(ownership.OperationalCouplings))
 	for _, fk := range ownership.CrossServiceFKs {
@@ -347,7 +448,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	}
 
 	// Stage 7 — plan assembly + state advance.
-	plan := assemblePlan(candidates, ownership, clusterResult)
+	plan := assemblePlan(candidates, ownership, clusterResult, monolith)
 	if err := p.planWriter.WritePlan(ctx, job.MigrationID, plan, workspacePath, ownership); err != nil {
 		return fmt.Errorf("stage 7 (plan-write): %w", err)
 	}
@@ -359,13 +460,18 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// call UpsertArtifacts here (before return) to ensure artifacts are read
 	// from the in-memory contracts — not from the filesystem.
 	if p.artifactStore != nil {
-		artifacts := buildArtifacts(plan, contracts, ownership, candidates)
+		artifacts := buildArtifacts(plan, contracts, ownership, candidates, monolith)
 		if err := p.artifactStore.UpsertArtifacts(ctx, job.MigrationID, artifacts); err != nil {
 			// Non-fatal: log but do not block the AWAITING_APPROVAL transition.
 			applog.Warningf("decomposition-worker: artifact persistence skipped migration_id=%d: %v",
 				job.MigrationID, err)
 		}
 	}
+
+	// One-shot continuation: if RunMigration armed auto_approve, advance to
+	// GENERATING now. Artifacts are persisted above so GetGenerationPackage has
+	// its inputs. Best-effort and gated inside the adapter.
+	p.maybeAutoApprove(ctx, job.MigrationID)
 
 	return nil
 }
@@ -485,6 +591,37 @@ var eloquentTableRe = regexp.MustCompile(`\$table\s*=\s*['"]([A-Za-z_][A-Za-z0-9
 // ContractDeriver so FK annotations carry the target service. Python clusters
 // use __tablename__ in .models files; PHP/Laravel clusters use $table (or the
 // pluralised class-name convention) in Eloquent model classes.
+// scopeWorkspace resolves a repository-relative subdirectory against the clone
+// root for monorepo support, mirroring the analysis worker's helper. It rejects
+// absolute paths and ".." traversal, and requires the target to be an existing
+// directory. Returning an error rather than silently using the root keeps stage 5
+// honest: deriving contracts from the wrong directory is worse than failing.
+func scopeWorkspace(root, subdir string) (string, error) {
+	rel := path.Clean(strings.ReplaceAll(subdir, "\\", "/"))
+	if rel == "" || rel == "." {
+		return root, nil
+	}
+	if path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("subdirectory %q escapes the repository root", subdir)
+	}
+	scoped := filepath.Join(root, filepath.FromSlash(rel))
+	rootClean := filepath.Clean(root)
+	if scoped != rootClean && !strings.HasPrefix(scoped, rootClean+string(os.PathSeparator)) {
+		return "", fmt.Errorf("subdirectory %q escapes the repository root", subdir)
+	}
+	info, statErr := os.Stat(scoped)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return "", fmt.Errorf("subdirectory %q does not exist in the repository", subdir)
+		}
+		return "", fmt.Errorf("stat subdirectory %q: %w", subdir, statErr)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("path %q is not a directory", subdir)
+	}
+	return scoped, nil
+}
+
 func buildTableServiceMap(workspacePath string, clusters []workerdomain.Cluster) map[string]string {
 	result := make(map[string]string)
 	for _, c := range clusters {
@@ -617,7 +754,19 @@ func pluralizeSnake(name string) string {
 func analyzeDataOwnership(
 	candidates []workerdomain.ServiceCandidate,
 	contracts []workerdomain.DerivedContract,
+	monolith bool,
 ) workerdomain.DataOwnership {
+	// MONOLITH: one service owns everything. There are no boundaries to cross,
+	// so there are no cross-service FKs and no operational couplings — every
+	// reference is an in-process call. SharedDatabase stays true (one DB).
+	if monolith {
+		return workerdomain.DataOwnership{
+			SharedDatabase:       true,
+			CrossServiceFKs:      nil,
+			OperationalCouplings: nil,
+		}
+	}
+
 	var crossFKs []workerdomain.CrossServiceFK
 
 	for _, contract := range contracts {
@@ -724,6 +873,7 @@ func assemblePlan(
 	candidates []workerdomain.ServiceCandidate,
 	ownership workerdomain.DataOwnership,
 	cr *workerdomain.ClusteringResult,
+	monolith bool,
 ) *workerdomain.RestructurePlan {
 	var lowConfidence bool
 	var protoCandidates []*migrationv1.CandidateGrouping
@@ -823,15 +973,33 @@ func assemblePlan(
 		fkSummary = append(fkSummary, fk.OwnerService+"."+fk.OwnerMessage+"."+fk.FieldName+" → "+ref)
 	}
 
-	rationale := fmt.Sprintf(
-		"Blueprint-biased Louvain community detection produced %d service boundaries. "+
-			"Shared database declared: all services share one DB in v1 — "+
-			"per-service data separation is deferred. "+
-			"%d cross-service FK(s) identified as consistency debt: %s.",
-		len(candidates),
-		len(ownership.CrossServiceFKs),
-		strings.Join(fkSummary, "; "),
-	)
+	var rationale string
+	if monolith {
+		// MONOLITH: the partition was computed (modularity is informative) but not
+		// applied — the user chose a monolith→monolith regeneration. One service
+		// owns every domain resource and exposes HTTP natively with no gateway.
+		var resourceCount int
+		if len(candidates) > 0 {
+			resourceCount = len(candidates[0].OwnedResources)
+		}
+		rationale = fmt.Sprintf(
+			"Monolith target selected: the monolith is regenerated as a single "+
+				"HTTP-native service (no API gateway) owning all %d domain resource(s). "+
+				"The decomposition graph was analysed (modularity %.4f, informative only) "+
+				"but not split. One service, one database.",
+			resourceCount, modularity,
+		)
+	} else {
+		rationale = fmt.Sprintf(
+			"Blueprint-biased Louvain community detection produced %d service boundaries. "+
+				"Shared database declared: all services share one DB in v1 — "+
+				"per-service data separation is deferred. "+
+				"%d cross-service FK(s) identified as consistency debt: %s.",
+			len(candidates),
+			len(ownership.CrossServiceFKs),
+			strings.Join(fkSummary, "; "),
+		)
+	}
 	if lowConfidence {
 		rationale = "[LOW CONFIDENCE — human review recommended] " + rationale
 	}
@@ -855,7 +1023,17 @@ func buildArtifacts(
 	contracts []workerdomain.DerivedContract,
 	ownership workerdomain.DataOwnership,
 	candidates []workerdomain.ServiceCandidate,
+	monolith bool,
 ) []workerdomain.ServiceArtifact {
+	// MONOLITH: the plan has exactly one service. Merge every per-cluster derived
+	// contract's proto text under that single service so all domain messages land
+	// in the one HTTP-native service. The actual HTTP-native code generation is a
+	// documented sub-pending (see camino-b-monolith-hole.md): the boundary spec
+	// marks topology=monolith so the generator knows not to expect a gateway.
+	if monolith && len(plan.GetServices()) == 1 {
+		return buildMonolithArtifacts(plan.GetServices()[0], contracts, ownership)
+	}
+
 	byName := make(map[string]workerdomain.DerivedContract, len(contracts))
 	for _, c := range contracts {
 		byName[c.ServiceName] = c
@@ -894,6 +1072,49 @@ func buildArtifacts(
 		})
 	}
 	return artifacts
+}
+
+// buildMonolithArtifacts produces the single ServiceArtifact for a MONOLITH plan.
+// Every per-cluster derived contract's proto text is concatenated under the one
+// service so all domain messages live in the single HTTP-native service. The
+// boundary spec carries topology: monolith / api_gateway: false. If any source
+// contract was flagged incomplete the merged artifact inherits that flag.
+func buildMonolithArtifacts(
+	svc *workerdomain.ProposedService,
+	contracts []workerdomain.DerivedContract,
+	_ workerdomain.DataOwnership,
+) []workerdomain.ServiceArtifact {
+	// Concatenate the derived proto text from every cluster, ordered by service
+	// name for determinism, each preceded by a header comment so the origin is
+	// traceable in the merged file.
+	sorted := make([]workerdomain.DerivedContract, len(contracts))
+	copy(sorted, contracts)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ServiceName < sorted[j].ServiceName })
+
+	var proto strings.Builder
+	var incomplete bool
+	var reasons []string
+	for _, c := range sorted {
+		if c.ProtoContent != "" {
+			proto.WriteString("// ===== from cluster: " + c.ServiceName + " =====\n")
+			proto.WriteString(c.ProtoContent)
+			proto.WriteString("\n")
+		}
+		if c.Incomplete {
+			incomplete = true
+			if c.IncompleteReason != "" {
+				reasons = append(reasons, c.ServiceName+": "+c.IncompleteReason)
+			}
+		}
+	}
+
+	return []workerdomain.ServiceArtifact{{
+		ServiceName:      svc.GetName(),
+		ProtoContent:     proto.String(),
+		BoundarySpec:     workerdomain.BuildMonolithBoundarySpecYAML(svc),
+		Incomplete:       incomplete,
+		IncompleteReason: strings.Join(reasons, "; "),
+	}}
 }
 
 // ApplyCoherenceGuardrail applies the structural-fallback low-confidence flag and

@@ -3,6 +3,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"milton_prism/core/services/analysis/domain"
 	analysissvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
@@ -24,4 +25,14 @@ type AnalysisSummaryRepository interface {
 	// UpdateMigrabilityAssessment persists the LLM migrability assessment on an
 	// existing AnalysisSummary. Called after the opt-in AssessMigrability RPC.
 	UpdateMigrabilityAssessment(ctx context.Context, identifier uint64, assessment *domain.MigrabilityAssessment) error
+	// MarkRootSelected transitions an analysis from AWAITING_ROOT_SELECTION back
+	// to RUNNING, persisting the chosen root_subdirectory and clearing the
+	// candidate list. Guarded on the AWAITING_ROOT_SELECTION state so a double
+	// selection (or a selection on a non-awaiting analysis) matches nothing and
+	// returns ErrInvalidRootSelection. Returns the updated summary on success.
+	MarkRootSelected(ctx context.Context, identifier uint64, rootSubdirectory string) (*domain.AnalysisSummary, error)
+	// CountByOwnerSince returns the number of (non-deleted) analysis summaries
+	// owned by ownerID whose create_time is at or after since. Used for billing
+	// plan quota enforcement (analyses-per-month). since must be UTC.
+	CountByOwnerSince(ctx context.Context, ownerID uint64, since time.Time) (int64, error)
 }

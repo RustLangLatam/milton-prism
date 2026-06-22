@@ -7,6 +7,9 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -310,7 +313,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 					applog.Warningf("analysis-worker: close zombie summary failed summary_id=%d: %v", job.SummaryID, closeErr)
 				}
 				if p.decomposeEnqueuer != nil {
-					if enqErr := p.decomposeEnqueuer.EnqueueDecompose(ctx, job.MigrationID, existing.GetIdentifier(), cloneURL, job.DefaultBranch); enqErr != nil {
+					if enqErr := p.decomposeEnqueuer.EnqueueDecompose(ctx, job.MigrationID, existing.GetIdentifier(), cloneURL, job.DefaultBranch, job.RootSubdirectory); enqErr != nil {
 						applog.Warningf("analysis-worker: decompose enqueue failed (reuse) migration_id=%d summary_id=%d: %v",
 							job.MigrationID, existing.GetIdentifier(), enqErr)
 					}
@@ -335,6 +338,65 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 			applog.Infof("analysis-worker: resolved HEAD commit sha=%s summary_id=%d", commitSHA, job.SummaryID)
 		}
 		defer cleanup()
+
+		// Monorepo root resolution. The chosen root belongs to the ANALYSIS:
+		//   - job.RootSubdirectory already set → a root was explicitly chosen
+		//     (via SelectRoot re-enqueue, or carried by a single-root re-run).
+		//     Skip detection and scope directly.
+		//   - empty → detect candidate project roots in the freshly cloned tree.
+		//     0/1 clear root: proceed automatically (single-root path, root_subdir
+		//     stays "" or the one detected dir). ≥2 distinct roots: persist the
+		//     candidate list, set the analysis AWAITING_ROOT_SELECTION, and stop
+		//     cleanly (no error → no Asynq retry loop). The user picks via SelectRoot.
+		resolvedRoot := job.RootSubdirectory
+		if resolvedRoot == "" {
+			candidates, detErr := DetectRootCandidates(workspacePath)
+			if detErr != nil {
+				applog.Warningf("analysis-worker: root detection failed summary_id=%d: %v — defaulting to repository root",
+					job.SummaryID, detErr)
+				candidates = nil
+			}
+			root, awaiting := ResolveSingleRoot(candidates)
+			if awaiting {
+				applog.Infof("analysis-worker: multiple project roots detected summary_id=%d candidates=%v — awaiting selection",
+					job.SummaryID, candidates)
+				if p.writer != nil {
+					if mErr := p.writer.MarkAwaitingRootSelection(ctx, job.SummaryID, candidates); mErr != nil {
+						// A persistence failure here IS retryable (transient Mongo), so
+						// return the error to let Asynq retry the detection+persist.
+						return fmt.Errorf("stage 1 (acquire): persist awaiting-root-selection: %w", mErr)
+					}
+				}
+				// Stop cleanly: no heavy pipeline, no migration advance, no retry loop.
+				return nil
+			}
+			resolvedRoot = root
+			if resolvedRoot != "" {
+				applog.Infof("analysis-worker: auto-selected single project root subdir=%q summary_id=%d",
+					resolvedRoot, job.SummaryID)
+			}
+		}
+
+		// Scope the workspace to the resolved root so every downstream stage
+		// (inventory, manifests, framework/db/security detection, dependency graph,
+		// module cards) walks only that subtree. The whole repository is still
+		// cloned (above); only the analysis root moves. Empty = repository root
+		// (no-op, the single-root default). An invalid/non-existent subdir is a
+		// hard error: scoping to the wrong directory would silently analyse the
+		// wrong code. job.RootSubdirectory is carried forward to the summary and
+		// the decompose enqueuer below.
+		job.RootSubdirectory = resolvedRoot
+		if resolvedRoot != "" {
+			scoped, scopeErr := scopeWorkspace(workspacePath, resolvedRoot)
+			if scopeErr != nil {
+				applog.Warningf("analysis-worker: stage 1 subdir scoping failed summary_id=%d subdir=%q: %v",
+					job.SummaryID, resolvedRoot, scopeErr)
+				return fmt.Errorf("stage 1 (acquire): scope to subdirectory %q: %w", resolvedRoot, scopeErr)
+			}
+			applog.Infof("analysis-worker: scoped analysis to subdir=%q workspace=%s summary_id=%d",
+				resolvedRoot, scoped, job.SummaryID)
+			workspacePath = scoped
+		}
 	}
 
 	// technologies accumulates entries from all stages via MergeTechnologies.
@@ -770,6 +832,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		TotalFiles:            totalFiles,
 		TotalLines:            totalLines,
 		CommitSha:             commitSHA,
+		RootSubdirectory:      job.RootSubdirectory,
 		ModuleCountProduction: moduleCountProduction,
 		ModuleCountTest:       moduleCountTest,
 		UnreachableModules:    unreachableModules,
@@ -791,7 +854,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// would find the summary COMPLETED and skip, losing the trigger. Log the
 	// failure loudly so operators can re-queue manually.
 	if job.MigrationID != 0 && p.decomposeEnqueuer != nil {
-		if enqErr := p.decomposeEnqueuer.EnqueueDecompose(ctx, job.MigrationID, job.SummaryID, cloneURL, job.DefaultBranch); enqErr != nil {
+		if enqErr := p.decomposeEnqueuer.EnqueueDecompose(ctx, job.MigrationID, job.SummaryID, cloneURL, job.DefaultBranch, job.RootSubdirectory); enqErr != nil {
 			applog.Warningf("analysis-worker: decompose enqueue failed migration_id=%d summary_id=%d: %v",
 				job.MigrationID, job.SummaryID, enqErr)
 		}
@@ -799,6 +862,54 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 
 	applog.Infof("analysis-worker: job complete summary_id=%d", job.SummaryID)
 	return nil
+}
+
+// scopeWorkspace resolves a repository-relative subdirectory against the clone
+// root and returns the absolute path to analyse. It is the single point that
+// narrows the workspace for monorepo support: every downstream stage receives
+// the returned path, so the whole pipeline (inventory, manifests, framework/db/
+// security detection, dependency graph, module cards) operates relative to it
+// without any per-stage change.
+//
+// The subdir is sanitised defensively even though the API layer also validates:
+//   - back-slashes are normalised to forward slashes (Windows-style input),
+//   - the path is cleaned and must not escape the root (no "..", no absolute
+//     path) — a traversal attempt is rejected rather than silently clamped,
+//   - the resolved path must exist and be a directory.
+//
+// Returning an error (rather than falling back to the root) is deliberate:
+// analysing the repository root when the user asked for "backend/" would produce
+// a confidently wrong report. Honest failure beats a silent wrong scope.
+func scopeWorkspace(root, subdir string) (string, error) {
+	// Normalise separators and clean. path.Clean (forward-slash) is used for the
+	// traversal check so the rule is OS-independent.
+	rel := path.Clean(strings.ReplaceAll(subdir, "\\", "/"))
+	if rel == "" || rel == "." {
+		return root, nil
+	}
+	if path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("subdirectory %q escapes the repository root", subdir)
+	}
+	scoped := filepath.Join(root, filepath.FromSlash(rel))
+
+	// Defence in depth: confirm the joined path is still under root even after
+	// symlink-free cleaning (filepath.Join already cleans, but verify the prefix).
+	rootClean := filepath.Clean(root)
+	if scoped != rootClean && !strings.HasPrefix(scoped, rootClean+string(os.PathSeparator)) {
+		return "", fmt.Errorf("subdirectory %q escapes the repository root", subdir)
+	}
+
+	info, statErr := os.Stat(scoped)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return "", fmt.Errorf("subdirectory %q does not exist in the repository", subdir)
+		}
+		return "", fmt.Errorf("stat subdirectory %q: %w", subdir, statErr)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("path %q is not a directory", subdir)
+	}
+	return scoped, nil
 }
 
 // enrichModuleCards computes weighted fan-in/fan-out for each module card from

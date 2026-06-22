@@ -1,0 +1,3 @@
+# Minimal manifest so the dependency-graph fixture is an unambiguous single-root
+# Python project (root carries a manifest → root-detection proceeds without a
+# multi-root prompt). Kept dependency-free so it does not affect graph assertions.

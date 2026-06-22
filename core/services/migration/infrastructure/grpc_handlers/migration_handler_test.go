@@ -162,7 +162,7 @@ func TestHandlerStartMigration_Success(t *testing.T) {
 	repo.On("GetByID", mock.Anything, migID, false).Return(pendingMigration(), nil)
 	repoClient.On("ProbeConnection", mock.Anything, repoID).Return(nil)
 	repo.On("UpdateState", mock.Anything, migID, domain.MigrationStateAnalyzing).Return(nil)
-	analysis.On("RunAnalysis", mock.Anything, repoID, migID, callerID, "").Return(nil)
+	analysis.On("RunAnalysis", mock.Anything, repoID, migID, callerID, "", "").Return(nil)
 	out, err := h.StartMigration(context.Background(), &migsvcv1.StartMigrationRequest{Identifier: migID})
 	require.NoError(t, err)
 	assert.Equal(t, domain.MigrationStateAnalyzing, out.GetState())
@@ -175,6 +175,46 @@ func TestHandlerStartMigration_IllegalTransition(t *testing.T) {
 	// First GetMigration call in handler (ownership check), then StartMigration call
 	repo.On("GetByID", mock.Anything, migID, false).Return(m, nil)
 	_, err := h.StartMigration(context.Background(), &migsvcv1.StartMigrationRequest{Identifier: migID})
+	assertGRPCCode(t, err, codes.FailedPrecondition)
+}
+
+// ── RunMigration ──────────────────────────────────────────────────────────────
+
+func TestHandlerRunMigration_FromPending_Success(t *testing.T) {
+	h, repo, _, repoClient, analysis := newHandler(t)
+	repo.On("GetByID", mock.Anything, migID, false).Return(pendingMigration(), nil)
+	repo.On("SetAutoApprove", mock.Anything, migID, true).Return(nil)
+	repoClient.On("ProbeConnection", mock.Anything, repoID).Return(nil)
+	repo.On("UpdateState", mock.Anything, migID, domain.MigrationStateAnalyzing).Return(nil)
+	analysis.On("RunAnalysis", mock.Anything, repoID, migID, callerID, "", "").Return(nil)
+
+	out, err := h.RunMigration(context.Background(), &migsvcv1.RunMigrationRequest{Identifier: migID})
+	require.NoError(t, err)
+	assert.Equal(t, domain.MigrationStateAnalyzing, out.GetState())
+	assert.True(t, out.GetAutoApprove())
+}
+
+func TestHandlerRunMigration_AuthFailure(t *testing.T) {
+	repo := &mocks.MockMigrationRepository{}
+	tx := &mocks.MockTransactionManager{}
+	svc := application.NewService(repo, tx, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
+	h := grpc_handlers.NewMigrationHandler(svc, failAuth)
+	_, err := h.RunMigration(context.Background(), &migsvcv1.RunMigrationRequest{Identifier: migID})
+	assertGRPCCode(t, err, codes.Unauthenticated)
+}
+
+func TestHandlerRunMigration_ZeroID(t *testing.T) {
+	h, _, _, _, _ := newHandler(t)
+	_, err := h.RunMigration(context.Background(), &migsvcv1.RunMigrationRequest{Identifier: 0})
+	assertGRPCCode(t, err, codes.InvalidArgument)
+}
+
+func TestHandlerRunMigration_TerminalState_Rejected(t *testing.T) {
+	h, repo, _, _, _ := newHandler(t)
+	m := pendingMigration()
+	m.State = domain.MigrationStatePushed
+	repo.On("GetByID", mock.Anything, migID, false).Return(m, nil)
+	_, err := h.RunMigration(context.Background(), &migsvcv1.RunMigrationRequest{Identifier: migID})
 	assertGRPCCode(t, err, codes.FailedPrecondition)
 }
 

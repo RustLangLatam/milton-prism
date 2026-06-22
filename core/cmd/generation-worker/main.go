@@ -46,7 +46,13 @@ func main() {
 	store := genadapters.NewMongoGenerationStore(db)
 	stateUpdater := genadapters.NewMongoMigrationStateUpdater(db)
 
-	runner, err := gencontainer.NewDockerContainerRunner()
+	// Docker host selection (Camino B, pending B2):
+	//   - PRISM_DOCKER_HOST unset  → spawn ephemeral containers on the LOCAL daemon
+	//                                (default; /var/run/docker.sock or DOCKER_HOST).
+	//   - PRISM_DOCKER_HOST set     → spawn them on a REMOTE daemon over tcp:// with
+	//                                optional mutual TLS (PRISM_DOCKER_TLS_CA/CERT/KEY).
+	dockerCfg := gencontainer.RemoteConfigFromEnv()
+	runner, err := gencontainer.NewDockerContainerRunnerWithConfig(dockerCfg)
 	if err != nil {
 		log.Fatalf("generation-worker: docker runner: %v", err)
 	}

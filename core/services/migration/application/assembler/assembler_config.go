@@ -44,6 +44,288 @@ func generateConfigExamples(assembled map[string][]byte) error {
 	return nil
 }
 
+// generatePythonConfigExamples appends a `.env.example` file to each generated
+// Python service directory in the assembled map. It is the pydantic homologue of
+// the Go config.toml.example: the Go deliverable emits
+// core/cmd/<svc>-services/config.toml.example; the Python deliverable emits one
+// .env.example per service alongside its package.
+//
+// MUST run on the assembled map BEFORE the python/ → core/ rename, so service
+// dirs are still keyed under "python/services/<svc>/…" — the same shape the Go
+// path expects under core/cmd/. The emitted path (python/services/<svc>/.env.example)
+// is rewritten to core/services/<svc>/.env.example by the rename step, matching
+// the Go per-service placement.
+//
+// The variable names are taken verbatim from core/shared/config/loader.py:
+//   - MongoConfig (env_prefix MONGO_): MONGO_URI, MONGO_DATABASE
+//   - GrpcServerConfig (env_prefix GRPC_): GRPC_HOST, GRPC_PORT, GRPC_MAX_WORKERS
+//   - JWT_SECRET is read directly via os.environ in each service __main__.py.
+//
+// pydantic-settings reads .env from the process cwd, which is the source root
+// (core/ after rename) when a service is launched as `python -m services.<svc>`.
+// The header documents that the file should be copied to <root>/.env (or have
+// its values exported into the environment) before the service is started.
+func generatePythonConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedPythonServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as Go).
+		port := 50051 + i
+		content := pythonServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("python/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedPythonServices scans assembled paths for
+// python/services/<name>/ directories and returns sorted service name slugs
+// (e.g. "user"). __pycache__ and the __init__.py-only root are never included.
+// Runs BEFORE the python/ → core/ rename, so paths are still python/-rooted.
+func discoverGeneratedPythonServices(assembled map[string][]byte) []string {
+	const prefix = "python/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under python/services/ (e.g. __init__.py)
+		}
+		name := rest[:slash]
+		if name == "" || name == "__pycache__" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// pythonServiceEnvExample returns the content of a .env.example for one generated
+// Python microservice. Every value is a placeholder — never a real credential.
+// The env var names match core/shared/config/loader.py field aliases exactly.
+func pythonServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory: pydantic-settings reads .env from the process cwd) and
+# fill in the placeholder values. Alternatively export these as environment
+# variables before starting the service: python -m services.%s
+#
+# These variables are consumed by core/shared/config/loader.py
+# (MongoConfig env_prefix MONGO_, GrpcServerConfig env_prefix GRPC_) plus the
+# JWT_SECRET read directly in services/%s/__main__.py.
+
+# ── MongoDB (MongoConfig) ──────────────────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
+MONGO_URI=<your-mongo-uri>
+MONGO_DATABASE=%s
+
+# ── gRPC server (GrpcServerConfig) ─────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+GRPC_MAX_WORKERS=10
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, name, name, db, port)
+}
+
+// generateNodeConfigExamples appends a `.env.example` file to each generated
+// Node service directory in the assembled map. It is the TypeScript homologue of
+// the Go config.toml.example and the Python .env.example: the Node deliverable
+// emits one .env.example per service alongside its package.
+//
+// MUST run on the assembled map BEFORE the node/ → core/ rename, so service dirs
+// are still keyed under "node/services/<svc>/…". The emitted path
+// (node/services/<svc>/.env.example) is rewritten to
+// core/services/<svc>/.env.example by the rename step, matching the Go/Python
+// per-service placement.
+//
+// The variable names match the Node profile config contract exactly:
+//   - MONGO_URI, MONGO_DATABASE (MongoDB official driver)
+//   - GRPC_HOST, GRPC_PORT (the @grpc/grpc-js server bind address)
+//   - JWT_SECRET (EdDSA token signing/validation secret)
+func generateNodeConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedNodeServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as Go/Python).
+		port := 50051 + i
+		content := nodeServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("node/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedNodeServices scans assembled paths for
+// node/services/<name>/ directories and returns sorted service name slugs
+// (e.g. "user"). Runs BEFORE the node/ → core/ rename, so paths are still
+// node/-rooted.
+func discoverGeneratedNodeServices(assembled map[string][]byte) []string {
+	const prefix = "node/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under node/services/
+		}
+		name := rest[:slash]
+		if name == "" || name == "node_modules" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// nodeServiceEnvExample returns the content of a .env.example for one generated
+// Node microservice. Every value is a placeholder — never a real credential.
+// The env var names match the Node profile config contract exactly.
+func nodeServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# These variables are consumed by core/shared/config (the typed config loader)
+# plus the JWT_SECRET read by the auth interceptor.
+
+# ── MongoDB (official mongodb driver) ──────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
+MONGO_URI=<your-mongo-uri>
+MONGO_DATABASE=%s
+
+# ── gRPC server (@grpc/grpc-js) ────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, db, port)
+}
+
+// generateRustConfigExamples appends a `.env.example` file to each generated
+// Rust service directory in the assembled map. It is the Tonic homologue of the
+// Go config.toml.example and the Python/Node .env.example: the Rust deliverable
+// emits one .env.example per service alongside its crate.
+//
+// MUST run on the assembled map BEFORE the rust/ → core/ rename, so service dirs
+// are still keyed under "rust/services/<svc>/…". The emitted path
+// (rust/services/<svc>/.env.example) is rewritten to
+// core/services/<svc>/.env.example by the rename step, matching the
+// Go/Python/Node per-service placement.
+//
+// The variable names match the Rust profile config contract exactly:
+//   - MONGO_URI, MONGO_DATABASE (official mongodb crate)
+//   - GRPC_HOST, GRPC_PORT (the Tonic server bind address)
+//   - JWT_SECRET (EdDSA token signing/validation secret)
+func generateRustConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedRustServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as Go/Python/Node).
+		port := 50051 + i
+		content := rustServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("rust/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedRustServices scans assembled paths for
+// rust/services/<name>/ directories and returns sorted service name slugs
+// (e.g. "user"). Runs BEFORE the rust/ → core/ rename, so paths are still
+// rust/-rooted.
+func discoverGeneratedRustServices(assembled map[string][]byte) []string {
+	const prefix = "rust/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under rust/services/
+		}
+		name := rest[:slash]
+		if name == "" || name == "target" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// rustServiceEnvExample returns the content of a .env.example for one generated
+// Rust microservice. Every value is a placeholder — never a real credential.
+// The env var names match the Rust profile config contract exactly.
+func rustServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# These variables are consumed by the typed config loader (dotenvy/envy) plus
+# the JWT_SECRET read by the auth interceptor.
+
+# ── MongoDB (official mongodb crate) ───────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
+MONGO_URI=<your-mongo-uri>
+MONGO_DATABASE=%s
+
+# ── gRPC server (Tonic) ────────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, db, port)
+}
+
 // detectTokenRole scans the generated main.go for the service to determine
 // whether it acts as a token generator (emitter) or validator. The scan
 // matches the package-qualified constant "config.TokenRoleGenerator" as it

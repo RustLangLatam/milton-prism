@@ -10,6 +10,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	v11 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 	v13 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	v12 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
@@ -27,6 +28,98 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// CancelAnalysisRequest cancels a non-terminal analysis.
+type CancelAnalysisRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Numeric identifier assigned at creation.
+	Identifier    uint64 `protobuf:"varint,1,opt,name=identifier,proto3" json:"identifier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelAnalysisRequest) Reset() {
+	*x = CancelAnalysisRequest{}
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelAnalysisRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelAnalysisRequest) ProtoMessage() {}
+
+func (x *CancelAnalysisRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelAnalysisRequest.ProtoReflect.Descriptor instead.
+func (*CancelAnalysisRequest) Descriptor() ([]byte, []int) {
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *CancelAnalysisRequest) GetIdentifier() uint64 {
+	if x != nil {
+		return x.Identifier
+	}
+	return 0
+}
+
+// DeleteAnalysisSummaryRequest identifies the analysis summary to soft-delete.
+type DeleteAnalysisSummaryRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Numeric identifier assigned at creation.
+	Identifier    uint64 `protobuf:"varint,1,opt,name=identifier,proto3" json:"identifier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteAnalysisSummaryRequest) Reset() {
+	*x = DeleteAnalysisSummaryRequest{}
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteAnalysisSummaryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteAnalysisSummaryRequest) ProtoMessage() {}
+
+func (x *DeleteAnalysisSummaryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteAnalysisSummaryRequest.ProtoReflect.Descriptor instead.
+func (*DeleteAnalysisSummaryRequest) Descriptor() ([]byte, []int) {
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *DeleteAnalysisSummaryRequest) GetIdentifier() uint64 {
+	if x != nil {
+		return x.Identifier
+	}
+	return 0
+}
+
 // SelectRootRequest selects the project root for an awaiting-selection analysis.
 type SelectRootRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -43,7 +136,7 @@ type SelectRootRequest struct {
 
 func (x *SelectRootRequest) Reset() {
 	*x = SelectRootRequest{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[0]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -55,7 +148,7 @@ func (x *SelectRootRequest) String() string {
 func (*SelectRootRequest) ProtoMessage() {}
 
 func (x *SelectRootRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[0]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -68,7 +161,7 @@ func (x *SelectRootRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectRootRequest.ProtoReflect.Descriptor instead.
 func (*SelectRootRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{0}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SelectRootRequest) GetIdentifier() uint64 {
@@ -100,7 +193,7 @@ type EvaluateMigrabilityRequest struct {
 
 func (x *EvaluateMigrabilityRequest) Reset() {
 	*x = EvaluateMigrabilityRequest{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[1]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -112,7 +205,7 @@ func (x *EvaluateMigrabilityRequest) String() string {
 func (*EvaluateMigrabilityRequest) ProtoMessage() {}
 
 func (x *EvaluateMigrabilityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[1]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -125,7 +218,7 @@ func (x *EvaluateMigrabilityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvaluateMigrabilityRequest.ProtoReflect.Descriptor instead.
 func (*EvaluateMigrabilityRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{1}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EvaluateMigrabilityRequest) GetIdentifier() uint64 {
@@ -153,7 +246,7 @@ type GetAnalysisSummaryRequest struct {
 
 func (x *GetAnalysisSummaryRequest) Reset() {
 	*x = GetAnalysisSummaryRequest{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[2]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -165,7 +258,7 @@ func (x *GetAnalysisSummaryRequest) String() string {
 func (*GetAnalysisSummaryRequest) ProtoMessage() {}
 
 func (x *GetAnalysisSummaryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[2]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -178,7 +271,7 @@ func (x *GetAnalysisSummaryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAnalysisSummaryRequest.ProtoReflect.Descriptor instead.
 func (*GetAnalysisSummaryRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{2}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetAnalysisSummaryRequest) GetIdentifier() uint64 {
@@ -201,7 +294,7 @@ type ListAnalysisSummariesRequest struct {
 
 func (x *ListAnalysisSummariesRequest) Reset() {
 	*x = ListAnalysisSummariesRequest{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[3]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -213,7 +306,7 @@ func (x *ListAnalysisSummariesRequest) String() string {
 func (*ListAnalysisSummariesRequest) ProtoMessage() {}
 
 func (x *ListAnalysisSummariesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[3]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -226,7 +319,7 @@ func (x *ListAnalysisSummariesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAnalysisSummariesRequest.ProtoReflect.Descriptor instead.
 func (*ListAnalysisSummariesRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{3}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListAnalysisSummariesRequest) GetFilter() *AnalysisSummariesFilter {
@@ -256,7 +349,7 @@ type ListAnalysisSummariesResponse struct {
 
 func (x *ListAnalysisSummariesResponse) Reset() {
 	*x = ListAnalysisSummariesResponse{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[4]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -268,7 +361,7 @@ func (x *ListAnalysisSummariesResponse) String() string {
 func (*ListAnalysisSummariesResponse) ProtoMessage() {}
 
 func (x *ListAnalysisSummariesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[4]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -281,7 +374,7 @@ func (x *ListAnalysisSummariesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAnalysisSummariesResponse.ProtoReflect.Descriptor instead.
 func (*ListAnalysisSummariesResponse) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{4}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListAnalysisSummariesResponse) GetAnalysisSummaries() []*v11.AnalysisSummary {
@@ -306,7 +399,8 @@ type RunAnalysisRequest struct {
 	// Optional identifier of the migration that triggered this run.
 	// When set, the resulting summary is linked to the migration record.
 	MigrationId uint64 `protobuf:"varint,2,opt,name=migration_id,json=migrationId,proto3" json:"migration_id,omitempty"`
-	// Branch to analyse. When empty the repository's default_branch is used.
+	// Branch to analyse. Mandatory — analyses are unique per
+	// (repository_id, source_branch); there is no default-branch fallback.
 	SourceBranch string `protobuf:"bytes,3,opt,name=source_branch,json=sourceBranch,proto3" json:"source_branch,omitempty"`
 	// When true, bypass duplicate detection for standalone runs and always
 	// create a fresh analysis, even if a COMPLETED analysis for the same
@@ -327,7 +421,7 @@ type RunAnalysisRequest struct {
 
 func (x *RunAnalysisRequest) Reset() {
 	*x = RunAnalysisRequest{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[5]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -339,7 +433,7 @@ func (x *RunAnalysisRequest) String() string {
 func (*RunAnalysisRequest) ProtoMessage() {}
 
 func (x *RunAnalysisRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[5]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -352,7 +446,7 @@ func (x *RunAnalysisRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunAnalysisRequest.ProtoReflect.Descriptor instead.
 func (*RunAnalysisRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{5}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RunAnalysisRequest) GetRepositoryId() uint64 {
@@ -416,7 +510,7 @@ type RunAnalysisResponse struct {
 
 func (x *RunAnalysisResponse) Reset() {
 	*x = RunAnalysisResponse{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[6]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -428,7 +522,7 @@ func (x *RunAnalysisResponse) String() string {
 func (*RunAnalysisResponse) ProtoMessage() {}
 
 func (x *RunAnalysisResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[6]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -441,7 +535,7 @@ func (x *RunAnalysisResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunAnalysisResponse.ProtoReflect.Descriptor instead.
 func (*RunAnalysisResponse) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{6}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *RunAnalysisResponse) GetAnalysisSummary() *v11.AnalysisSummary {
@@ -495,7 +589,7 @@ type AnalysisSummariesFilter struct {
 
 func (x *AnalysisSummariesFilter) Reset() {
 	*x = AnalysisSummariesFilter{}
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[7]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +601,7 @@ func (x *AnalysisSummariesFilter) String() string {
 func (*AnalysisSummariesFilter) ProtoMessage() {}
 
 func (x *AnalysisSummariesFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[7]
+	mi := &file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +614,7 @@ func (x *AnalysisSummariesFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnalysisSummariesFilter.ProtoReflect.Descriptor instead.
 func (*AnalysisSummariesFilter) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{7}
+	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *AnalysisSummariesFilter) GetRepositoryId() uint64 {
@@ -576,7 +670,15 @@ var File_milton_prism_services_analysis_v1_analysis_service_proto protoreflect.F
 
 const file_milton_prism_services_analysis_v1_analysis_service_proto_rawDesc = "" +
 	"\n" +
-	"8milton_prism/services/analysis/v1/analysis_service.proto\x12!milton_prism.services.analysis.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a-milton_prism/types/analysis/v1/analysis.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a1milton_prism/types/pagination/v1/pagination.proto\x1a5milton_prism/types/query_params/v1/query_params.proto\x1a\x1bopenapiv3/annotations.proto\"\xeb\x01\n" +
+	"8milton_prism/services/analysis/v1/analysis_service.proto\x12!milton_prism.services.analysis.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a-milton_prism/types/analysis/v1/analysis.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a1milton_prism/types/pagination/v1/pagination.proto\x1a5milton_prism/types/query_params/v1/query_params.proto\x1a\x1bopenapiv3/annotations.proto\"d\n" +
+	"\x15CancelAnalysisRequest\x12K\n" +
+	"\n" +
+	"identifier\x18\x01 \x01(\x04B+\xe0A\x02\xbaG%:\x04\x12\x0242\x92\x02\x1cAnalysis summary identifier.R\n" +
+	"identifier\"k\n" +
+	"\x1cDeleteAnalysisSummaryRequest\x12K\n" +
+	"\n" +
+	"identifier\x18\x01 \x01(\x04B+\xe0A\x02\xbaG%:\x04\x12\x0242\x92\x02\x1cAnalysis summary identifier.R\n" +
+	"identifier\"\xeb\x01\n" +
 	"\x11SelectRootRequest\x12K\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B+\xe0A\x02\xbaG%:\x04\x12\x0242\x92\x02\x1cAnalysis summary identifier.R\n" +
@@ -599,11 +701,11 @@ const file_milton_prism_services_analysis_v1_analysis_service_proto_rawDesc = ""
 	"\x12analysis_summaries\x18\x01 \x03(\v2/.milton_prism.types.analysis.v1.AnalysisSummaryB-\xbaG*\x92\x02'Analysis summaries in this result page.R\x11analysisSummaries\x12h\n" +
 	"\n" +
 	"pagination\x18\x02 \x01(\v2,.milton_prism.types.pagination.v1.PaginationB\x1a\xbaG\x17\x92\x02\x14Pagination metadata.R\n" +
-	"pagination\"\x85\x06\n" +
+	"pagination\"\x89\x06\n" +
 	"\x12RunAnalysisRequest\x12\\\n" +
 	"\rrepository_id\x18\x01 \x01(\x04B7\xe0A\x02\xbaG1:\x04\x12\x0242\x92\x02(Identifier of the repository to analyse.R\frepositoryId\x12m\n" +
-	"\fmigration_id\x18\x02 \x01(\x04BJ\xbaGG:\x03\x12\x017\x92\x02?Migration identifier that triggered this run (0 if standalone).R\vmigrationId\x12\x83\x01\n" +
-	"\rsource_branch\x18\x03 \x01(\tB^\xe0A\x01\xbaGX:\t\x12\adevelop\x92\x02JBranch to analyse. Defaults to the repository's default_branch when empty.R\fsourceBranch\x12h\n" +
+	"\fmigration_id\x18\x02 \x01(\x04BJ\xbaGG:\x03\x12\x017\x92\x02?Migration identifier that triggered this run (0 if standalone).R\vmigrationId\x12\x87\x01\n" +
+	"\rsource_branch\x18\x03 \x01(\tBb\xe0A\x02\xbaG\\:\t\x12\adevelop\x92\x02NBranch to analyse. Required — analyses are unique per repository and branch.R\fsourceBranch\x12h\n" +
 	"\x05force\x18\x04 \x01(\bBR\xbaGO:\a\x12\x05false\x92\x02CWhen true, force a new analysis even if a duplicate already exists.R\x05force\x12z\n" +
 	"\rowner_user_id\x18\x05 \x01(\x04BV\xbaGS:\x04\x12\x0242\x92\x02JOwner user identifier. Injected server-side; ignored when sent by clients.R\vownerUserId\x12\xb5\x01\n" +
 	"\x11root_subdirectory\x18\x06 \x01(\tB\x87\x01\xe0A\x01\xbaG\x80\x01:\t\x12\abackend\x92\x02rOptional repository-relative subdirectory to scope analysis to (monorepos). Empty means the whole repository root.R\x10rootSubdirectory\"\xe1\x03\n" +
@@ -625,14 +727,16 @@ const file_milton_prism_services_analysis_v1_analysis_service_proto_rawDesc = ""
 	"\r_migration_idB\b\n" +
 	"\x06_stateB\x10\n" +
 	"\x0e_source_branchB\x10\n" +
-	"\x0e_owner_user_id2\xf8\x0e\n" +
+	"\x0e_owner_user_id2\xd0\x14\n" +
 	"\x0fAnalysisService\x12\x8c\x02\n" +
 	"\x12GetAnalysisSummary\x12<.milton_prism.services.analysis.v1.GetAnalysisSummaryRequest\x1a/.milton_prism.types.analysis.v1.AnalysisSummary\"\x86\x01\xbaGX\x12\x17Get an analysis summary\x1a=Returns a single code analysis summary by numeric identifier.\x82\xd3\xe4\x93\x02%\x12#/v1/analysis_summaries/{identifier}\x12\x96\x02\n" +
 	"\x15ListAnalysisSummaries\x12?.milton_prism.services.analysis.v1.ListAnalysisSummariesRequest\x1a@.milton_prism.services.analysis.v1.ListAnalysisSummariesResponse\"z\xbaGY\x12\x17List analysis summaries\x1a>Returns a paginated, filtered list of code analysis summaries.\x82\xd3\xe4\x93\x02\x18\x12\x16/v1/analysis_summaries\x12\xd5\x03\n" +
 	"\vRunAnalysis\x125.milton_prism.services.analysis.v1.RunAnalysisRequest\x1a6.milton_prism.services.analysis.v1.RunAnalysisResponse\"\xd6\x02\xbaG\xad\x02\x12\x13Run a code analysis\x1a\x95\x02Enqueues an async analysis run. Returns immediately with an AnalysisSummary in RUNNING state. For standalone runs, if a COMPLETED analysis for the same commit already exists and force=false, returns duplicate_found=true with the existing analysis instead of creating a new run.\x82\xd3\xe4\x93\x02\x1f:\x01*\"\x1a/v1/analysis_summaries:run\x12\x92\x03\n" +
 	"\x13EvaluateMigrability\x12=.milton_prism.services.analysis.v1.EvaluateMigrabilityRequest\x1a3.milton_prism.types.common.v1.MigrabilityAssessment\"\x86\x02\xbaG\xc0\x01\x12\x1dEvaluate analysis migrability\x1a\x9e\x01Runs the opt-in LLM migrability assessment for a completed analysis summary. Makes one LLM API call (~$0.003). Persists and returns the MigrabilityAssessment.\x82\xd3\xe4\x93\x02<:\x01*\"7/v1/analysis_summaries/{identifier}:evaluateMigrability\x12\xcf\x03\n" +
 	"\n" +
-	"SelectRoot\x124.milton_prism.services.analysis.v1.SelectRootRequest\x1a/.milton_prism.types.analysis.v1.AnalysisSummary\"\xd9\x02\xbaG\x9c\x02\x12\x1eSelect analysis root directory\x1a\xf9\x01Picks one of the detected candidate project roots for an analysis in ANALYSIS_STATE_AWAITING_ROOT_SELECTION, persists it, and re-enqueues the analysis scoped to that root. The choice must be among root_candidates; invalid/empty choices are rejected.\x82\xd3\xe4\x93\x023:\x01*\"./v1/analysis_summaries/{identifier}:selectRootB\xa9\x02\n" +
+	"SelectRoot\x124.milton_prism.services.analysis.v1.SelectRootRequest\x1a/.milton_prism.types.analysis.v1.AnalysisSummary\"\xd9\x02\xbaG\x9c\x02\x12\x1eSelect analysis root directory\x1a\xf9\x01Picks one of the detected candidate project roots for an analysis in ANALYSIS_STATE_AWAITING_ROOT_SELECTION, persists it, and re-enqueues the analysis scoped to that root. The choice must be among root_candidates; invalid/empty choices are rejected.\x82\xd3\xe4\x93\x023:\x01*\"./v1/analysis_summaries/{identifier}:selectRoot\x12\xcf\x02\n" +
+	"\x0eCancelAnalysis\x128.milton_prism.services.analysis.v1.CancelAnalysisRequest\x1a/.milton_prism.types.analysis.v1.AnalysisSummary\"\xd1\x01\xbaG\x98\x01\x12\x12Cancel an analysis\x1a\x81\x01Transitions the analysis to ANALYSIS_STATE_CANCELLED from any non-terminal state. Rejected when the analysis is already terminal.\x82\xd3\xe4\x93\x02/:\x01*\"*/v1/analysis_summaries/{identifier}:cancel\x12\x83\x03\n" +
+	"\x15DeleteAnalysisSummary\x12?.milton_prism.services.analysis.v1.DeleteAnalysisSummaryRequest\x1a\x16.google.protobuf.Empty\"\x90\x02\xbaG\xe1\x01\x12\x1fSoft-delete an analysis summary\x1a\xbd\x01Marks a terminal-state analysis summary as deleted. Rejected when the analysis is non-terminal or still has active migrations referencing it. Record retained until the purge window expires.\x82\xd3\xe4\x93\x02%*#/v1/analysis_summaries/{identifier}B\xa9\x02\n" +
 	"%com.milton_prism.services.analysis.v1B\x14AnalysisServiceProtoP\x01ZDmilton_prism/pkg/pb/gen/milton_prism/services/analysis/v1;analysisv1\xf8\x01\x01\xa2\x02\x03MSA\xaa\x02 MiltonPrism.Services.Analysis.V1\xca\x02 MiltonPrism\\Services\\Analysis\\V1\xe2\x02,MiltonPrism\\Services\\Analysis\\V1\\GPBMetadata\xea\x02#MiltonPrism::Services::Analysis::V1b\x06proto3"
 
 var (
@@ -647,43 +751,50 @@ func file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescGZIP()
 	return file_milton_prism_services_analysis_v1_analysis_service_proto_rawDescData
 }
 
-var file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_milton_prism_services_analysis_v1_analysis_service_proto_goTypes = []any{
-	(*SelectRootRequest)(nil),             // 0: milton_prism.services.analysis.v1.SelectRootRequest
-	(*EvaluateMigrabilityRequest)(nil),    // 1: milton_prism.services.analysis.v1.EvaluateMigrabilityRequest
-	(*GetAnalysisSummaryRequest)(nil),     // 2: milton_prism.services.analysis.v1.GetAnalysisSummaryRequest
-	(*ListAnalysisSummariesRequest)(nil),  // 3: milton_prism.services.analysis.v1.ListAnalysisSummariesRequest
-	(*ListAnalysisSummariesResponse)(nil), // 4: milton_prism.services.analysis.v1.ListAnalysisSummariesResponse
-	(*RunAnalysisRequest)(nil),            // 5: milton_prism.services.analysis.v1.RunAnalysisRequest
-	(*RunAnalysisResponse)(nil),           // 6: milton_prism.services.analysis.v1.RunAnalysisResponse
-	(*AnalysisSummariesFilter)(nil),       // 7: milton_prism.services.analysis.v1.AnalysisSummariesFilter
-	(*v1.PageQueryParams)(nil),            // 8: milton_prism.types.query_params.v1.PageQueryParams
-	(*v11.AnalysisSummary)(nil),           // 9: milton_prism.types.analysis.v1.AnalysisSummary
-	(*v12.Pagination)(nil),                // 10: milton_prism.types.pagination.v1.Pagination
-	(v11.AnalysisState)(0),                // 11: milton_prism.types.analysis.v1.AnalysisState
-	(*v13.MigrabilityAssessment)(nil),     // 12: milton_prism.types.common.v1.MigrabilityAssessment
+	(*CancelAnalysisRequest)(nil),         // 0: milton_prism.services.analysis.v1.CancelAnalysisRequest
+	(*DeleteAnalysisSummaryRequest)(nil),  // 1: milton_prism.services.analysis.v1.DeleteAnalysisSummaryRequest
+	(*SelectRootRequest)(nil),             // 2: milton_prism.services.analysis.v1.SelectRootRequest
+	(*EvaluateMigrabilityRequest)(nil),    // 3: milton_prism.services.analysis.v1.EvaluateMigrabilityRequest
+	(*GetAnalysisSummaryRequest)(nil),     // 4: milton_prism.services.analysis.v1.GetAnalysisSummaryRequest
+	(*ListAnalysisSummariesRequest)(nil),  // 5: milton_prism.services.analysis.v1.ListAnalysisSummariesRequest
+	(*ListAnalysisSummariesResponse)(nil), // 6: milton_prism.services.analysis.v1.ListAnalysisSummariesResponse
+	(*RunAnalysisRequest)(nil),            // 7: milton_prism.services.analysis.v1.RunAnalysisRequest
+	(*RunAnalysisResponse)(nil),           // 8: milton_prism.services.analysis.v1.RunAnalysisResponse
+	(*AnalysisSummariesFilter)(nil),       // 9: milton_prism.services.analysis.v1.AnalysisSummariesFilter
+	(*v1.PageQueryParams)(nil),            // 10: milton_prism.types.query_params.v1.PageQueryParams
+	(*v11.AnalysisSummary)(nil),           // 11: milton_prism.types.analysis.v1.AnalysisSummary
+	(*v12.Pagination)(nil),                // 12: milton_prism.types.pagination.v1.Pagination
+	(v11.AnalysisState)(0),                // 13: milton_prism.types.analysis.v1.AnalysisState
+	(*v13.MigrabilityAssessment)(nil),     // 14: milton_prism.types.common.v1.MigrabilityAssessment
+	(*emptypb.Empty)(nil),                 // 15: google.protobuf.Empty
 }
 var file_milton_prism_services_analysis_v1_analysis_service_proto_depIdxs = []int32{
-	7,  // 0: milton_prism.services.analysis.v1.ListAnalysisSummariesRequest.filter:type_name -> milton_prism.services.analysis.v1.AnalysisSummariesFilter
-	8,  // 1: milton_prism.services.analysis.v1.ListAnalysisSummariesRequest.page_params:type_name -> milton_prism.types.query_params.v1.PageQueryParams
-	9,  // 2: milton_prism.services.analysis.v1.ListAnalysisSummariesResponse.analysis_summaries:type_name -> milton_prism.types.analysis.v1.AnalysisSummary
-	10, // 3: milton_prism.services.analysis.v1.ListAnalysisSummariesResponse.pagination:type_name -> milton_prism.types.pagination.v1.Pagination
-	9,  // 4: milton_prism.services.analysis.v1.RunAnalysisResponse.analysis_summary:type_name -> milton_prism.types.analysis.v1.AnalysisSummary
-	9,  // 5: milton_prism.services.analysis.v1.RunAnalysisResponse.existing_analysis:type_name -> milton_prism.types.analysis.v1.AnalysisSummary
-	11, // 6: milton_prism.services.analysis.v1.AnalysisSummariesFilter.state:type_name -> milton_prism.types.analysis.v1.AnalysisState
-	11, // 7: milton_prism.services.analysis.v1.AnalysisSummariesFilter.states:type_name -> milton_prism.types.analysis.v1.AnalysisState
-	2,  // 8: milton_prism.services.analysis.v1.AnalysisService.GetAnalysisSummary:input_type -> milton_prism.services.analysis.v1.GetAnalysisSummaryRequest
-	3,  // 9: milton_prism.services.analysis.v1.AnalysisService.ListAnalysisSummaries:input_type -> milton_prism.services.analysis.v1.ListAnalysisSummariesRequest
-	5,  // 10: milton_prism.services.analysis.v1.AnalysisService.RunAnalysis:input_type -> milton_prism.services.analysis.v1.RunAnalysisRequest
-	1,  // 11: milton_prism.services.analysis.v1.AnalysisService.EvaluateMigrability:input_type -> milton_prism.services.analysis.v1.EvaluateMigrabilityRequest
-	0,  // 12: milton_prism.services.analysis.v1.AnalysisService.SelectRoot:input_type -> milton_prism.services.analysis.v1.SelectRootRequest
-	9,  // 13: milton_prism.services.analysis.v1.AnalysisService.GetAnalysisSummary:output_type -> milton_prism.types.analysis.v1.AnalysisSummary
-	4,  // 14: milton_prism.services.analysis.v1.AnalysisService.ListAnalysisSummaries:output_type -> milton_prism.services.analysis.v1.ListAnalysisSummariesResponse
-	6,  // 15: milton_prism.services.analysis.v1.AnalysisService.RunAnalysis:output_type -> milton_prism.services.analysis.v1.RunAnalysisResponse
-	12, // 16: milton_prism.services.analysis.v1.AnalysisService.EvaluateMigrability:output_type -> milton_prism.types.common.v1.MigrabilityAssessment
-	9,  // 17: milton_prism.services.analysis.v1.AnalysisService.SelectRoot:output_type -> milton_prism.types.analysis.v1.AnalysisSummary
-	13, // [13:18] is the sub-list for method output_type
-	8,  // [8:13] is the sub-list for method input_type
+	9,  // 0: milton_prism.services.analysis.v1.ListAnalysisSummariesRequest.filter:type_name -> milton_prism.services.analysis.v1.AnalysisSummariesFilter
+	10, // 1: milton_prism.services.analysis.v1.ListAnalysisSummariesRequest.page_params:type_name -> milton_prism.types.query_params.v1.PageQueryParams
+	11, // 2: milton_prism.services.analysis.v1.ListAnalysisSummariesResponse.analysis_summaries:type_name -> milton_prism.types.analysis.v1.AnalysisSummary
+	12, // 3: milton_prism.services.analysis.v1.ListAnalysisSummariesResponse.pagination:type_name -> milton_prism.types.pagination.v1.Pagination
+	11, // 4: milton_prism.services.analysis.v1.RunAnalysisResponse.analysis_summary:type_name -> milton_prism.types.analysis.v1.AnalysisSummary
+	11, // 5: milton_prism.services.analysis.v1.RunAnalysisResponse.existing_analysis:type_name -> milton_prism.types.analysis.v1.AnalysisSummary
+	13, // 6: milton_prism.services.analysis.v1.AnalysisSummariesFilter.state:type_name -> milton_prism.types.analysis.v1.AnalysisState
+	13, // 7: milton_prism.services.analysis.v1.AnalysisSummariesFilter.states:type_name -> milton_prism.types.analysis.v1.AnalysisState
+	4,  // 8: milton_prism.services.analysis.v1.AnalysisService.GetAnalysisSummary:input_type -> milton_prism.services.analysis.v1.GetAnalysisSummaryRequest
+	5,  // 9: milton_prism.services.analysis.v1.AnalysisService.ListAnalysisSummaries:input_type -> milton_prism.services.analysis.v1.ListAnalysisSummariesRequest
+	7,  // 10: milton_prism.services.analysis.v1.AnalysisService.RunAnalysis:input_type -> milton_prism.services.analysis.v1.RunAnalysisRequest
+	3,  // 11: milton_prism.services.analysis.v1.AnalysisService.EvaluateMigrability:input_type -> milton_prism.services.analysis.v1.EvaluateMigrabilityRequest
+	2,  // 12: milton_prism.services.analysis.v1.AnalysisService.SelectRoot:input_type -> milton_prism.services.analysis.v1.SelectRootRequest
+	0,  // 13: milton_prism.services.analysis.v1.AnalysisService.CancelAnalysis:input_type -> milton_prism.services.analysis.v1.CancelAnalysisRequest
+	1,  // 14: milton_prism.services.analysis.v1.AnalysisService.DeleteAnalysisSummary:input_type -> milton_prism.services.analysis.v1.DeleteAnalysisSummaryRequest
+	11, // 15: milton_prism.services.analysis.v1.AnalysisService.GetAnalysisSummary:output_type -> milton_prism.types.analysis.v1.AnalysisSummary
+	6,  // 16: milton_prism.services.analysis.v1.AnalysisService.ListAnalysisSummaries:output_type -> milton_prism.services.analysis.v1.ListAnalysisSummariesResponse
+	8,  // 17: milton_prism.services.analysis.v1.AnalysisService.RunAnalysis:output_type -> milton_prism.services.analysis.v1.RunAnalysisResponse
+	14, // 18: milton_prism.services.analysis.v1.AnalysisService.EvaluateMigrability:output_type -> milton_prism.types.common.v1.MigrabilityAssessment
+	11, // 19: milton_prism.services.analysis.v1.AnalysisService.SelectRoot:output_type -> milton_prism.types.analysis.v1.AnalysisSummary
+	11, // 20: milton_prism.services.analysis.v1.AnalysisService.CancelAnalysis:output_type -> milton_prism.types.analysis.v1.AnalysisSummary
+	15, // 21: milton_prism.services.analysis.v1.AnalysisService.DeleteAnalysisSummary:output_type -> google.protobuf.Empty
+	15, // [15:22] is the sub-list for method output_type
+	8,  // [8:15] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -694,14 +805,14 @@ func file_milton_prism_services_analysis_v1_analysis_service_proto_init() {
 	if File_milton_prism_services_analysis_v1_analysis_service_proto != nil {
 		return
 	}
-	file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[7].OneofWrappers = []any{}
+	file_milton_prism_services_analysis_v1_analysis_service_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_services_analysis_v1_analysis_service_proto_rawDesc), len(file_milton_prism_services_analysis_v1_analysis_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

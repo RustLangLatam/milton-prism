@@ -27,6 +27,9 @@ const (
 	// that is empty or not among the analysis's detected root_candidates, or the
 	// analysis is not in AWAITING_ROOT_SELECTION state. Fails closed.
 	ErrCodeInvalidRootSelection = "ANL104"
+	// ErrCodeMissingSourceBranch: RunAnalysis was called without a source_branch.
+	// The branch is mandatory — analyses are unique per (repository_id, source_branch).
+	ErrCodeMissingSourceBranch = "ANL105"
 )
 
 var (
@@ -38,6 +41,9 @@ var (
 	// ErrInvalidRootSelection: SelectRoot choice rejected (not a candidate, empty,
 	// or the analysis is not awaiting a selection).
 	ErrInvalidRootSelection = newError(ErrCodeInvalidRootSelection, "Failure_Invalid_Root_Selection")
+	// ErrMissingSourceBranch: RunAnalysis rejected because no source_branch was
+	// supplied. The branch is mandatory (analyses are unique per repo+branch).
+	ErrMissingSourceBranch = newError(ErrCodeMissingSourceBranch, "Failure_Missing_Source_Branch")
 )
 
 // ── Domain errors (ANL2xx) ────────────────────────────────────────────────────
@@ -54,6 +60,18 @@ const (
 	// ErrCodeNoDeepData: AssessMigrability rejected because the analysis summary
 	// has no dependency graph — deep analysis data is required for assessment.
 	ErrCodeNoDeepData = "ANL205"
+	// ErrCodeAnalysisAlreadyExists: a unique-index duplicate-key collision on
+	// (repository_id, source_branch) — another analysis already covers this
+	// repo+branch. Safety net behind the update-in-place re-analysis path.
+	ErrCodeAnalysisAlreadyExists = "ANL206"
+	// ErrCodeAnalysisHasLiveMigrations: DeleteAnalysisSummary rejected because at
+	// least one active (non-terminal) migration still references this analysis.
+	// Deleting it would orphan a running migration. Maps to FailedPrecondition.
+	ErrCodeAnalysisHasLiveMigrations = "ANL207"
+	// ErrCodeInvalidStateTransition: an analysis lifecycle action was requested
+	// from an incompatible state — CancelAnalysis on a terminal analysis, or
+	// DeleteAnalysisSummary on a non-terminal one. Maps to FailedPrecondition.
+	ErrCodeInvalidStateTransition = "ANL208"
 )
 
 var (
@@ -62,6 +80,14 @@ var (
 	ErrRepoAuthFailed          = newError(ErrCodeRepoAuthFailed, "Failure_Repository_Auth_Failed")
 	ErrRepoUnreachable         = newError(ErrCodeRepoUnreachable, "Failure_Repository_Unreachable")
 	ErrNoDeepData              = newError(ErrCodeNoDeepData, "Failure_No_Deep_Data")
+	// ErrAnalysisAlreadyExists: unique-index collision on (repository_id, source_branch).
+	ErrAnalysisAlreadyExists = newError(ErrCodeAnalysisAlreadyExists, "Failure_Analysis_Already_Exists")
+	// ErrAnalysisHasLiveMigrations: DeleteAnalysisSummary blocked — an active
+	// migration still references this analysis.
+	ErrAnalysisHasLiveMigrations = newError(ErrCodeAnalysisHasLiveMigrations, "Failure_Analysis_Has_Live_Migrations")
+	// ErrInvalidStateTransition: cancel/delete requested from an incompatible
+	// analysis lifecycle state.
+	ErrInvalidStateTransition = newError(ErrCodeInvalidStateTransition, "Failure_Invalid_State_Transition")
 )
 
 // ── Plan / quota errors (ANL3xx) ──────────────────────────────────────────────

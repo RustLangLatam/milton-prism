@@ -34,7 +34,11 @@ type Pipeline struct {
 	store         ports.GenerationStore
 	stateUpdater  ports.MigrationStateUpdater
 	invoker       ports.AgentInvoker
-	monorepoRoot  string
+	// openapiGen emits the deliverable's docs/openapi.yaml from the generated
+	// service protos. Optional: when nil, the OpenAPI step is skipped (the
+	// migration still completes; the deliverable just ships without the spec).
+	openapiGen   ports.OpenAPIGenerator
+	monorepoRoot string
 	// Exactly one of apiKey or credDir is set at runtime (A.7).
 	apiKey       string
 	credDir      string
@@ -69,12 +73,27 @@ func (p *Pipeline) WithAPIKey(key string) *Pipeline { p.apiKey = key; return p }
 // WithCredDir sets the HOST-side ~/.claude directory path for subscription auth (A.7 fallback).
 func (p *Pipeline) WithCredDir(dir string) *Pipeline { p.credDir = dir; return p }
 
+// WithOpenAPIGenerator wires the OpenAPI emitter used by the post-generation
+// assembleOpenAPI step. When unset, the step is skipped.
+func (p *Pipeline) WithOpenAPIGenerator(g ports.OpenAPIGenerator) *Pipeline {
+	p.openapiGen = g
+	return p
+}
+
 // WithConcurrency overrides the A.4 default concurrency cap (2).
 func (p *Pipeline) WithConcurrency(n int64) *Pipeline { p.concurrency = n; return p }
 
 // WithRetryBackoff overrides the base backoff between retry attempts (default 30s).
 // Useful in tests to keep wall-clock time short.
 func (p *Pipeline) WithRetryBackoff(d time.Duration) *Pipeline { p.retryBackoff = d; return p }
+
+// sanitizeFailureReason produces the short, user-facing failure message that is
+// safe to persist and expose. It delegates to the canonical domain implementation
+// so the raw agent JSON blob (cost/session_id/usage/modelUsage) never reaches a
+// user-visible field. The raw blob is logged server-side for diagnosis.
+func sanitizeFailureReason(raw string) string {
+	return workerdomain.SanitizeFailureReason(raw)
+}
 
 // isTransientError reports whether the failure is worth retrying.
 // invokeErr != nil (infrastructure failure, context deadline) is always transient.
@@ -104,7 +123,11 @@ func (p *Pipeline) Run(ctx context.Context, payload workerdomain.JobPayload) err
 	if err != nil {
 		return fmt.Errorf("read package: %w", err)
 	}
-	applog.Infof("generation-worker: package loaded services=%d profile=%s", len(pkg.Services), pkg.OutputProfile)
+	protocol := pkg.Protocol
+	if protocol == "" {
+		protocol = "grpc"
+	}
+	applog.Infof("generation-worker: package loaded services=%d profile=%s protocol=%s", len(pkg.Services), pkg.OutputProfile, protocol)
 
 	// Apply optional service filter: when provided, only the named services run.
 	// Services not in the filter are silently skipped — they are neither marked
@@ -188,7 +211,21 @@ func (p *Pipeline) Run(ctx context.Context, payload workerdomain.JobPayload) err
 	// Assemble the shared gateway error aggregator from all successfully
 	// generated service artifacts. Must run after wg.Wait() so every
 	// service's *_errors.go artifact is already persisted in the store.
-	p.assembleErrorAggregator(ctx, payload.MigrationID, pkg, final)
+	// Go-only: message_error.go is a Go gateway file. Non-Go profiles (e.g.
+	// Python, whose error mapping lives in python/shared/errors) must NOT get a
+	// stray Go artifact — it would otherwise pollute both the deliverable and the
+	// generated-code viewer for that migration.
+	if pkg.OutputProfile == "" || pkg.OutputProfile == "go" {
+		p.assembleErrorAggregator(ctx, payload.MigrationID, pkg, final)
+	} else {
+		applog.Infof("generation-worker: skipping Go error aggregator for profile=%s migration_id=%d", pkg.OutputProfile, payload.MigrationID)
+	}
+
+	// Emit the deliverable's docs/openapi.yaml from the generated service
+	// protos. Profile-agnostic: the spec is derived from protos alone, so it
+	// runs for every OutputProfile (Go, Python, any future one). Persisted as a
+	// single __pipeline__ artifact so it flows into the deliverable unchanged.
+	p.assembleOpenAPI(ctx, payload.MigrationID, pkg, final)
 
 	anyFailed := false
 	for _, r := range final {
@@ -231,6 +268,9 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 		BoundarySpec:          spec.BoundarySpec,
 		GeneratorPromptRef:    spec.GeneratorPromptRef,
 		OutputProfile:         profile,
+		Protocol:              spec.Protocol,
+		AuthScheme:            spec.AuthScheme,
+		AuthSignatureAlg:      spec.AuthSignatureAlg,
 		APIKey:                p.apiKey,
 		SessionCredentialsDir: p.credDir,
 	}
@@ -260,7 +300,7 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 		if invokeErr == nil && result.GatesPassed {
 			break // success
 		}
-		if !isTransientError(invokeErr, result.FailureReason) {
+		if !isTransientError(invokeErr, result.RawFailureReason) {
 			break // permanent failure — do not retry
 		}
 		if attempt < maxServiceAttempts {
@@ -278,6 +318,7 @@ persist:
 		CacheCreationInputTokens: result.CacheCreationInputTokens,
 		CacheReadInputTokens:     result.CacheReadInputTokens,
 		OutputTokens:             result.OutputTokens,
+		Model:                    result.Model,
 		GeneratedFileCount:       len(result.GeneratedFiles),
 		AgentRawResult:           result.RawResult,
 	}
@@ -285,12 +326,17 @@ persist:
 	switch {
 	case invokeErr != nil:
 		rec.Status = workerdomain.ServiceStatusFailed
-		rec.FailureReason = invokeErr.Error()
-		applog.Warningf("generation-worker: service=%s invoker error: %v", spec.Name, invokeErr)
+		// Sanitize the infrastructure error before persisting to the user-visible
+		// field; log the full error server-side for diagnosis.
+		rec.FailureReason = sanitizeFailureReason(invokeErr.Error())
+		applog.Warningf("generation-worker: service=%s invoker error (raw, server-only): %v", spec.Name, invokeErr)
 	case !result.GatesPassed:
 		rec.Status = workerdomain.ServiceStatusFailed
-		rec.FailureReason = result.FailureReason
-		applog.Warningf("generation-worker: service=%s gates failed reason=%q", spec.Name, result.FailureReason)
+		// result.FailureReason is already sanitized by the invoker; the raw blob
+		// was logged server-side at the invoker boundary.
+		rec.FailureReason = sanitizeFailureReason(result.FailureReason)
+		applog.Warningf("generation-worker: service=%s gates failed reason=%q (raw server-only=%q)",
+			spec.Name, result.FailureReason, result.RawFailureReason)
 	default:
 		rec.Status = workerdomain.ServiceStatusDone
 		rec.GatesPassed = true

@@ -376,6 +376,15 @@ message ListMigrationsRequest {
   milton_prism.types.migration.v1.MigrationsFilter filter = 1 [(openapi.v3.property) = {description: "Optional filter to narrow the migration list."}];
   // Pagination parameters (page_number, page_size).
   milton_prism.types.query_params.v1.PageQueryParams page_params = 2 [(openapi.v3.property) = {description: "Page number and page size parameters."}];
+  // Optional AIP-132 ordering directive, e.g. "create_time desc" or "topology asc".
+  // The sort is resolved server-side in MongoDB, never on the client. A single
+  // field plus an optional "asc"/"desc" direction (default ascending). Allowed
+  // fields: create_time, topology, protocol, state, language. An unknown field
+  // is rejected with INVALID_ARGUMENT. Empty → "create_time desc".
+  string order_by = 3 [(openapi.v3.property) = {
+    description: "AIP-132 ordering, e.g. 'create_time desc'. Allowed fields: create_time, topology, protocol, state, language. Default 'create_time desc'. Unknown field → INVALID_ARGUMENT. Sort is server-side."
+    example: {yaml: "create_time desc"}
+  }];
 }
 
 // ListMigrationsResponse carries a page of migrations with pagination metadata.

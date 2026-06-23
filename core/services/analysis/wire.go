@@ -43,6 +43,21 @@ func BuildAnalysisServer(ctx context.Context, svc *services.Services, server *gr
 
 	app := analysisapp.NewService(repo, repositoryClient, enqueuer)
 
+	// Cross-service migration client: powers the live-migration guard in
+	// DeleteAnalysisSummary (refuse to delete an analysis still referenced by an
+	// active migration). When the migration endpoint is not configured the guard
+	// degrades CLOSED (delete is refused) rather than risk orphaning a migration.
+	if cfg.GrpcServices != nil && cfg.GrpcServices.MigrationClientConfig != nil && cfg.GrpcServices.MigrationClientConfig.Enabled {
+		grpcMig, err := grpc_client_sdk.NewMigrationGRPCClient(ctx, cfg.GrpcServices.MigrationClientConfig)
+		if err != nil {
+			return err
+		}
+		app.WithMigrationClient(analysisrepo.NewMigrationClientAdapter(grpcMig))
+		applog.Infof("analysis: migration client wired (delete live-migration guard enabled)")
+	} else {
+		applog.Warningf("analysis: migration client NOT configured — DeleteAnalysisSummary will refuse (degrade closed)")
+	}
+
 	// Co-locate the billing capability on this gRPC server and share its usage
 	// repository (same milton_prism_analysis database) so the assessment spend is
 	// recorded in-process. BillingService also exposes RecordUsage for the

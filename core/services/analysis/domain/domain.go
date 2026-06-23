@@ -33,6 +33,8 @@ type (
 	SecurityFinding       = analysisv1.SecurityFinding
 	SecurityFindingType   = analysisv1.SecurityFindingType
 	SecuritySeverity      = analysisv1.SecuritySeverity
+	AuthScheme            = analysisv1.AuthScheme
+	AuthSchemeDetection   = analysisv1.AuthSchemeDetection
 )
 
 const (
@@ -67,6 +69,14 @@ const (
 	SecuritySeverityLow         = analysisv1.SecuritySeverity_SECURITY_SEVERITY_LOW
 	SecuritySeverityMedium      = analysisv1.SecuritySeverity_SECURITY_SEVERITY_MEDIUM
 	SecuritySeverityHigh        = analysisv1.SecuritySeverity_SECURITY_SEVERITY_HIGH
+
+	AuthSchemeUnspecified   = analysisv1.AuthScheme_AUTH_SCHEME_UNSPECIFIED
+	AuthSchemeNone          = analysisv1.AuthScheme_AUTH_SCHEME_NONE
+	AuthSchemeJWT           = analysisv1.AuthScheme_AUTH_SCHEME_JWT
+	AuthSchemeOAuth2        = analysisv1.AuthScheme_AUTH_SCHEME_OAUTH2
+	AuthSchemeSessionCookie = analysisv1.AuthScheme_AUTH_SCHEME_SESSION_COOKIE
+	AuthSchemeAPIKey        = analysisv1.AuthScheme_AUTH_SCHEME_API_KEY
+	AuthSchemeBasic         = analysisv1.AuthScheme_AUTH_SCHEME_BASIC
 )
 
 const (
@@ -78,6 +88,8 @@ const (
 	// project roots; the heavy pipeline did not run, root_candidates holds the
 	// options, and the user must pick one via SelectRoot to proceed.
 	AnalysisStateAwaitingRootSelection = analysisv1.AnalysisState_ANALYSIS_STATE_AWAITING_ROOT_SELECTION
+	// AnalysisStateCancelled: the analysis was cancelled by the user (terminal).
+	AnalysisStateCancelled      = analysisv1.AnalysisState_ANALYSIS_STATE_CANCELLED
 	TechnologyStatusUnspecified = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_UNSPECIFIED
 	TechnologyStatusCurrent     = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_CURRENT
 	TechnologyStatusOutdated    = analysisv1.TechnologyStatus_TECHNOLOGY_STATUS_OUTDATED

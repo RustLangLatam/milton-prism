@@ -108,7 +108,7 @@ func (h *MigrationHandler) ListMigrations(ctx context.Context, req *migsvcv1.Lis
 	if !isSystem {
 		filter.OwnerUserId = &callerID
 	}
-	items, pag, err := h.svc.ListMigrations(ctx, filter, req.GetPageParams())
+	items, pag, err := h.svc.ListMigrations(ctx, filter, req.GetOrderBy(), req.GetPageParams())
 	if err != nil {
 		return nil, h.mapError(err)
 	}
@@ -509,7 +509,8 @@ func (h *MigrationHandler) mapError(err error) error {
 			domain.ErrCodeNoRoadmap,
 			domain.ErrCodeNoBlueprintAnalysis,
 			domain.ErrCodeNoActionPlan,
-			domain.ErrCodePlanLimitExceeded:
+			domain.ErrCodePlanLimitExceeded,
+			domain.ErrCodeBranchUnchanged:
 			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
 		case domain.ErrCodeMissingIdentifier,
 			domain.ErrCodeMissingPayload,
@@ -517,7 +518,10 @@ func (h *MigrationHandler) mapError(err error) error {
 			domain.ErrCodeMissingRepositoryID,
 			domain.ErrCodeInvalidTargetConfig,
 			domain.ErrCodeInvalidRootSubdirectory,
-			domain.ErrCodeUnsupportedTargetLanguage:
+			domain.ErrCodeUnsupportedTargetLanguage,
+			domain.ErrCodeUnsupportedProtocol,
+			domain.ErrCodeMissingSourceBranch,
+			domain.ErrCodeInvalidOrderBy:
 			return coreerror.NewInvalidArgumentError(dErr.Code, dErr.Message)
 		case domain.ErrCodeInternal:
 			applog.Warningf("internal migration error: code=%s error=%v", dErr.Code, err)

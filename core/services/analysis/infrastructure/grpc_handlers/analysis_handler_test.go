@@ -117,7 +117,7 @@ func TestHandlerRunAnalysis_Success(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, summaryID, repoID, uint64(0), mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID})
+	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, SourceBranch: "main"})
 	require.NoError(t, err)
 	assert.Equal(t, domain.AnalysisStateRunning, out.GetAnalysisSummary().GetState())
 	assert.Equal(t, summaryID, out.GetAnalysisSummary().GetIdentifier())
@@ -135,7 +135,7 @@ func TestHandlerRunAnalysis_RepositoryNotFound(t *testing.T) {
 	h, _, repoClient, _ := newHandler(t)
 	// Probe fires before GetRemoteURL; not-found surfaces at probe time.
 	repoClient.On("ProbeConnection", mock.Anything, repoID).Return(domain.ErrRepositoryNotFound)
-	_, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID})
+	_, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, SourceBranch: "main"})
 	assertGRPCCode(t, err, codes.NotFound)
 }
 
@@ -143,7 +143,7 @@ func TestHandlerRunAnalysis_RepoAuthFailed(t *testing.T) {
 	t.Parallel()
 	h, _, repoClient, _ := newHandler(t)
 	repoClient.On("ProbeConnection", mock.Anything, repoID).Return(domain.ErrRepoAuthFailed)
-	_, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID})
+	_, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, SourceBranch: "main"})
 	assertGRPCCode(t, err, codes.FailedPrecondition)
 }
 
@@ -151,7 +151,7 @@ func TestHandlerRunAnalysis_RepoUnreachable(t *testing.T) {
 	t.Parallel()
 	h, _, repoClient, _ := newHandler(t)
 	repoClient.On("ProbeConnection", mock.Anything, repoID).Return(domain.ErrRepoUnreachable)
-	_, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID})
+	_, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, SourceBranch: "main"})
 	assertGRPCCode(t, err, codes.FailedPrecondition)
 }
 
@@ -176,7 +176,7 @@ func TestHandlerRunAnalysis_DuplicateFound(t *testing.T) {
 	repoClient.On("GetBranchSHA", mock.Anything, repoID, "main").Return(sha, nil)
 	repo.On("List", mock.Anything, mock.Anything, mock.Anything).Return([]*domain.AnalysisSummary{existing}, nil, nil)
 
-	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID})
+	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, SourceBranch: "main"})
 	require.NoError(t, err)
 	assert.True(t, out.GetDuplicateFound())
 	assert.NotNil(t, out.GetExistingAnalysis())
@@ -192,12 +192,78 @@ func TestHandlerRunAnalysis_Force_BypassesDedup(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, Force: true})
+	out, err := h.RunAnalysis(context.Background(), &anlsvcv1.RunAnalysisRequest{RepositoryId: repoID, SourceBranch: "main", Force: true})
 	require.NoError(t, err)
 	assert.False(t, out.GetDuplicateFound())
 	assert.NotNil(t, out.GetAnalysisSummary())
 	// GetBranchSHA must NOT be called when force=true.
 	repoClient.AssertNotCalled(t, "GetBranchSHA", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// ── CancelAnalysis ────────────────────────────────────────────────────────────
+
+func TestHandlerCancelAnalysis_Success(t *testing.T) {
+	t.Parallel()
+	h, repo, _, _ := newHandler(t)
+	// Handler reads (ownership), service re-reads (terminal check) → both RUNNING;
+	// after UpdateState the final read returns CANCELLED.
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(runningSummary(), nil).Twice()
+	repo.On("UpdateState", mock.Anything, summaryID, domain.AnalysisStateCancelled).Return(nil).Once()
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(&domain.AnalysisSummary{Identifier: summaryID, OwnerUserId: 1, State: domain.AnalysisStateCancelled}, nil).Once()
+	out, err := h.CancelAnalysis(context.Background(), &anlsvcv1.CancelAnalysisRequest{Identifier: summaryID})
+	require.NoError(t, err)
+	assert.Equal(t, domain.AnalysisStateCancelled, out.GetState())
+}
+
+func TestHandlerCancelAnalysis_TerminalRejected(t *testing.T) {
+	t.Parallel()
+	h, repo, _, _ := newHandler(t)
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(&domain.AnalysisSummary{Identifier: summaryID, OwnerUserId: 1, State: domain.AnalysisStateCompleted}, nil)
+	_, err := h.CancelAnalysis(context.Background(), &anlsvcv1.CancelAnalysisRequest{Identifier: summaryID})
+	assertGRPCCode(t, err, codes.FailedPrecondition)
+}
+
+func TestHandlerCancelAnalysis_NotOwner(t *testing.T) {
+	t.Parallel()
+	h, repo, _, _ := newHandler(t)
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(&domain.AnalysisSummary{Identifier: summaryID, OwnerUserId: 999, State: domain.AnalysisStateRunning}, nil)
+	_, err := h.CancelAnalysis(context.Background(), &anlsvcv1.CancelAnalysisRequest{Identifier: summaryID})
+	assertGRPCCode(t, err, codes.NotFound)
+}
+
+// ── DeleteAnalysisSummary ─────────────────────────────────────────────────────
+
+func TestHandlerDeleteAnalysisSummary_Success(t *testing.T) {
+	t.Parallel()
+	repo := &mocks.MockAnalysisSummaryRepository{}
+	migClient := &mocks.MockMigrationClient{}
+	svc := application.NewService(repo, &mocks.MockRepositoryClient{}, &mocks.MockJobEnqueuer{}).WithMigrationClient(migClient)
+	h := grpc_handlers.NewAnalysisHandler(svc, okAuth)
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(&domain.AnalysisSummary{Identifier: summaryID, OwnerUserId: 1, State: domain.AnalysisStateCompleted}, nil)
+	migClient.On("CountLiveMigrationsByAnalysis", mock.Anything, summaryID).Return(int64(0), nil)
+	repo.On("SoftDelete", mock.Anything, summaryID).Return(nil)
+	_, err := h.DeleteAnalysisSummary(context.Background(), &anlsvcv1.DeleteAnalysisSummaryRequest{Identifier: summaryID})
+	require.NoError(t, err)
+}
+
+func TestHandlerDeleteAnalysisSummary_LiveMigrations(t *testing.T) {
+	t.Parallel()
+	repo := &mocks.MockAnalysisSummaryRepository{}
+	migClient := &mocks.MockMigrationClient{}
+	svc := application.NewService(repo, &mocks.MockRepositoryClient{}, &mocks.MockJobEnqueuer{}).WithMigrationClient(migClient)
+	h := grpc_handlers.NewAnalysisHandler(svc, okAuth)
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(&domain.AnalysisSummary{Identifier: summaryID, OwnerUserId: 1, State: domain.AnalysisStateCompleted}, nil)
+	migClient.On("CountLiveMigrationsByAnalysis", mock.Anything, summaryID).Return(int64(1), nil)
+	_, err := h.DeleteAnalysisSummary(context.Background(), &anlsvcv1.DeleteAnalysisSummaryRequest{Identifier: summaryID})
+	assertGRPCCode(t, err, codes.FailedPrecondition)
+}
+
+func TestHandlerDeleteAnalysisSummary_NonTerminal(t *testing.T) {
+	t.Parallel()
+	h, repo, _, _ := newHandler(t)
+	repo.On("GetByID", mock.Anything, summaryID, false).Return(runningSummary(), nil)
+	_, err := h.DeleteAnalysisSummary(context.Background(), &anlsvcv1.DeleteAnalysisSummaryRequest{Identifier: summaryID})
+	assertGRPCCode(t, err, codes.FailedPrecondition)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

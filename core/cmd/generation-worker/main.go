@@ -13,6 +13,7 @@ import (
 	genadapters "milton_prism/core/worker/generation/infrastructure/adapters"
 	genagent "milton_prism/core/worker/generation/infrastructure/agent"
 	gencontainer "milton_prism/core/worker/generation/infrastructure/container"
+	genopenapi "milton_prism/core/worker/generation/infrastructure/openapi"
 	genjobs "milton_prism/core/worker/generation/jobs"
 	"milton_prism/pkg/config"
 	"milton_prism/pkg/log"
@@ -58,9 +59,14 @@ func main() {
 	}
 	invoker := genagent.NewClaudeAgentInvoker(runner)
 
+	// OpenAPI generator: runs buf with the deliverable template inside the same
+	// agent image (which carries protoc-gen-openapi) to emit docs/openapi.yaml.
+	openapiGen := genopenapi.NewBufOpenAPIGenerator(runner)
+
 	// Optional: share GOPATH module cache with the container to avoid re-downloading.
 	if goModCache := os.Getenv("PRISM_GO_MOD_CACHE"); goModCache != "" {
 		invoker = invoker.WithGoModCache(goModCache)
+		openapiGen = openapiGen.WithGoModCache(goModCache)
 	}
 
 	// Required when running inside Docker (DooD): the workspace temp dir must be
@@ -68,6 +74,7 @@ func main() {
 	// into ephemeral containers. Set to "" (OS default) when running on the host.
 	if workspaceDir := os.Getenv("PRISM_WORKSPACE_PATH"); workspaceDir != "" {
 		invoker = invoker.WithWorkspaceTempDir(workspaceDir)
+		openapiGen = openapiGen.WithWorkspaceTempDir(workspaceDir)
 	}
 
 	monorepoRoot := os.Getenv("PRISM_MONOREPO_PATH")
@@ -83,7 +90,8 @@ func main() {
 	}
 
 	pipeline := genapp.NewPipeline(packageReader, store, stateUpdater, invoker, monorepoRoot).
-		WithConcurrency(concurrency)
+		WithConcurrency(concurrency).
+		WithOpenAPIGenerator(openapiGen)
 
 	// Auth mode: PRISM_AGENT_AUTH=apikey (default, production) | subscription (testing).
 	//

@@ -31,14 +31,18 @@ func (s *Service) DownloadDeliverable(ctx context.Context, migrationID uint64) (
 		return nil, domain.ErrInvalidStateTransition
 	}
 
-	// Include the API gateway when Target is nil (field absent on old migrations)
-	// or when explicitly enabled. proto3 bool zero == false == "not set", so we
-	// default to include only when Target itself is missing; an explicit false excludes.
-	// MONOLITH topology is HTTP-native and is its own entry point: never emit a
-	// gateway regardless of use_api_gateway.
+	// The grpc-api-gateway is only meaningful for the microservices+gRPC cell: it
+	// is the gRPC→JSON transcoding entry point in front of N gRPC services. It is
+	// therefore emitted ONLY when topology is MICROSERVICES AND transport is gRPC
+	// (and use_api_gateway is requested). A MONOLITH is its own HTTP-native entry
+	// point (no gateway), and an HTTP service speaks HTTP natively (no transcoder
+	// needed) — both exclude the gateway regardless of use_api_gateway.
+	// Target nil (old migrations, pre-protocol axis) keeps the legacy default of
+	// including the gateway (those were all microservices+gRPC).
 	useApiGateway := m.GetTarget() == nil ||
 		(m.GetTarget().GetUseApiGateway() &&
-			m.GetTarget().GetTopology() != domain.TargetTopologyMonolith)
+			m.GetTarget().GetTopology() != domain.TargetTopologyMonolith &&
+			m.GetTarget().GetInterServiceTransport() != domain.TransportHTTP)
 
 	raw, err := s.fileArtifactReader.ListArtifacts(ctx, migrationID, "")
 	if err != nil {
@@ -50,7 +54,14 @@ func (s *Service) DownloadDeliverable(ctx context.Context, migrationID uint64) (
 		inputs[i] = assembler.InputFile{Path: f.Path, Content: f.Content}
 	}
 
-	files, err := assembler.New(s.monorepoPath, useApiGateway).Assemble(inputs)
+	// Select the skeleton/post-step profile from the migration target: "python"
+	// emits a Python-only deliverable (no Go scaffolding); "go" is unchanged.
+	profile := outputProfileLabel(m.GetTarget())
+	// Select the transport variant: Go + HTTP excludes the pkg/gateway/ subtree
+	// (except common/error) because an HTTP-native service is its own entrypoint.
+	protocol := protocolLabel(m.GetTarget())
+
+	files, err := assembler.New(s.monorepoPath, useApiGateway, profile, protocol).Assemble(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("download-deliverable: assemble migration_id=%d: %w", migrationID, err)
 	}

@@ -13,6 +13,8 @@ import (
 	anlsvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
+
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // AuthExtractor validates the access token in ctx and returns the authenticated
@@ -147,6 +149,56 @@ func (h *AnalysisHandler) SelectRoot(ctx context.Context, req *anlsvcv1.SelectRo
 	return updated, nil
 }
 
+// CancelAnalysis transitions a non-terminal analysis to CANCELLED. Auth +
+// ownership are enforced here (mirroring SelectRoot): the caller must own the
+// analysis unless it is a system user.
+func (h *AnalysisHandler) CancelAnalysis(ctx context.Context, req *anlsvcv1.CancelAnalysisRequest) (*analysisv1.AnalysisSummary, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: CancelAnalysis authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetIdentifier() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingIdentifier, domain.ErrMissingIdentifier.Message)
+	}
+	s, err := h.svc.GetAnalysisSummary(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if !isSystem && s.GetOwnerUserId() != callerID {
+		return nil, h.mapError(domain.ErrAnalysisSummaryNotFound)
+	}
+	updated, err := h.svc.CancelAnalysis(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	return updated, nil
+}
+
+// DeleteAnalysisSummary soft-deletes a terminal analysis summary with no active
+// migration referencing it. Auth + ownership are enforced here.
+func (h *AnalysisHandler) DeleteAnalysisSummary(ctx context.Context, req *anlsvcv1.DeleteAnalysisSummaryRequest) (*emptypb.Empty, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("analysis: DeleteAnalysisSummary authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetIdentifier() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingIdentifier, domain.ErrMissingIdentifier.Message)
+	}
+	s, err := h.svc.GetAnalysisSummary(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if !isSystem && s.GetOwnerUserId() != callerID {
+		return nil, h.mapError(domain.ErrAnalysisSummaryNotFound)
+	}
+	if err := h.svc.DeleteAnalysisSummary(ctx, req.GetIdentifier()); err != nil {
+		return nil, h.mapError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
 func (h *AnalysisHandler) mapError(err error) error {
 	if err == nil {
 		return nil
@@ -169,7 +221,17 @@ func (h *AnalysisHandler) mapError(err error) error {
 		case domain.ErrCodeInvalidRootSelection:
 			// Wrong state or unlisted/empty choice: a precondition the client must fix.
 			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
-		case domain.ErrCodeMissingIdentifier, domain.ErrCodeMissingRepositoryID, domain.ErrCodeInvalidRootSubdirectory:
+		case domain.ErrCodeAnalysisAlreadyExists:
+			// Unique-index collision: another analysis already covers this repo+branch.
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeAnalysisHasLiveMigrations:
+			// An active migration still depends on this analysis: a precondition
+			// the client must resolve (cancel/finish the migration) before deleting.
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeInvalidStateTransition:
+			// Cancel on a terminal analysis, or delete on a non-terminal one.
+			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
+		case domain.ErrCodeMissingIdentifier, domain.ErrCodeMissingRepositoryID, domain.ErrCodeInvalidRootSubdirectory, domain.ErrCodeMissingSourceBranch:
 			return coreerror.NewInvalidArgumentError(dErr.Code, dErr.Message)
 		case domain.ErrCodeInternal:
 			applog.Warningf("internal analysis error: code=%s error=%v", dErr.Code, err)

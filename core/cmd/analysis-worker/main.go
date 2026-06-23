@@ -106,6 +106,7 @@ func main() {
 		WithFrameworkDetector(workeradapters.NewFileSystemFrameworkDetector()).
 		WithDatabaseDetector(workeradapters.NewDatabaseDetector()).
 		WithSecurityScanner(workeradapters.NewSecurityScanner()).
+		WithAuthSchemeDetector(workeradapters.NewAuthSchemeDetector()).
 		WithBranchSHAResolver(workeradapters.ResolveRemoteBranchSHA)
 
 	// Tier-2 (dependency graph + module cards): Python and PHP analyzers registered;

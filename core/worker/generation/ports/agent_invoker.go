@@ -22,6 +22,22 @@ type InvokeRequest struct {
 	GeneratorPromptRef string
 	// OutputProfile identifies the target stack (e.g. "go").
 	OutputProfile string
+	// Protocol is the transport the generated service speaks ("grpc" | "http").
+	// Orthogonal to OutputProfile. Selects the generator prompt per (profile,
+	// protocol) and the transport section injected into the combined prompt.
+	// Empty is treated as "grpc".
+	Protocol string
+	// AuthScheme is the effective authentication scheme the generated service must
+	// implement ("jwt"/"none"/"oauth2"/"session_cookie"/"api_key"/"basic"),
+	// resolved by the migration service (override ?? detected). v1 generates "jwt"
+	// and "none"; any other value yields an honest prompt note (no guess). Empty is
+	// treated as "none". Drives the Auth/Validation section injected into the prompt.
+	AuthScheme string
+	// AuthSignatureAlg is the JWT signature algorithm family the generated
+	// validation must accept when AuthScheme is "jwt": "HS256" (symmetric secret)
+	// or "RS256"/"ES256"/"EdDSA" (asymmetric public key). Empty for non-JWT or
+	// undetermined — the prompt then accepts the idiomatic default for the stack.
+	AuthSignatureAlg string
 	// APIKey is ANTHROPIC_API_KEY for production use (sk-ant-api03-…).
 	// Passed to the container as an env var with --bare mode.
 	// Callers MUST NOT log this field — it carries a runtime secret (A.7).
@@ -77,9 +93,20 @@ type InvokeResult struct {
 	CacheReadInputTokens int64
 	// OutputTokens produced in this invocation.
 	OutputTokens int64
-	// FailureReason is set when GatesPassed is false and contains a
-	// best-effort summary of what went wrong, extracted from the agent output.
+	// Model is the dominant model id reported by the agent (the model that
+	// consumed the most tokens in the run, e.g. "claude-opus-4-8[1m]"). Empty
+	// when the agent reported no modelUsage. Used to estimate cost by token when
+	// no real API cost is available (subscription mode).
+	Model string
+	// FailureReason is set when GatesPassed is false and contains a SANITIZED,
+	// short, user-facing technical message. It must never carry the raw agent
+	// JSON blob (cost/session_id/usage/modelUsage) — that is logged server-side.
 	FailureReason string
+	// RawFailureReason is the unsanitized best-effort failure snippet extracted
+	// from the agent stdout+stderr. It is used ONLY internally for transient/retry
+	// classification (rate-limit keyword detection) and must never be persisted
+	// to a user-visible field.
+	RawFailureReason string
 }
 
 // AgentInvoker runs Claude Code headless inside an ephemeral container to

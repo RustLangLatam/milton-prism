@@ -138,7 +138,7 @@ func TestWriteCombinedPrompt_GoProfile(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt.md",
-		"articles", "ART", "go", "spec", "proto")
+		"articles", "ART", "go", "grpc", "none", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
@@ -159,7 +159,7 @@ func TestWriteCombinedPrompt_PythonProfile(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt-python.md",
-		"articles", "ART", "python", "spec", "proto")
+		"articles", "ART", "python", "grpc", "none", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
@@ -169,4 +169,59 @@ func TestWriteCombinedPrompt_PythonProfile(t *testing.T) {
 	assert.Contains(t, s, "pytest")
 	assert.NotContains(t, s, "complete Go microservice")
 	assert.NotContains(t, s, "milton-prism-go-profile.md")
+}
+
+// TestWriteCombinedPrompt_AuthJWT asserts the JWT auth section is injected with the
+// idiomatic library per profile, the .env-driven / no-hardcode rule, and (for HS256)
+// the symmetric-secret algorithm guidance.
+func TestWriteCombinedPrompt_AuthJWT(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p, err := agent.WriteCombinedPrompt(dir,
+		"docs/prism/milton-prism-service-generator-prompt-python.md",
+		"articles", "ART", "python", "http", "jwt", "HS256", "spec", "proto")
+	require.NoError(t, err)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	s := string(b)
+	assert.Contains(t, s, "## Auth / Validation: JWT")
+	assert.Contains(t, s, "PyJWT")
+	assert.Contains(t, s, "Authorization: Bearer")
+	assert.Contains(t, s, "NEVER hardcode")
+	assert.Contains(t, s, "SYMMETRIC secret (HS256)")
+	assert.Contains(t, s, ".env.example")
+}
+
+// TestWriteCombinedPrompt_AuthNone asserts the none scheme emits an explicit
+// "do not invent auth" note and no JWT library reference.
+func TestWriteCombinedPrompt_AuthNone(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p, err := agent.WriteCombinedPrompt(dir,
+		"docs/prism/milton-prism-service-generator-prompt.md",
+		"articles", "ART", "go", "grpc", "none", "", "spec", "proto")
+	require.NoError(t, err)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	s := string(b)
+	assert.Contains(t, s, "## Auth / Validation: none")
+	assert.Contains(t, s, "Do NOT invent an auth layer")
+	assert.NotContains(t, s, "golang-jwt")
+}
+
+// TestWriteCombinedPrompt_AuthDetectedNotGenerated asserts a detected-but-not-v1
+// scheme (oauth2) yields an honest "NOT generated" note and forbids guessing.
+func TestWriteCombinedPrompt_AuthDetectedNotGenerated(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p, err := agent.WriteCombinedPrompt(dir,
+		"docs/prism/milton-prism-service-generator-prompt.md",
+		"articles", "ART", "go", "grpc", "oauth2", "", "spec", "proto")
+	require.NoError(t, err)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	s := string(b)
+	assert.Contains(t, s, "oauth2")
+	assert.Contains(t, s, "NOT generated")
+	assert.Contains(t, s, "MUST NOT guess")
 }

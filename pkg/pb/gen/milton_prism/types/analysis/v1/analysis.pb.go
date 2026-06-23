@@ -43,6 +43,11 @@ const (
 	// state (no retry loop) until the user picks a root via SelectRoot, which
 	// re-enqueues the analysis scoped to the chosen root.
 	AnalysisState_ANALYSIS_STATE_AWAITING_ROOT_SELECTION AnalysisState = 4
+	// The analysis was cancelled by the user via CancelAnalysis. Terminal: a
+	// cancelled analysis is no longer running and is not retried. Soft-cancel —
+	// an in-flight worker computation may still finish but its result is
+	// discarded (the worker only persists a final state while still RUNNING).
+	AnalysisState_ANALYSIS_STATE_CANCELLED AnalysisState = 5
 )
 
 // Enum value maps for AnalysisState.
@@ -53,6 +58,7 @@ var (
 		2: "ANALYSIS_STATE_COMPLETED",
 		3: "ANALYSIS_STATE_FAILED",
 		4: "ANALYSIS_STATE_AWAITING_ROOT_SELECTION",
+		5: "ANALYSIS_STATE_CANCELLED",
 	}
 	AnalysisState_value = map[string]int32{
 		"ANALYSIS_STATE_UNSPECIFIED":             0,
@@ -60,6 +66,7 @@ var (
 		"ANALYSIS_STATE_COMPLETED":               2,
 		"ANALYSIS_STATE_FAILED":                  3,
 		"ANALYSIS_STATE_AWAITING_ROOT_SELECTION": 4,
+		"ANALYSIS_STATE_CANCELLED":               5,
 	}
 )
 
@@ -208,6 +215,77 @@ func (Severity) EnumDescriptor() ([]byte, []int) {
 	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{2}
 }
 
+// AuthScheme enumerates the request-authentication schemes the analysis can
+// deterministically recognise. UNSPECIFIED is the zero value; NONE is the honest
+// answer when the code authenticates nothing (no auth package, header, or config).
+type AuthScheme int32
+
+const (
+	// No scheme set (default zero value).
+	AuthScheme_AUTH_SCHEME_UNSPECIFIED AuthScheme = 0
+	// The code performs no request authentication (honest 'none', not 'unknown').
+	AuthScheme_AUTH_SCHEME_NONE AuthScheme = 1
+	// JSON Web Token bearer auth (firebase/php-jwt, PyJWT, jsonwebtoken, jjwt, …).
+	AuthScheme_AUTH_SCHEME_JWT AuthScheme = 2
+	// OAuth2 / OpenID Connect resource-server flow (authlib, spring-oauth2, …).
+	AuthScheme_AUTH_SCHEME_OAUTH2 AuthScheme = 3
+	// Server-side session cookie auth (framework session middleware).
+	AuthScheme_AUTH_SCHEME_SESSION_COOKIE AuthScheme = 4
+	// Static API-key / token auth (X-API-Key header or equivalent).
+	AuthScheme_AUTH_SCHEME_API_KEY AuthScheme = 5
+	// HTTP Basic authentication.
+	AuthScheme_AUTH_SCHEME_BASIC AuthScheme = 6
+)
+
+// Enum value maps for AuthScheme.
+var (
+	AuthScheme_name = map[int32]string{
+		0: "AUTH_SCHEME_UNSPECIFIED",
+		1: "AUTH_SCHEME_NONE",
+		2: "AUTH_SCHEME_JWT",
+		3: "AUTH_SCHEME_OAUTH2",
+		4: "AUTH_SCHEME_SESSION_COOKIE",
+		5: "AUTH_SCHEME_API_KEY",
+		6: "AUTH_SCHEME_BASIC",
+	}
+	AuthScheme_value = map[string]int32{
+		"AUTH_SCHEME_UNSPECIFIED":    0,
+		"AUTH_SCHEME_NONE":           1,
+		"AUTH_SCHEME_JWT":            2,
+		"AUTH_SCHEME_OAUTH2":         3,
+		"AUTH_SCHEME_SESSION_COOKIE": 4,
+		"AUTH_SCHEME_API_KEY":        5,
+		"AUTH_SCHEME_BASIC":          6,
+	}
+)
+
+func (x AuthScheme) Enum() *AuthScheme {
+	p := new(AuthScheme)
+	*p = x
+	return p
+}
+
+func (x AuthScheme) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AuthScheme) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[3].Descriptor()
+}
+
+func (AuthScheme) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[3]
+}
+
+func (x AuthScheme) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AuthScheme.Descriptor instead.
+func (AuthScheme) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
+}
+
 // CodebaseKind classifies what kind of project a repository is, deterministically,
 // from already-computed analysis signals (frameworks, package ecosystems, routes,
 // language mix). The platform migrates BACKEND repositories today; every other kind
@@ -262,11 +340,11 @@ func (x CodebaseKind) String() string {
 }
 
 func (CodebaseKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[3].Descriptor()
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[4].Descriptor()
 }
 
 func (CodebaseKind) Type() protoreflect.EnumType {
-	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[3]
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[4]
 }
 
 func (x CodebaseKind) Number() protoreflect.EnumNumber {
@@ -275,7 +353,7 @@ func (x CodebaseKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CodebaseKind.Descriptor instead.
 func (CodebaseKind) EnumDescriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
 }
 
 // DatabaseEngine enumerates the database engines the analysis can deterministically
@@ -338,11 +416,11 @@ func (x DatabaseEngine) String() string {
 }
 
 func (DatabaseEngine) Descriptor() protoreflect.EnumDescriptor {
-	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[4].Descriptor()
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[5].Descriptor()
 }
 
 func (DatabaseEngine) Type() protoreflect.EnumType {
-	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[4]
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[5]
 }
 
 func (x DatabaseEngine) Number() protoreflect.EnumNumber {
@@ -351,7 +429,7 @@ func (x DatabaseEngine) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DatabaseEngine.Descriptor instead.
 func (DatabaseEngine) EnumDescriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
 }
 
 // ArchitecturalPatternKind enumerates the canonical architectural patterns the
@@ -409,11 +487,11 @@ func (x ArchitecturalPatternKind) String() string {
 }
 
 func (ArchitecturalPatternKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[5].Descriptor()
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[6].Descriptor()
 }
 
 func (ArchitecturalPatternKind) Type() protoreflect.EnumType {
-	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[5]
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[6]
 }
 
 func (x ArchitecturalPatternKind) Number() protoreflect.EnumNumber {
@@ -422,7 +500,7 @@ func (x ArchitecturalPatternKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ArchitecturalPatternKind.Descriptor instead.
 func (ArchitecturalPatternKind) EnumDescriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
 }
 
 // SecuritySeverity ranks a code-level security finding by impact. Used for the
@@ -471,11 +549,11 @@ func (x SecuritySeverity) String() string {
 }
 
 func (SecuritySeverity) Descriptor() protoreflect.EnumDescriptor {
-	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[6].Descriptor()
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[7].Descriptor()
 }
 
 func (SecuritySeverity) Type() protoreflect.EnumType {
-	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[6]
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[7]
 }
 
 func (x SecuritySeverity) Number() protoreflect.EnumNumber {
@@ -484,7 +562,7 @@ func (x SecuritySeverity) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SecuritySeverity.Descriptor instead.
 func (SecuritySeverity) EnumDescriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
 }
 
 // SecurityFindingType names the class of code-level security issue detected. v1
@@ -524,11 +602,11 @@ func (x SecurityFindingType) String() string {
 }
 
 func (SecurityFindingType) Descriptor() protoreflect.EnumDescriptor {
-	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[7].Descriptor()
+	return file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[8].Descriptor()
 }
 
 func (SecurityFindingType) Type() protoreflect.EnumType {
-	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[7]
+	return &file_milton_prism_types_analysis_v1_analysis_proto_enumTypes[8]
 }
 
 func (x SecurityFindingType) Number() protoreflect.EnumNumber {
@@ -537,7 +615,7 @@ func (x SecurityFindingType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SecurityFindingType.Descriptor instead.
 func (SecurityFindingType) EnumDescriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{8}
 }
 
 // AnalysisSummary is the output of a code analysis run against a repository.
@@ -688,8 +766,18 @@ type AnalysisSummary struct {
 	// once a root is chosen (single-root repos always leave this empty). The
 	// client presents these to the user, who picks one via SelectRoot.
 	RootCandidates []string `protobuf:"bytes,33,rep,name=root_candidates,json=rootCandidates,proto3" json:"root_candidates,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Deterministically detected authentication/validation scheme the analysed
+	// backend uses to authenticate requests. Inferred from auth packages
+	// (firebase/php-jwt, tymon/jwt-auth, PyJWT, flask-jwt-extended, jsonwebtoken,
+	// @nestjs/jwt, jjwt, spring-oauth2-resource-server, …), .env config
+	// (JWT_SECRET/JWT_PUBLIC_KEY/JWT_ALGO), the Authorization: Bearer header
+	// convention, and framework defaults. Never produced by an LLM. Absent (nil)
+	// or scheme=NONE with unknown=true when no honest signal exists. The
+	// generation engine reads it (or the per-migration override) to decide which
+	// token-validation middleware/interceptor to emit. Computed at analysis time.
+	AuthSchemeDetection *AuthSchemeDetection `protobuf:"bytes,34,opt,name=auth_scheme_detection,json=authSchemeDetection,proto3" json:"auth_scheme_detection,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *AnalysisSummary) Reset() {
@@ -953,6 +1041,137 @@ func (x *AnalysisSummary) GetRootCandidates() []string {
 	return nil
 }
 
+func (x *AnalysisSummary) GetAuthSchemeDetection() *AuthSchemeDetection {
+	if x != nil {
+		return x.AuthSchemeDetection
+	}
+	return nil
+}
+
+// AuthSchemeDetection records which authentication/validation scheme the analysed
+// code uses and the deterministic evidence behind that conclusion. Produced by a
+// pure pattern scanner (packages + .env + header + framework default), never by an
+// LLM. scheme=NONE with unknown=true is the honest answer when nothing names an
+// auth mechanism. For JWT the signature_alg variant (HS*/RS*/ES*/EdDSA) and the
+// token header are surfaced so the generator can emit the correct validation.
+type AuthSchemeDetection struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The detected scheme. NONE when the code authenticates nothing; the specific
+	// scheme otherwise. The most authoritative signal wins (package > config > header).
+	Scheme AuthScheme `protobuf:"varint,1,opt,name=scheme,proto3,enum=milton_prism.types.analysis.v1.AuthScheme" json:"scheme,omitempty"`
+	// Human-readable scheme name (e.g. "JWT", "OAuth2", "None"). Convenience for
+	// report/UI rendering without an enum lookup.
+	SchemeName string `protobuf:"bytes,2,opt,name=scheme_name,json=schemeName,proto3" json:"scheme_name,omitempty"`
+	// For JWT, the signature algorithm family detected from config/packages:
+	// "HS256" (symmetric secret), "RS256"/"ES256"/"EdDSA" (asymmetric PEM/JWK).
+	// Empty when not JWT or when the variant could not be determined.
+	SignatureAlg string `protobuf:"bytes,3,opt,name=signature_alg,json=signatureAlg,proto3" json:"signature_alg,omitempty"`
+	// The HTTP header the token is read from (e.g. "Authorization"). Empty when
+	// not header-borne or undetermined.
+	TokenHeader string `protobuf:"bytes,4,opt,name=token_header,json=tokenHeader,proto3" json:"token_header,omitempty"`
+	// Token claims the code is observed to read/require (e.g. "sub", "exp", "iss").
+	// Best-effort; empty when none were detected.
+	Claims []string `protobuf:"bytes,5,rep,name=claims,proto3" json:"claims,omitempty"`
+	// Confidence in [0,1] that the detected scheme is correct. Lower when only a
+	// weak signal (framework default, header alone) surfaced.
+	Confidence float32 `protobuf:"fixed32,6,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	// True when no authentication signal was found at all (scheme=NONE). An honest
+	// 'I don't know whether this code authenticates', never a guess.
+	Unknown bool `protobuf:"varint,7,opt,name=unknown,proto3" json:"unknown,omitempty"`
+	// Deterministic evidence strings behind the detection, e.g.
+	// "package: PyJWT (JWT)", "config: .env JWT_SECRET (HS*)", "header: Authorization: Bearer".
+	// Lets the report and the generator anchor to facts, not guesses.
+	Evidence      []string `protobuf:"bytes,8,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthSchemeDetection) Reset() {
+	*x = AuthSchemeDetection{}
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthSchemeDetection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthSchemeDetection) ProtoMessage() {}
+
+func (x *AuthSchemeDetection) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthSchemeDetection.ProtoReflect.Descriptor instead.
+func (*AuthSchemeDetection) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AuthSchemeDetection) GetScheme() AuthScheme {
+	if x != nil {
+		return x.Scheme
+	}
+	return AuthScheme_AUTH_SCHEME_UNSPECIFIED
+}
+
+func (x *AuthSchemeDetection) GetSchemeName() string {
+	if x != nil {
+		return x.SchemeName
+	}
+	return ""
+}
+
+func (x *AuthSchemeDetection) GetSignatureAlg() string {
+	if x != nil {
+		return x.SignatureAlg
+	}
+	return ""
+}
+
+func (x *AuthSchemeDetection) GetTokenHeader() string {
+	if x != nil {
+		return x.TokenHeader
+	}
+	return ""
+}
+
+func (x *AuthSchemeDetection) GetClaims() []string {
+	if x != nil {
+		return x.Claims
+	}
+	return nil
+}
+
+func (x *AuthSchemeDetection) GetConfidence() float32 {
+	if x != nil {
+		return x.Confidence
+	}
+	return 0
+}
+
+func (x *AuthSchemeDetection) GetUnknown() bool {
+	if x != nil {
+		return x.Unknown
+	}
+	return false
+}
+
+func (x *AuthSchemeDetection) GetEvidence() []string {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
 // IntakeAssessment is the deterministic up-front gate the analysis pipeline records
 // before any migrability judgement. It answers a single honest question — "can the
 // platform migrate this repository today?" — and, when the answer is no, says exactly
@@ -996,7 +1215,7 @@ type IntakeAssessment struct {
 
 func (x *IntakeAssessment) Reset() {
 	*x = IntakeAssessment{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1008,7 +1227,7 @@ func (x *IntakeAssessment) String() string {
 func (*IntakeAssessment) ProtoMessage() {}
 
 func (x *IntakeAssessment) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[1]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1021,7 +1240,7 @@ func (x *IntakeAssessment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IntakeAssessment.ProtoReflect.Descriptor instead.
 func (*IntakeAssessment) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{1}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *IntakeAssessment) GetCodebaseKind() CodebaseKind {
@@ -1104,7 +1323,7 @@ type DatabaseDetection struct {
 
 func (x *DatabaseDetection) Reset() {
 	*x = DatabaseDetection{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1116,7 +1335,7 @@ func (x *DatabaseDetection) String() string {
 func (*DatabaseDetection) ProtoMessage() {}
 
 func (x *DatabaseDetection) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[2]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1129,7 +1348,7 @@ func (x *DatabaseDetection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseDetection.ProtoReflect.Descriptor instead.
 func (*DatabaseDetection) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{2}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DatabaseDetection) GetEngines() []DatabaseEngine {
@@ -1184,7 +1403,7 @@ type ArchitecturalPattern struct {
 
 func (x *ArchitecturalPattern) Reset() {
 	*x = ArchitecturalPattern{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1196,7 +1415,7 @@ func (x *ArchitecturalPattern) String() string {
 func (*ArchitecturalPattern) ProtoMessage() {}
 
 func (x *ArchitecturalPattern) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[3]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1209,7 +1428,7 @@ func (x *ArchitecturalPattern) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArchitecturalPattern.ProtoReflect.Descriptor instead.
 func (*ArchitecturalPattern) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{3}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ArchitecturalPattern) GetKind() ArchitecturalPatternKind {
@@ -1273,7 +1492,7 @@ type SecurityFinding struct {
 
 func (x *SecurityFinding) Reset() {
 	*x = SecurityFinding{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1285,7 +1504,7 @@ func (x *SecurityFinding) String() string {
 func (*SecurityFinding) ProtoMessage() {}
 
 func (x *SecurityFinding) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[4]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1298,7 +1517,7 @@ func (x *SecurityFinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecurityFinding.ProtoReflect.Descriptor instead.
 func (*SecurityFinding) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{4}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SecurityFinding) GetType() SecurityFindingType {
@@ -1375,7 +1594,7 @@ type UnreachableModule struct {
 
 func (x *UnreachableModule) Reset() {
 	*x = UnreachableModule{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1387,7 +1606,7 @@ func (x *UnreachableModule) String() string {
 func (*UnreachableModule) ProtoMessage() {}
 
 func (x *UnreachableModule) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[5]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1400,7 +1619,7 @@ func (x *UnreachableModule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnreachableModule.ProtoReflect.Descriptor instead.
 func (*UnreachableModule) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{5}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UnreachableModule) GetModule() string {
@@ -1448,7 +1667,7 @@ type Technology struct {
 
 func (x *Technology) Reset() {
 	*x = Technology{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1460,7 +1679,7 @@ func (x *Technology) String() string {
 func (*Technology) ProtoMessage() {}
 
 func (x *Technology) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[6]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1473,7 +1692,7 @@ func (x *Technology) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Technology.ProtoReflect.Descriptor instead.
 func (*Technology) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{6}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Technology) GetName() string {
@@ -1543,7 +1762,7 @@ type Vulnerability struct {
 
 func (x *Vulnerability) Reset() {
 	*x = Vulnerability{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1555,7 +1774,7 @@ func (x *Vulnerability) String() string {
 func (*Vulnerability) ProtoMessage() {}
 
 func (x *Vulnerability) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[7]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1568,7 +1787,7 @@ func (x *Vulnerability) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Vulnerability.ProtoReflect.Descriptor instead.
 func (*Vulnerability) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{7}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Vulnerability) GetIdentifierRef() string {
@@ -1635,7 +1854,7 @@ type RouteInfo struct {
 
 func (x *RouteInfo) Reset() {
 	*x = RouteInfo{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1647,7 +1866,7 @@ func (x *RouteInfo) String() string {
 func (*RouteInfo) ProtoMessage() {}
 
 func (x *RouteInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[8]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1660,7 +1879,7 @@ func (x *RouteInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteInfo.ProtoReflect.Descriptor instead.
 func (*RouteInfo) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{8}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RouteInfo) GetMethod() string {
@@ -1732,7 +1951,7 @@ type ModuleCard struct {
 
 func (x *ModuleCard) Reset() {
 	*x = ModuleCard{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1744,7 +1963,7 @@ func (x *ModuleCard) String() string {
 func (*ModuleCard) ProtoMessage() {}
 
 func (x *ModuleCard) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[9]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1757,7 +1976,7 @@ func (x *ModuleCard) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleCard.ProtoReflect.Descriptor instead.
 func (*ModuleCard) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{9}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ModuleCard) GetModule() string {
@@ -1861,7 +2080,7 @@ type SharedStateHub struct {
 
 func (x *SharedStateHub) Reset() {
 	*x = SharedStateHub{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[10]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1873,7 +2092,7 @@ func (x *SharedStateHub) String() string {
 func (*SharedStateHub) ProtoMessage() {}
 
 func (x *SharedStateHub) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[10]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1886,7 +2105,7 @@ func (x *SharedStateHub) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SharedStateHub.ProtoReflect.Descriptor instead.
 func (*SharedStateHub) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{10}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SharedStateHub) GetModule() string {
@@ -1926,7 +2145,7 @@ type BlueprintInfo struct {
 
 func (x *BlueprintInfo) Reset() {
 	*x = BlueprintInfo{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[11]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1938,7 +2157,7 @@ func (x *BlueprintInfo) String() string {
 func (*BlueprintInfo) ProtoMessage() {}
 
 func (x *BlueprintInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[11]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1951,7 +2170,7 @@ func (x *BlueprintInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlueprintInfo.ProtoReflect.Descriptor instead.
 func (*BlueprintInfo) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{11}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *BlueprintInfo) GetName() string {
@@ -2001,7 +2220,7 @@ type ModuleClassification struct {
 
 func (x *ModuleClassification) Reset() {
 	*x = ModuleClassification{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[12]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2013,7 +2232,7 @@ func (x *ModuleClassification) String() string {
 func (*ModuleClassification) ProtoMessage() {}
 
 func (x *ModuleClassification) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[12]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2026,7 +2245,7 @@ func (x *ModuleClassification) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleClassification.ProtoReflect.Descriptor instead.
 func (*ModuleClassification) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{12}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ModuleClassification) GetDomainModules() []string {
@@ -2080,7 +2299,7 @@ type DependencyEdge struct {
 
 func (x *DependencyEdge) Reset() {
 	*x = DependencyEdge{}
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[13]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2092,7 +2311,7 @@ func (x *DependencyEdge) String() string {
 func (*DependencyEdge) ProtoMessage() {}
 
 func (x *DependencyEdge) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[13]
+	mi := &file_milton_prism_types_analysis_v1_analysis_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2105,7 +2324,7 @@ func (x *DependencyEdge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DependencyEdge.ProtoReflect.Descriptor instead.
 func (*DependencyEdge) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{13}
+	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DependencyEdge) GetFromModule() string {
@@ -2133,7 +2352,7 @@ var File_milton_prism_types_analysis_v1_analysis_proto protoreflect.FileDescript
 
 const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\n" +
-	"-milton_prism/types/analysis/v1/analysis.proto\x12\x1emilton_prism.types.analysis.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xed+\n" +
+	"-milton_prism/types/analysis/v1/analysis.proto\x12\x1emilton_prism.types.analysis.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\x8e.\n" +
 	"\x0fAnalysisSummary\x12P\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B0\xe0A\b\xbaG*:\x03\x12\x011\x92\x02\"System-assigned unique identifier.R\n" +
@@ -2179,9 +2398,22 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\x11intake_assessment\x18\x1e \x01(\v20.milton_prism.types.analysis.v1.IntakeAssessmentB\xb5\x01\xbaG\xb1\x01\x92\x02\xad\x01Deterministic intake gate: is this a migratable backend in a supported language? Carries codebase_kind, language support, migratable flag, and honest warnings. Non-blocking.R\x10intakeAssessment\x12\xb2\x02\n" +
 	"\x11security_findings\x18\x1f \x03(\v2/.milton_prism.types.analysis.v1.SecurityFindingB\xd3\x01\xbaG\xcf\x01\x92\x02\xcb\x01Deterministic code-level security findings (hardcoded secrets/credentials) detected in the analysed source, each with file:line, severity, and confidence. Distinct from dependency CVEs. Empty when clean.R\x10securityFindings\x12\xa4\x01\n" +
 	"\x11root_subdirectory\x18  \x01(\tBw\xe0A\x03\xbaGq:\t\x12\abackend\x92\x02cRepository-relative subdirectory the analysis was scoped to. Empty means the whole repository root.R\x10rootSubdirectory\x12\x8e\x02\n" +
-	"\x0froot_candidates\x18! \x03(\tB\xe4\x01\xe0A\x03\xbaG\xdd\x01\x92\x02\xd9\x01Detected candidate project-root subdirectories when the repository has multiple roots and none is selected yet. Repo-relative. Empty for single-root repos or once a root is chosen. The user selects one via SelectRoot.R\x0erootCandidates:j\xbaGgJ\x0fAnalysisSummary\x92\x02SOutput of a code analysis run: technologies, vulnerabilities, and dependency graph.B\x0e\n" +
+	"\x0froot_candidates\x18! \x03(\tB\xe4\x01\xe0A\x03\xbaG\xdd\x01\x92\x02\xd9\x01Detected candidate project-root subdirectories when the repository has multiple roots and none is selected yet. Repo-relative. Empty for single-root repos or once a root is chosen. The user selects one via SelectRoot.R\x0erootCandidates\x12\x9e\x02\n" +
+	"\x15auth_scheme_detection\x18\" \x01(\v23.milton_prism.types.analysis.v1.AuthSchemeDetectionB\xb4\x01\xbaG\xb0\x01\x92\x02\xac\x01Deterministically detected authentication/validation scheme (JWT/OAuth2/session/API key/Basic/none) with the evidence behind the detection. Honest 'unknown' when no signal.R\x13authSchemeDetection:j\xbaGgJ\x0fAnalysisSummary\x92\x02SOutput of a code analysis run: technologies, vulnerabilities, and dependency graph.B\x0e\n" +
 	"\f_delete_timeB\r\n" +
-	"\v_purge_time\"\xf8\b\n" +
+	"\v_purge_time\"\xc8\b\n" +
+	"\x13AuthSchemeDetection\x12\x91\x01\n" +
+	"\x06scheme\x18\x01 \x01(\x0e2*.milton_prism.types.analysis.v1.AuthSchemeBM\xbaGJ\x92\x02GDetected authentication scheme (JWT/OAuth2/session/API key/Basic/none).R\x06scheme\x12R\n" +
+	"\vscheme_name\x18\x02 \x01(\tB1\xbaG.:\x05\x12\x03JWT\x92\x02$Display name of the detected scheme.R\n" +
+	"schemeName\x12\x91\x01\n" +
+	"\rsignature_alg\x18\x03 \x01(\tBl\xbaGi:\a\x12\x05HS256\x92\x02]JWT signature algorithm family (HS256/RS256/ES256/EdDSA). Empty when not JWT or undetermined.R\fsignatureAlg\x12\x8c\x01\n" +
+	"\ftoken_header\x18\x04 \x01(\tBi\xbaGf:\x0f\x12\rAuthorization\x92\x02RHTTP header the token is carried in (e.g. Authorization). Empty when undetermined.R\vtokenHeader\x12k\n" +
+	"\x06claims\x18\x05 \x03(\tBS\xbaGP\x92\x02MToken claims the code reads/requires (best-effort). Empty when none detected.R\x06claims\x12e\n" +
+	"\n" +
+	"confidence\x18\x06 \x01(\x02BE\xbaGB:\x05\x12\x030.9\x92\x028Confidence in [0,1] that the detected scheme is correct.R\n" +
+	"confidence\x12d\n" +
+	"\aunknown\x18\a \x01(\bBJ\xbaGG:\a\x12\x05false\x92\x02;True when no authentication signal was found (scheme=NONE).R\aunknown\x12x\n" +
+	"\bevidence\x18\b \x03(\tB\\\xbaGY\x92\x02VDeterministic evidence strings behind the detection (package/config/header/framework).R\bevidence:r\xbaGoJ\x13AuthSchemeDetection\x92\x02WDeterministically detected authentication scheme and the evidence behind the detection.\"\xf8\b\n" +
 	"\x10IntakeAssessment\x12\x95\x01\n" +
 	"\rcodebase_kind\x18\x01 \x01(\x0e2,.milton_prism.types.analysis.v1.CodebaseKindBB\xbaG?\x92\x02<Detected codebase kind. The platform migrates BACKEND today.R\fcodebaseKind\x12o\n" +
 	"\x0fkind_confidence\x18\x02 \x01(\x02BF\xbaGC:\x05\x12\x030.9\x92\x029Confidence in the codebase_kind classification, in [0,1].R\x0ekindConfidence\x12t\n" +
@@ -2280,13 +2512,14 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\vfrom_module\x18\x01 \x01(\tBO\xbaGL:\x10\x12\x0eservice/orders\x92\x027Fully qualified name of the module with the dependency.R\n" +
 	"fromModule\x12m\n" +
 	"\tto_module\x18\x02 \x01(\tBP\xbaGM:\x13\x12\x11service/inventory\x92\x025Fully qualified name of the module being depended on.R\btoModule\x12N\n" +
-	"\x06weight\x18\x03 \x01(\rB6\xbaG3:\x04\x12\x0212\x92\x02*Coupling strength (higher = more coupled).R\x06weight:P\xbaGMJ\x0eDependencyEdge\x92\x02:Directed edge between two modules in the dependency graph.*\xb0\x01\n" +
+	"\x06weight\x18\x03 \x01(\rB6\xbaG3:\x04\x12\x0212\x92\x02*Coupling strength (higher = more coupled).R\x06weight:P\xbaGMJ\x0eDependencyEdge\x92\x02:Directed edge between two modules in the dependency graph.*\xce\x01\n" +
 	"\rAnalysisState\x12\x1e\n" +
 	"\x1aANALYSIS_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16ANALYSIS_STATE_RUNNING\x10\x01\x12\x1c\n" +
 	"\x18ANALYSIS_STATE_COMPLETED\x10\x02\x12\x19\n" +
 	"\x15ANALYSIS_STATE_FAILED\x10\x03\x12*\n" +
-	"&ANALYSIS_STATE_AWAITING_ROOT_SELECTION\x10\x04*\x97\x01\n" +
+	"&ANALYSIS_STATE_AWAITING_ROOT_SELECTION\x10\x04\x12\x1c\n" +
+	"\x18ANALYSIS_STATE_CANCELLED\x10\x05*\x97\x01\n" +
 	"\x10TechnologyStatus\x12!\n" +
 	"\x1dTECHNOLOGY_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19TECHNOLOGY_STATUS_CURRENT\x10\x01\x12\x1e\n" +
@@ -2297,7 +2530,16 @@ const file_milton_prism_types_analysis_v1_analysis_proto_rawDesc = "" +
 	"\fSEVERITY_LOW\x10\x01\x12\x13\n" +
 	"\x0fSEVERITY_MEDIUM\x10\x02\x12\x11\n" +
 	"\rSEVERITY_HIGH\x10\x03\x12\x15\n" +
-	"\x11SEVERITY_CRITICAL\x10\x04*\xb0\x01\n" +
+	"\x11SEVERITY_CRITICAL\x10\x04*\xbc\x01\n" +
+	"\n" +
+	"AuthScheme\x12\x1b\n" +
+	"\x17AUTH_SCHEME_UNSPECIFIED\x10\x00\x12\x14\n" +
+	"\x10AUTH_SCHEME_NONE\x10\x01\x12\x13\n" +
+	"\x0fAUTH_SCHEME_JWT\x10\x02\x12\x16\n" +
+	"\x12AUTH_SCHEME_OAUTH2\x10\x03\x12\x1e\n" +
+	"\x1aAUTH_SCHEME_SESSION_COOKIE\x10\x04\x12\x17\n" +
+	"\x13AUTH_SCHEME_API_KEY\x10\x05\x12\x15\n" +
+	"\x11AUTH_SCHEME_BASIC\x10\x06*\xb0\x01\n" +
 	"\fCodebaseKind\x12\x1d\n" +
 	"\x19CODEBASE_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CODEBASE_KIND_BACKEND\x10\x01\x12\x1a\n" +
@@ -2344,68 +2586,72 @@ func file_milton_prism_types_analysis_v1_analysis_proto_rawDescGZIP() []byte {
 	return file_milton_prism_types_analysis_v1_analysis_proto_rawDescData
 }
 
-var file_milton_prism_types_analysis_v1_analysis_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_milton_prism_types_analysis_v1_analysis_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_milton_prism_types_analysis_v1_analysis_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
+var file_milton_prism_types_analysis_v1_analysis_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_milton_prism_types_analysis_v1_analysis_proto_goTypes = []any{
 	(AnalysisState)(0),               // 0: milton_prism.types.analysis.v1.AnalysisState
 	(TechnologyStatus)(0),            // 1: milton_prism.types.analysis.v1.TechnologyStatus
 	(Severity)(0),                    // 2: milton_prism.types.analysis.v1.Severity
-	(CodebaseKind)(0),                // 3: milton_prism.types.analysis.v1.CodebaseKind
-	(DatabaseEngine)(0),              // 4: milton_prism.types.analysis.v1.DatabaseEngine
-	(ArchitecturalPatternKind)(0),    // 5: milton_prism.types.analysis.v1.ArchitecturalPatternKind
-	(SecuritySeverity)(0),            // 6: milton_prism.types.analysis.v1.SecuritySeverity
-	(SecurityFindingType)(0),         // 7: milton_prism.types.analysis.v1.SecurityFindingType
-	(*AnalysisSummary)(nil),          // 8: milton_prism.types.analysis.v1.AnalysisSummary
-	(*IntakeAssessment)(nil),         // 9: milton_prism.types.analysis.v1.IntakeAssessment
-	(*DatabaseDetection)(nil),        // 10: milton_prism.types.analysis.v1.DatabaseDetection
-	(*ArchitecturalPattern)(nil),     // 11: milton_prism.types.analysis.v1.ArchitecturalPattern
-	(*SecurityFinding)(nil),          // 12: milton_prism.types.analysis.v1.SecurityFinding
-	(*UnreachableModule)(nil),        // 13: milton_prism.types.analysis.v1.UnreachableModule
-	(*Technology)(nil),               // 14: milton_prism.types.analysis.v1.Technology
-	(*Vulnerability)(nil),            // 15: milton_prism.types.analysis.v1.Vulnerability
-	(*RouteInfo)(nil),                // 16: milton_prism.types.analysis.v1.RouteInfo
-	(*ModuleCard)(nil),               // 17: milton_prism.types.analysis.v1.ModuleCard
-	(*SharedStateHub)(nil),           // 18: milton_prism.types.analysis.v1.SharedStateHub
-	(*BlueprintInfo)(nil),            // 19: milton_prism.types.analysis.v1.BlueprintInfo
-	(*ModuleClassification)(nil),     // 20: milton_prism.types.analysis.v1.ModuleClassification
-	(*DependencyEdge)(nil),           // 21: milton_prism.types.analysis.v1.DependencyEdge
-	(*timestamppb.Timestamp)(nil),    // 22: google.protobuf.Timestamp
-	(*v1.MigrabilityScore)(nil),      // 23: milton_prism.types.common.v1.MigrabilityScore
-	(*v1.MigrabilityAssessment)(nil), // 24: milton_prism.types.common.v1.MigrabilityAssessment
+	(AuthScheme)(0),                  // 3: milton_prism.types.analysis.v1.AuthScheme
+	(CodebaseKind)(0),                // 4: milton_prism.types.analysis.v1.CodebaseKind
+	(DatabaseEngine)(0),              // 5: milton_prism.types.analysis.v1.DatabaseEngine
+	(ArchitecturalPatternKind)(0),    // 6: milton_prism.types.analysis.v1.ArchitecturalPatternKind
+	(SecuritySeverity)(0),            // 7: milton_prism.types.analysis.v1.SecuritySeverity
+	(SecurityFindingType)(0),         // 8: milton_prism.types.analysis.v1.SecurityFindingType
+	(*AnalysisSummary)(nil),          // 9: milton_prism.types.analysis.v1.AnalysisSummary
+	(*AuthSchemeDetection)(nil),      // 10: milton_prism.types.analysis.v1.AuthSchemeDetection
+	(*IntakeAssessment)(nil),         // 11: milton_prism.types.analysis.v1.IntakeAssessment
+	(*DatabaseDetection)(nil),        // 12: milton_prism.types.analysis.v1.DatabaseDetection
+	(*ArchitecturalPattern)(nil),     // 13: milton_prism.types.analysis.v1.ArchitecturalPattern
+	(*SecurityFinding)(nil),          // 14: milton_prism.types.analysis.v1.SecurityFinding
+	(*UnreachableModule)(nil),        // 15: milton_prism.types.analysis.v1.UnreachableModule
+	(*Technology)(nil),               // 16: milton_prism.types.analysis.v1.Technology
+	(*Vulnerability)(nil),            // 17: milton_prism.types.analysis.v1.Vulnerability
+	(*RouteInfo)(nil),                // 18: milton_prism.types.analysis.v1.RouteInfo
+	(*ModuleCard)(nil),               // 19: milton_prism.types.analysis.v1.ModuleCard
+	(*SharedStateHub)(nil),           // 20: milton_prism.types.analysis.v1.SharedStateHub
+	(*BlueprintInfo)(nil),            // 21: milton_prism.types.analysis.v1.BlueprintInfo
+	(*ModuleClassification)(nil),     // 22: milton_prism.types.analysis.v1.ModuleClassification
+	(*DependencyEdge)(nil),           // 23: milton_prism.types.analysis.v1.DependencyEdge
+	(*timestamppb.Timestamp)(nil),    // 24: google.protobuf.Timestamp
+	(*v1.MigrabilityScore)(nil),      // 25: milton_prism.types.common.v1.MigrabilityScore
+	(*v1.MigrabilityAssessment)(nil), // 26: milton_prism.types.common.v1.MigrabilityAssessment
 }
 var file_milton_prism_types_analysis_v1_analysis_proto_depIdxs = []int32{
 	0,  // 0: milton_prism.types.analysis.v1.AnalysisSummary.state:type_name -> milton_prism.types.analysis.v1.AnalysisState
-	14, // 1: milton_prism.types.analysis.v1.AnalysisSummary.technologies:type_name -> milton_prism.types.analysis.v1.Technology
-	15, // 2: milton_prism.types.analysis.v1.AnalysisSummary.vulnerabilities:type_name -> milton_prism.types.analysis.v1.Vulnerability
-	21, // 3: milton_prism.types.analysis.v1.AnalysisSummary.dependency_graph:type_name -> milton_prism.types.analysis.v1.DependencyEdge
-	22, // 4: milton_prism.types.analysis.v1.AnalysisSummary.create_time:type_name -> google.protobuf.Timestamp
-	22, // 5: milton_prism.types.analysis.v1.AnalysisSummary.update_time:type_name -> google.protobuf.Timestamp
-	22, // 6: milton_prism.types.analysis.v1.AnalysisSummary.delete_time:type_name -> google.protobuf.Timestamp
-	22, // 7: milton_prism.types.analysis.v1.AnalysisSummary.purge_time:type_name -> google.protobuf.Timestamp
-	17, // 8: milton_prism.types.analysis.v1.AnalysisSummary.module_cards:type_name -> milton_prism.types.analysis.v1.ModuleCard
-	19, // 9: milton_prism.types.analysis.v1.AnalysisSummary.blueprints:type_name -> milton_prism.types.analysis.v1.BlueprintInfo
-	20, // 10: milton_prism.types.analysis.v1.AnalysisSummary.module_classification:type_name -> milton_prism.types.analysis.v1.ModuleClassification
-	23, // 11: milton_prism.types.analysis.v1.AnalysisSummary.migrability_score:type_name -> milton_prism.types.common.v1.MigrabilityScore
-	24, // 12: milton_prism.types.analysis.v1.AnalysisSummary.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
-	18, // 13: milton_prism.types.analysis.v1.AnalysisSummary.shared_state_hubs:type_name -> milton_prism.types.analysis.v1.SharedStateHub
-	13, // 14: milton_prism.types.analysis.v1.AnalysisSummary.unreachable_modules:type_name -> milton_prism.types.analysis.v1.UnreachableModule
-	10, // 15: milton_prism.types.analysis.v1.AnalysisSummary.database_detection:type_name -> milton_prism.types.analysis.v1.DatabaseDetection
-	11, // 16: milton_prism.types.analysis.v1.AnalysisSummary.architectural_pattern:type_name -> milton_prism.types.analysis.v1.ArchitecturalPattern
-	9,  // 17: milton_prism.types.analysis.v1.AnalysisSummary.intake_assessment:type_name -> milton_prism.types.analysis.v1.IntakeAssessment
-	12, // 18: milton_prism.types.analysis.v1.AnalysisSummary.security_findings:type_name -> milton_prism.types.analysis.v1.SecurityFinding
-	3,  // 19: milton_prism.types.analysis.v1.IntakeAssessment.codebase_kind:type_name -> milton_prism.types.analysis.v1.CodebaseKind
-	4,  // 20: milton_prism.types.analysis.v1.DatabaseDetection.engines:type_name -> milton_prism.types.analysis.v1.DatabaseEngine
-	5,  // 21: milton_prism.types.analysis.v1.ArchitecturalPattern.kind:type_name -> milton_prism.types.analysis.v1.ArchitecturalPatternKind
-	7,  // 22: milton_prism.types.analysis.v1.SecurityFinding.type:type_name -> milton_prism.types.analysis.v1.SecurityFindingType
-	6,  // 23: milton_prism.types.analysis.v1.SecurityFinding.severity:type_name -> milton_prism.types.analysis.v1.SecuritySeverity
-	1,  // 24: milton_prism.types.analysis.v1.Technology.status:type_name -> milton_prism.types.analysis.v1.TechnologyStatus
-	2,  // 25: milton_prism.types.analysis.v1.Vulnerability.severity:type_name -> milton_prism.types.analysis.v1.Severity
-	16, // 26: milton_prism.types.analysis.v1.ModuleCard.routes:type_name -> milton_prism.types.analysis.v1.RouteInfo
-	27, // [27:27] is the sub-list for method output_type
-	27, // [27:27] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	16, // 1: milton_prism.types.analysis.v1.AnalysisSummary.technologies:type_name -> milton_prism.types.analysis.v1.Technology
+	17, // 2: milton_prism.types.analysis.v1.AnalysisSummary.vulnerabilities:type_name -> milton_prism.types.analysis.v1.Vulnerability
+	23, // 3: milton_prism.types.analysis.v1.AnalysisSummary.dependency_graph:type_name -> milton_prism.types.analysis.v1.DependencyEdge
+	24, // 4: milton_prism.types.analysis.v1.AnalysisSummary.create_time:type_name -> google.protobuf.Timestamp
+	24, // 5: milton_prism.types.analysis.v1.AnalysisSummary.update_time:type_name -> google.protobuf.Timestamp
+	24, // 6: milton_prism.types.analysis.v1.AnalysisSummary.delete_time:type_name -> google.protobuf.Timestamp
+	24, // 7: milton_prism.types.analysis.v1.AnalysisSummary.purge_time:type_name -> google.protobuf.Timestamp
+	19, // 8: milton_prism.types.analysis.v1.AnalysisSummary.module_cards:type_name -> milton_prism.types.analysis.v1.ModuleCard
+	21, // 9: milton_prism.types.analysis.v1.AnalysisSummary.blueprints:type_name -> milton_prism.types.analysis.v1.BlueprintInfo
+	22, // 10: milton_prism.types.analysis.v1.AnalysisSummary.module_classification:type_name -> milton_prism.types.analysis.v1.ModuleClassification
+	25, // 11: milton_prism.types.analysis.v1.AnalysisSummary.migrability_score:type_name -> milton_prism.types.common.v1.MigrabilityScore
+	26, // 12: milton_prism.types.analysis.v1.AnalysisSummary.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
+	20, // 13: milton_prism.types.analysis.v1.AnalysisSummary.shared_state_hubs:type_name -> milton_prism.types.analysis.v1.SharedStateHub
+	15, // 14: milton_prism.types.analysis.v1.AnalysisSummary.unreachable_modules:type_name -> milton_prism.types.analysis.v1.UnreachableModule
+	12, // 15: milton_prism.types.analysis.v1.AnalysisSummary.database_detection:type_name -> milton_prism.types.analysis.v1.DatabaseDetection
+	13, // 16: milton_prism.types.analysis.v1.AnalysisSummary.architectural_pattern:type_name -> milton_prism.types.analysis.v1.ArchitecturalPattern
+	11, // 17: milton_prism.types.analysis.v1.AnalysisSummary.intake_assessment:type_name -> milton_prism.types.analysis.v1.IntakeAssessment
+	14, // 18: milton_prism.types.analysis.v1.AnalysisSummary.security_findings:type_name -> milton_prism.types.analysis.v1.SecurityFinding
+	10, // 19: milton_prism.types.analysis.v1.AnalysisSummary.auth_scheme_detection:type_name -> milton_prism.types.analysis.v1.AuthSchemeDetection
+	3,  // 20: milton_prism.types.analysis.v1.AuthSchemeDetection.scheme:type_name -> milton_prism.types.analysis.v1.AuthScheme
+	4,  // 21: milton_prism.types.analysis.v1.IntakeAssessment.codebase_kind:type_name -> milton_prism.types.analysis.v1.CodebaseKind
+	5,  // 22: milton_prism.types.analysis.v1.DatabaseDetection.engines:type_name -> milton_prism.types.analysis.v1.DatabaseEngine
+	6,  // 23: milton_prism.types.analysis.v1.ArchitecturalPattern.kind:type_name -> milton_prism.types.analysis.v1.ArchitecturalPatternKind
+	8,  // 24: milton_prism.types.analysis.v1.SecurityFinding.type:type_name -> milton_prism.types.analysis.v1.SecurityFindingType
+	7,  // 25: milton_prism.types.analysis.v1.SecurityFinding.severity:type_name -> milton_prism.types.analysis.v1.SecuritySeverity
+	1,  // 26: milton_prism.types.analysis.v1.Technology.status:type_name -> milton_prism.types.analysis.v1.TechnologyStatus
+	2,  // 27: milton_prism.types.analysis.v1.Vulnerability.severity:type_name -> milton_prism.types.analysis.v1.Severity
+	18, // 28: milton_prism.types.analysis.v1.ModuleCard.routes:type_name -> milton_prism.types.analysis.v1.RouteInfo
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_milton_prism_types_analysis_v1_analysis_proto_init() }
@@ -2419,8 +2665,8 @@ func file_milton_prism_types_analysis_v1_analysis_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_types_analysis_v1_analysis_proto_rawDesc), len(file_milton_prism_types_analysis_v1_analysis_proto_rawDesc)),
-			NumEnums:      8,
-			NumMessages:   14,
+			NumEnums:      9,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

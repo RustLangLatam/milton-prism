@@ -45,7 +45,11 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 		if err != nil {
 			return err
 		}
-		billingClient = migrationrepo.NewBillingClientAdapter(grpcBilling)
+		// RecordUsage requires a SYSTEM caller (billing rejects non-system writers
+		// with BIL101). svc.SystemAccessToken mints a short-lived system token from
+		// this binary's signing key and seeds a matching system session in the
+		// shared cache so the billing handler resolves system_user from the session.
+		billingClient = migrationrepo.NewBillingClientAdapter(grpcBilling, svc.SystemAccessToken)
 	}
 
 	var identityClient ports.IdentityClient
@@ -80,23 +84,32 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 		decomposeEnqueuer = migrationrepo.NewNoOpDecomposeEnqueuer()
 	}
 
+	// usageRecorder forwards LLM token spend to billing over gRPC (best-effort).
+	// It is the same billing client used for quota enforcement, served on the
+	// analysis-services endpoint. Nil when no analysis/billing endpoint is
+	// configured — the adapters then skip recording (degrade open).
+	var usageRecorder ports.UsageRecorder
+	if billingClient != nil {
+		usageRecorder = billingClient
+	}
+
 	var migrabilityAssessor ports.MigrabilityAssessor
 	analysisDB := mongoClient.Database("milton_prism_analysis")
-	if adapter, err := migrationrepo.NewMigrabilityAssessorAdapter(analysisDB); err != nil {
+	if adapter, err := migrationrepo.NewMigrabilityAssessorAdapter(analysisDB, usageRecorder); err != nil {
 		applog.Warningf("migration: migrability assessor disabled (ANTHROPIC_API_KEY not set): error=%v", err)
 	} else {
 		migrabilityAssessor = adapter
 	}
 
 	var roadmapEnricher ports.RoadmapEnricher
-	if adapter, err := migrationrepo.NewRoadmapEnricherAdapter(); err != nil {
+	if adapter, err := migrationrepo.NewRoadmapEnricherAdapter(usageRecorder); err != nil {
 		applog.Warningf("migration: roadmap enricher disabled (ANTHROPIC_API_KEY not set): error=%v", err)
 	} else {
 		roadmapEnricher = adapter
 	}
 
 	var blueprintGenerator ports.BlueprintGenerator
-	if adapter, err := migrationrepo.NewBlueprintGeneratorAdapter(analysisDB); err != nil {
+	if adapter, err := migrationrepo.NewBlueprintGeneratorAdapter(analysisDB, usageRecorder); err != nil {
 		applog.Warningf("migration: blueprint generator disabled (ANTHROPIC_API_KEY not set): error=%v", err)
 	} else {
 		blueprintGenerator = adapter

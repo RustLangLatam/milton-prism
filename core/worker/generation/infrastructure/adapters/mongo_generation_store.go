@@ -67,6 +67,7 @@ type generationResultDoc struct {
 	CacheCreationInputTokens int64              `bson:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64              `bson:"cache_read_input_tokens"`
 	OutputTokens             int64              `bson:"output_tokens"`
+	Model                    string             `bson:"model,omitempty"`
 	AgentRawResult           string             `bson:"agent_raw_result,omitempty"`
 	UpdatedAt                primitive.DateTime `bson:"updated_at"`
 }
@@ -95,6 +96,7 @@ func (s *MongoGenerationStore) UpsertRecord(ctx context.Context, rec workerdomai
 		CacheCreationInputTokens: rec.CacheCreationInputTokens,
 		CacheReadInputTokens:     rec.CacheReadInputTokens,
 		OutputTokens:             rec.OutputTokens,
+		Model:                    rec.Model,
 		AgentRawResult:           rec.AgentRawResult,
 		UpdatedAt:                primitive.NewDateTimeFromTime(time.Now().UTC()),
 	}
@@ -130,6 +132,7 @@ func (s *MongoGenerationStore) ListRecords(ctx context.Context, migrationID uint
 			CacheCreationInputTokens: d.CacheCreationInputTokens,
 			CacheReadInputTokens:     d.CacheReadInputTokens,
 			OutputTokens:             d.OutputTokens,
+			Model:                    d.Model,
 			AgentRawResult:           d.AgentRawResult,
 		}
 	}

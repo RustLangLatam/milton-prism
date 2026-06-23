@@ -10,6 +10,7 @@ type GRPCClientsCfg struct {
 	IdentityClientConfig        *GrpcClientCfg `toml:"identityServices"`
 	RepositoryClientConfig      *GrpcClientCfg `toml:"repositoryServices"`
 	AnalysisClientConfig        *GrpcClientCfg `toml:"analysisServices"`
+	MigrationClientConfig       *GrpcClientCfg `toml:"migrationServices"`
 	UserClientConfig            *GrpcClientCfg `toml:"usersServices"`
 	CompaniesClientConfig       *GrpcClientCfg `toml:"companiesServices"`
 	ProfilesClientConfig        *GrpcClientCfg `toml:"profilesServices"`

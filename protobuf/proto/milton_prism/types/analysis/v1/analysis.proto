@@ -33,6 +33,11 @@ enum AnalysisState {
   // state (no retry loop) until the user picks a root via SelectRoot, which
   // re-enqueues the analysis scoped to the chosen root.
   ANALYSIS_STATE_AWAITING_ROOT_SELECTION = 4;
+  // The analysis was cancelled by the user via CancelAnalysis. Terminal: a
+  // cancelled analysis is no longer running and is not retried. Soft-cancel —
+  // an in-flight worker computation may still finish but its result is
+  // discarded (the worker only persists a final state while still RUNNING).
+  ANALYSIS_STATE_CANCELLED = 5;
 }
 
 // TechnologyStatus reflects how current a detected technology version is.
@@ -337,6 +342,99 @@ message AnalysisSummary {
     (google.api.field_behavior) = OUTPUT_ONLY,
     (openapi.v3.property) = {description: "Detected candidate project-root subdirectories when the repository has multiple roots and none is selected yet. Repo-relative. Empty for single-root repos or once a root is chosen. The user selects one via SelectRoot."}
   ];
+
+  // Deterministically detected authentication/validation scheme the analysed
+  // backend uses to authenticate requests. Inferred from auth packages
+  // (firebase/php-jwt, tymon/jwt-auth, PyJWT, flask-jwt-extended, jsonwebtoken,
+  // @nestjs/jwt, jjwt, spring-oauth2-resource-server, …), .env config
+  // (JWT_SECRET/JWT_PUBLIC_KEY/JWT_ALGO), the Authorization: Bearer header
+  // convention, and framework defaults. Never produced by an LLM. Absent (nil)
+  // or scheme=NONE with unknown=true when no honest signal exists. The
+  // generation engine reads it (or the per-migration override) to decide which
+  // token-validation middleware/interceptor to emit. Computed at analysis time.
+  AuthSchemeDetection auth_scheme_detection = 34 [(openapi.v3.property) = {description: "Deterministically detected authentication/validation scheme (JWT/OAuth2/session/API key/Basic/none) with the evidence behind the detection. Honest 'unknown' when no signal."}];
+}
+
+// AuthScheme enumerates the request-authentication schemes the analysis can
+// deterministically recognise. UNSPECIFIED is the zero value; NONE is the honest
+// answer when the code authenticates nothing (no auth package, header, or config).
+enum AuthScheme {
+  // No scheme set (default zero value).
+  AUTH_SCHEME_UNSPECIFIED = 0;
+  // The code performs no request authentication (honest 'none', not 'unknown').
+  AUTH_SCHEME_NONE = 1;
+  // JSON Web Token bearer auth (firebase/php-jwt, PyJWT, jsonwebtoken, jjwt, …).
+  AUTH_SCHEME_JWT = 2;
+  // OAuth2 / OpenID Connect resource-server flow (authlib, spring-oauth2, …).
+  AUTH_SCHEME_OAUTH2 = 3;
+  // Server-side session cookie auth (framework session middleware).
+  AUTH_SCHEME_SESSION_COOKIE = 4;
+  // Static API-key / token auth (X-API-Key header or equivalent).
+  AUTH_SCHEME_API_KEY = 5;
+  // HTTP Basic authentication.
+  AUTH_SCHEME_BASIC = 6;
+}
+
+// AuthSchemeDetection records which authentication/validation scheme the analysed
+// code uses and the deterministic evidence behind that conclusion. Produced by a
+// pure pattern scanner (packages + .env + header + framework default), never by an
+// LLM. scheme=NONE with unknown=true is the honest answer when nothing names an
+// auth mechanism. For JWT the signature_alg variant (HS*/RS*/ES*/EdDSA) and the
+// token header are surfaced so the generator can emit the correct validation.
+message AuthSchemeDetection {
+  option (openapi.v3.schema) = {
+    title: "AuthSchemeDetection"
+    description: "Deterministically detected authentication scheme and the evidence behind the detection."
+  };
+
+  // The detected scheme. NONE when the code authenticates nothing; the specific
+  // scheme otherwise. The most authoritative signal wins (package > config > header).
+  AuthScheme scheme = 1 [(openapi.v3.property) = {description: "Detected authentication scheme (JWT/OAuth2/session/API key/Basic/none)."}];
+
+  // Human-readable scheme name (e.g. "JWT", "OAuth2", "None"). Convenience for
+  // report/UI rendering without an enum lookup.
+  string scheme_name = 2 [(openapi.v3.property) = {
+    description: "Display name of the detected scheme."
+    example: {yaml: "JWT"}
+  }];
+
+  // For JWT, the signature algorithm family detected from config/packages:
+  // "HS256" (symmetric secret), "RS256"/"ES256"/"EdDSA" (asymmetric PEM/JWK).
+  // Empty when not JWT or when the variant could not be determined.
+  string signature_alg = 3 [(openapi.v3.property) = {
+    description: "JWT signature algorithm family (HS256/RS256/ES256/EdDSA). Empty when not JWT or undetermined."
+    example: {yaml: "HS256"}
+  }];
+
+  // The HTTP header the token is read from (e.g. "Authorization"). Empty when
+  // not header-borne or undetermined.
+  string token_header = 4 [(openapi.v3.property) = {
+    description: "HTTP header the token is carried in (e.g. Authorization). Empty when undetermined."
+    example: {yaml: "Authorization"}
+  }];
+
+  // Token claims the code is observed to read/require (e.g. "sub", "exp", "iss").
+  // Best-effort; empty when none were detected.
+  repeated string claims = 5 [(openapi.v3.property) = {description: "Token claims the code reads/requires (best-effort). Empty when none detected."}];
+
+  // Confidence in [0,1] that the detected scheme is correct. Lower when only a
+  // weak signal (framework default, header alone) surfaced.
+  float confidence = 6 [(openapi.v3.property) = {
+    description: "Confidence in [0,1] that the detected scheme is correct."
+    example: {yaml: "0.9"}
+  }];
+
+  // True when no authentication signal was found at all (scheme=NONE). An honest
+  // 'I don't know whether this code authenticates', never a guess.
+  bool unknown = 7 [(openapi.v3.property) = {
+    description: "True when no authentication signal was found (scheme=NONE)."
+    example: {yaml: "false"}
+  }];
+
+  // Deterministic evidence strings behind the detection, e.g.
+  // "package: PyJWT (JWT)", "config: .env JWT_SECRET (HS*)", "header: Authorization: Bearer".
+  // Lets the report and the generator anchor to facts, not guesses.
+  repeated string evidence = 8 [(openapi.v3.property) = {description: "Deterministic evidence strings behind the detection (package/config/header/framework)."}];
 }
 
 // CodebaseKind classifies what kind of project a repository is, deterministically,

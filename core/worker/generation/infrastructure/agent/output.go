@@ -3,6 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"strings"
+
+	workerdomain "milton_prism/core/worker/generation/domain"
 )
 
 // credentialEnv returns the KEY=value string for the container Env slice.
@@ -21,6 +23,9 @@ type claudeJSON struct {
 	Result       string      `json:"result"`
 	TotalCostUSD float64     `json:"total_cost_usd"`
 	Usage        claudeUsage `json:"usage"`
+	// ModelUsage maps the model id (e.g. "claude-opus-4-8[1m]") to its per-model
+	// token/cost breakdown. Present when one or more models were used in the run.
+	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
 }
 
 type claudeUsage struct {
@@ -28,6 +33,32 @@ type claudeUsage struct {
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 	OutputTokens             int64 `json:"output_tokens"`
+}
+
+// claudeModelUsage is the per-model breakdown under the "modelUsage" key.
+type claudeModelUsage struct {
+	InputTokens  int64   `json:"inputTokens"`
+	OutputTokens int64   `json:"outputTokens"`
+	CostUSD      float64 `json:"costUSD"`
+}
+
+// DominantModel returns the id of the model that consumed the most tokens
+// (input+output) across the run. When the run used a single model this is just
+// that model; when several were used (e.g. a sub-agent on a cheaper model) the
+// one with the largest token footprint wins, which is the right attribution for
+// a token-based cost estimate. Returns "" when no modelUsage was reported.
+func (c claudeJSON) DominantModel() string {
+	var best string
+	var bestTokens int64 = -1
+	for model, mu := range c.ModelUsage {
+		tokens := mu.InputTokens + mu.OutputTokens
+		// Deterministic tie-break by model id so the result is stable.
+		if tokens > bestTokens || (tokens == bestTokens && model < best) {
+			best = model
+			bestTokens = tokens
+		}
+	}
+	return best
 }
 
 // EffectiveInputTokens returns the total input token count across all billing
@@ -61,6 +92,14 @@ func parseClaudeOutput(stdout string) (*claudeJSON, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// SanitizeFailureReason reduces a raw agent failure blob to a short, clean,
+// user-facing technical message. It delegates to the canonical implementation
+// in the generation worker domain package. The raw blob must NEVER reach the
+// user-visible failure_reason field — it is logged server-side instead.
+func SanitizeFailureReason(raw string) string {
+	return workerdomain.SanitizeFailureReason(raw)
 }
 
 // extractFailureReason scans the combined stdout+stderr of a failed agent run

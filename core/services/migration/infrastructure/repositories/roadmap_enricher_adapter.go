@@ -11,6 +11,8 @@ import (
 	"milton_prism/core/services/migration/ports"
 	analysisadapters "milton_prism/core/worker/analysis/infrastructure/adapters"
 	analysisports "milton_prism/core/worker/analysis/ports"
+	applog "milton_prism/pkg/log"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -24,16 +26,21 @@ var _ ports.RoadmapEnricher = (*RoadmapEnricherAdapter)(nil)
 // strings, and the deterministic action plan already present in the roadmap.
 type RoadmapEnricherAdapter struct {
 	client analysisports.ModelClient
+	// recorder accounts LLM token spend in billing (best-effort). May be nil when
+	// billing is not wired — recording is then skipped.
+	recorder ports.UsageRecorder
 }
 
-// NewRoadmapEnricherAdapter constructs the adapter.
+// NewRoadmapEnricherAdapter constructs the adapter. recorder accounts LLM token
+// spend in billing best-effort; pass nil to disable recording (e.g. billing not
+// configured).
 // Returns an error only when ANTHROPIC_API_KEY is absent from the environment.
-func NewRoadmapEnricherAdapter() (*RoadmapEnricherAdapter, error) {
+func NewRoadmapEnricherAdapter(recorder ports.UsageRecorder) (*RoadmapEnricherAdapter, error) {
 	client, err := analysisadapters.NewAnthropicModelClient(nil)
 	if err != nil {
 		return nil, fmt.Errorf("roadmap enricher: model client: %w", err)
 	}
-	return &RoadmapEnricherAdapter{client: client}, nil
+	return &RoadmapEnricherAdapter{client: client, recorder: recorder}, nil
 }
 
 // enrichmentSystemPrompt instructs the model to return only JSON and defines its role.
@@ -54,7 +61,7 @@ Rules:
 
 // Enrich builds a structural prompt from the roadmap and calls the LLM to produce
 // per-step narratives. Returns a RoadmapEnrichment with one EnrichedStep per ActionItem.
-func (a *RoadmapEnricherAdapter) Enrich(ctx context.Context, roadmap *domain.RestructuringRoadmap) (*domain.RoadmapEnrichment, error) {
+func (a *RoadmapEnricherAdapter) Enrich(ctx context.Context, userID, migrationID uint64, roadmap *domain.RestructuringRoadmap) (*domain.RoadmapEnrichment, error) {
 	prompt := buildEnrichmentPrompt(roadmap)
 	req := analysisports.ModelRequest{
 		System:    enrichmentSystemPrompt,
@@ -75,6 +82,17 @@ func (a *RoadmapEnricherAdapter) Enrich(ctx context.Context, roadmap *domain.Res
 	if err != nil {
 		return nil, fmt.Errorf("roadmap enricher: llm: %w", err)
 	}
+
+	// Record LLM token spend in billing (best-effort). A failure is logged and
+	// swallowed — it must never break the enrichment.
+	recordMigrationSpend(ctx, a.recorder, ports.UsageSpend{
+		UserID:      userID,
+		MigrationID: migrationID,
+		Operation:   billingv1.UsageOperation_USAGE_OPERATION_MIGRATION,
+		TokensIn:    int64(resp.InputTokens),
+		TokensOut:   int64(resp.OutputTokens),
+		CostUSD:     resp.CostUSD,
+	})
 
 	steps := make([]*migrationv1.EnrichedStep, len(result.Steps))
 	for i, s := range result.Steps {
@@ -144,6 +162,20 @@ Respond with exactly this JSON (one entry per step):
 }`)
 
 	return b.String()
+}
+
+// recordMigrationSpend records a single LLM spend event in billing best-effort.
+// It is a no-op when recorder is nil (billing not wired). Any recording error is
+// logged at warning level and swallowed — it must never break the LLM flow.
+// Shared by the migration LLM adapters in this package.
+func recordMigrationSpend(ctx context.Context, recorder ports.UsageRecorder, spend ports.UsageSpend) {
+	if recorder == nil {
+		return
+	}
+	if err := recorder.RecordUsage(ctx, spend); err != nil {
+		applog.Warningf("migration: usage record failed user_id=%d migration_id=%d op=%s tokens_in=%d tokens_out=%d: %v — spend not accounted",
+			spend.UserID, spend.MigrationID, spend.Operation.String(), spend.TokensIn, spend.TokensOut, err)
+	}
 }
 
 // enricherComplete sends one model request, parses the JSON response, and retries

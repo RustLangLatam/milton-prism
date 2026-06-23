@@ -110,7 +110,13 @@ type UsageRecord struct {
 	// Model identifier used (e.g. "claude-haiku-4-5").
 	Model string `protobuf:"bytes,9,opt,name=model,proto3" json:"model,omitempty"`
 	// When the spend occurred / was recorded.
-	CreateTime    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	CreateTime *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	// True when cost_usd is an ESTIMATE derived from a price table (e.g. a
+	// subscription/Claude-Code run that reports no per-call dollar cost), rather
+	// than the real per-API dollar cost reported by the provider. The UI shows an
+	// "estimated" label when this is set so a subscription run is not presented as
+	// a billed dollar amount. False when cost_usd is the provider's real cost.
+	CostEstimated bool `protobuf:"varint,11,opt,name=cost_estimated,json=costEstimated,proto3" json:"cost_estimated,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -213,6 +219,13 @@ func (x *UsageRecord) GetCreateTime() *timestamppb.Timestamp {
 		return x.CreateTime
 	}
 	return nil
+}
+
+func (x *UsageRecord) GetCostEstimated() bool {
+	if x != nil {
+		return x.CostEstimated
+	}
+	return false
 }
 
 // UsageTotals is an aggregate of usage records: summed tokens and cost plus the
@@ -449,7 +462,7 @@ var File_milton_prism_types_billing_v1_billing_proto protoreflect.FileDescriptor
 
 const file_milton_prism_types_billing_v1_billing_proto_rawDesc = "" +
 	"\n" +
-	"+milton_prism/types/billing/v1/billing.proto\x12\x1dmilton_prism.types.billing.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bopenapiv3/annotations.proto\"\xf1\a\n" +
+	"+milton_prism/types/billing/v1/billing.proto\x12\x1dmilton_prism.types.billing.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bopenapiv3/annotations.proto\"\xa1\t\n" +
 	"\vUsageRecord\x12k\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04BK\xe0A\x03\xe0A\x05\xe0A\b\xbaG?\x18\x01\x92\x021Platform-assigned unique usage-record identifier.\x9a\x02\x06uint64R\n" +
@@ -466,7 +479,8 @@ const file_milton_prism_types_billing_v1_billing_proto_rawDesc = "" +
 	"\x05model\x18\t \x01(\tB1\xbaG.\x92\x02+Model identifier used to produce the spend.R\x05model\x12d\n" +
 	"\vcreate_time\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampB'\xe0A\x03\xbaG!\x18\x01\x92\x02\x1cTime the spend was recorded.R\n" +
-	"createTime\"\x93\x02\n" +
+	"createTime\x12\xad\x01\n" +
+	"\x0ecost_estimated\x18\v \x01(\bB\x85\x01\xbaG\x81\x01:\a\x12\x05false\x92\x02uTrue when cost_usd is an estimate from the price table (subscription run); false when it is the provider's real cost.R\rcostEstimated\"\x93\x02\n" +
 	"\vUsageTotals\x12R\n" +
 	"\frecord_count\x18\x01 \x01(\x03B/\xbaG,\x92\x02)Number of usage records in the aggregate.R\vrecordCount\x127\n" +
 	"\ttokens_in\x18\x02 \x01(\x03B\x1a\xbaG\x17\x92\x02\x14Summed input tokens.R\btokensIn\x12:\n" +

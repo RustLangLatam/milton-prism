@@ -85,6 +85,12 @@ type Pipeline struct {
 	// the workspace; distinct from the dependency CVE scan. Nil = scan disabled.
 	securityScanner ports.SecurityScanner
 
+	// authDetector deterministically identifies the request-authentication scheme
+	// the analysed backend uses (stage 3e): JWT/OAuth2/session/API-key/Basic/none.
+	// Runs after manifest + framework detection so it can use both the dependency
+	// list and the detected framework. Nil = auth detection disabled.
+	authDetector ports.AuthSchemeDetector
+
 	// supportedLanguages is the set of languages that have a registered Tier-2
 	// analyzer (PHP, Python today). Fed to the intake gate (stage 7-intake) so the
 	// language-support guard reflects the actually-wired registry rather than a
@@ -199,6 +205,15 @@ func (p *Pipeline) WithDatabaseDetector(d ports.DatabaseDetector) *Pipeline {
 // — it does not affect scores or verdicts. Returns p for chaining.
 func (p *Pipeline) WithSecurityScanner(s ports.SecurityScanner) *Pipeline {
 	p.securityScanner = s
+	return p
+}
+
+// WithAuthSchemeDetector wires the AuthSchemeDetector (stage 3e). When set, it runs
+// after framework detection and persists the detected authentication scheme on the
+// AnalysisSummary (auth_scheme_detection). Mirror of the database detector; non-fatal.
+// Returns p for chaining.
+func (p *Pipeline) WithAuthSchemeDetector(a ports.AuthSchemeDetector) *Pipeline {
+	p.authDetector = a
 	return p
 }
 
@@ -498,6 +513,23 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 			} else {
 				applog.Infof("analysis-worker: security scan done summary_id=%d findings=%d", job.SummaryID, len(capped))
 			}
+		}
+	}
+
+	// Stage 3e — authentication scheme detection. Deterministically identifies the
+	// request-authentication scheme the analysed backend uses (JWT/OAuth2/session/
+	// API-key/Basic/none) from auth packages, .env JWT config, the Authorization:
+	// Bearer header convention, and the framework default. Mirror of stage 3c.
+	// Non-fatal: a detection error leaves the field nil and the job still completes.
+	var authSchemeDetection *analysisdomain.AuthSchemeDetection
+	if p.authDetector != nil && workspacePath != "" {
+		ad, adErr := p.authDetector.Detect(ctx, workspacePath, manifestDeps, technologies)
+		if adErr != nil {
+			applog.Warningf("analysis-worker: stage 3e (auth scheme detection) failed summary_id=%d: %v", job.SummaryID, adErr)
+		} else {
+			authSchemeDetection = ad
+			applog.Infof("analysis-worker: auth scheme detection done summary_id=%d scheme=%s sig=%s unknown=%v",
+				job.SummaryID, ad.GetSchemeName(), ad.GetSignatureAlg(), ad.GetUnknown())
 		}
 	}
 
@@ -829,6 +861,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 		ArchitecturalPattern:  architecturalPattern,
 		IntakeAssessment:      intakeAssessment,
 		SecurityFindings:      securityFindings,
+		AuthSchemeDetection:   authSchemeDetection,
 		TotalFiles:            totalFiles,
 		TotalLines:            totalLines,
 		CommitSha:             commitSHA,

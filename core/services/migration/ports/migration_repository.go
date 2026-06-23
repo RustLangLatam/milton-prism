@@ -17,8 +17,10 @@ type MigrationRepository interface {
 	// GetByID fetches a migration by its numeric identifier.
 	// If includeDeleted is false, soft-deleted records are excluded.
 	GetByID(ctx context.Context, identifier uint64, includeDeleted bool) (*domain.Migration, error)
-	// List returns a paginated, filtered set of migrations.
-	List(ctx context.Context, filter *domain.MigrationsFilter, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error)
+	// List returns a paginated, filtered, ordered set of migrations.
+	// orderBy is an AIP-132 directive ("create_time desc"); empty means the
+	// default "create_time desc". An unknown field returns domain.ErrInvalidOrderBy.
+	List(ctx context.Context, filter *domain.MigrationsFilter, orderBy string, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error)
 	// UpdateState persists only the state field for the given migration.
 	UpdateState(ctx context.Context, identifier uint64, state domain.MigrationState) error
 	// SetRepositoryURL persists repository_url for an existing record.

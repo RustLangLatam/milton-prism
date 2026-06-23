@@ -126,13 +126,13 @@ func TestBlueprintAdapter_Conduit(t *testing.T) {
 	defer client.Disconnect(ctx) //nolint:errcheck
 	analysisDB := client.Database("milton_prism_analysis")
 
-	adapter, err := repositories.NewBlueprintGeneratorAdapter(analysisDB)
+	adapter, err := repositories.NewBlueprintGeneratorAdapter(analysisDB, nil)
 	require.NoError(t, err, "adapter construction requires ANTHROPIC_API_KEY")
 
 	digest := conduitDigest()
 	roadmap := conduitRoadmap()
 
-	blueprint, err := adapter.GenerateFromDigest(ctx, digest, roadmap)
+	blueprint, err := adapter.GenerateFromDigest(ctx, 0, 0, digest, roadmap)
 	require.NoError(t, err)
 	require.NotNil(t, blueprint)
 

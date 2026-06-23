@@ -32,6 +32,13 @@ type generationResultDoc struct {
 	TotalCostUSD       float64 `bson:"total_cost_usd"`
 	GeneratedFileCount int     `bson:"generated_file_count"`
 	AgentRawResult     string  `bson:"agent_raw_result,omitempty"`
+
+	InputTokens              int64 `bson:"input_tokens"`
+	CacheCreationInputTokens int64 `bson:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `bson:"cache_read_input_tokens"`
+	OutputTokens             int64 `bson:"output_tokens"`
+
+	Model string `bson:"model,omitempty"`
 }
 
 func (r *MongoGenerationResultReader) ReadResults(ctx context.Context, migrationID uint64) ([]*migrationv1.ServiceGenerationRecord, error) {
@@ -56,7 +63,47 @@ func (r *MongoGenerationResultReader) ReadResults(ctx context.Context, migration
 			TotalCostUsd:       d.TotalCostUSD,
 			GeneratedFileCount: int32(d.GeneratedFileCount),
 			AgentRawResult:     d.AgentRawResult,
+
+			InputTokens:              d.InputTokens,
+			CacheCreationInputTokens: d.CacheCreationInputTokens,
+			CacheReadInputTokens:     d.CacheReadInputTokens,
+			OutputTokens:             d.OutputTokens,
 		}
 	}
 	return records, nil
+}
+
+// ReadUsageTotals aggregates the token/cost footprint of every per-service
+// generation record for a migration. TokensIn sums all input tiers (fresh +
+// cache-creation + cache-read); TokensOut sums output tokens; RealCostUSD sums
+// the agent-reported total_cost_usd (>0 only in apikey mode); Model is the
+// dominant model across the records (the one with the largest token footprint),
+// used to estimate cost by token when RealCostUSD is 0.
+func (r *MongoGenerationResultReader) ReadUsageTotals(ctx context.Context, migrationID uint64) (ports.GenerationUsageTotals, error) {
+	cur, err := r.coll.Find(ctx, bson.M{"migration_id": migrationID})
+	if err != nil {
+		return ports.GenerationUsageTotals{}, fmt.Errorf("generation-result-reader: usage find migration_id=%d: %w", migrationID, err)
+	}
+	defer cur.Close(ctx)
+
+	var docs []generationResultDoc
+	if err := cur.All(ctx, &docs); err != nil {
+		return ports.GenerationUsageTotals{}, fmt.Errorf("generation-result-reader: usage decode migration_id=%d: %w", migrationID, err)
+	}
+
+	var totals ports.GenerationUsageTotals
+	var dominantTokens int64 = -1
+	for _, d := range docs {
+		totals.Records++
+		totals.TokensIn += d.InputTokens + d.CacheCreationInputTokens + d.CacheReadInputTokens
+		totals.TokensOut += d.OutputTokens
+		totals.RealCostUSD += d.TotalCostUSD
+		// Attribute the dominant model: the record consuming the most tokens.
+		recTokens := d.InputTokens + d.CacheCreationInputTokens + d.CacheReadInputTokens + d.OutputTokens
+		if d.Model != "" && (recTokens > dominantTokens || (recTokens == dominantTokens && d.Model < totals.Model)) {
+			totals.Model = d.Model
+			dominantTokens = recTokens
+		}
+	}
+	return totals, nil
 }

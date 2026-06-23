@@ -294,7 +294,7 @@ func TestHandlerListMigrations_NonSystemForcedFilter(t *testing.T) {
 	h, repo, _, _, _ := newHandler(t)
 	repo.On("List", mock.Anything, mock.MatchedBy(func(f *migrationv1.MigrationsFilter) bool {
 		return f.OwnerUserId != nil && *f.OwnerUserId == callerID
-	}), mock.Anything).Return([]*domain.Migration{}, nil, nil)
+	}), mock.Anything, mock.Anything).Return([]*domain.Migration{}, nil, nil)
 	out, err := h.ListMigrations(context.Background(), &migsvcv1.ListMigrationsRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, out.GetMigrations())
@@ -308,7 +308,7 @@ func TestHandlerListMigrations_SystemBypassesFilter(t *testing.T) {
 	analysis := &mocks.MockAnalysisClient{}
 	svc := application.NewService(repo, tx, identity, repoClient, analysis, nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
 	h := grpc_handlers.NewMigrationHandler(svc, systemAuth)
-	repo.On("List", mock.Anything, mock.Anything, mock.Anything).Return([]*domain.Migration{{Identifier: 1}, {Identifier: 2}}, nil, nil)
+	repo.On("List", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*domain.Migration{{Identifier: 1}, {Identifier: 2}}, nil, nil)
 	out, err := h.ListMigrations(context.Background(), &migsvcv1.ListMigrationsRequest{})
 	require.NoError(t, err)
 	assert.Len(t, out.GetMigrations(), 2)

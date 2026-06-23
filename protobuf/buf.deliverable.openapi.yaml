@@ -1,0 +1,37 @@
+# Milton Prism — Deliverable OpenAPI generation template.
+#
+# Produces a single, language-agnostic docs/openapi.yaml for an EXPORTED
+# deliverable, generated from that deliverable's own service protos
+# (protobuf/proto/milton_prism/services/<svc>/v1/*.proto + the corresponding
+# types/<svc>/v1/*.proto).
+#
+# This template is the deliverable-scoped sibling of buf.docs.gen.yaml. The two
+# differ ONLY in `out`:
+#   - buf.docs.gen.yaml   → out: ../milton-prism-panel  (PLATFORM panel symlink)
+#   - buf.deliverable...   → out: ../docs               (deliverable repo-root docs/)
+#
+# protoc-gen-openapi runs in its default output_mode=merged, so it emits exactly
+# one ../docs/openapi.yaml. The protoc-gen-openapi opts are kept BYTE-FOR-BYTE
+# identical to buf.docs.gen.yaml so the deliverable spec matches the platform's
+# OpenAPI conventions (depth=8, enum_type=string, default_response=true).
+#
+# The plugin binary (`protoc-gen-openapi`, the github.com/RustLangLatam fork) is
+# installed in the generation-agent image and resolved from PATH via `local`.
+# Run from the protobuf/ directory, e.g.:
+#   buf generate proto --template buf.deliverable.openapi.yaml
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: milton_prism/pkg/pb/gen
+plugins:
+  - local: protoc-gen-openapi
+    out: ../docs
+    opt:
+      - depth=8
+      - enum_type=string
+      - version=1.0.1-dev
+      - default_response=true
+
+    strategy: all

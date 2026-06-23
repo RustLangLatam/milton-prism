@@ -22,6 +22,9 @@ type AnalysisSummaryRepository interface {
 	List(ctx context.Context, filter *analysissvcv1.AnalysisSummariesFilter, params *queryparamsv1.PageQueryParams) ([]*domain.AnalysisSummary, *paginationv1.Pagination, error)
 	// SoftDelete marks the analysis summary as deleted without removing it.
 	SoftDelete(ctx context.Context, identifier uint64) error
+	// UpdateState transitions the analysis summary to the given lifecycle state.
+	// Used by CancelAnalysis (→ CANCELLED). Operates only on non-deleted records.
+	UpdateState(ctx context.Context, identifier uint64, state domain.AnalysisState) error
 	// UpdateMigrabilityAssessment persists the LLM migrability assessment on an
 	// existing AnalysisSummary. Called after the opt-in AssessMigrability RPC.
 	UpdateMigrabilityAssessment(ctx context.Context, identifier uint64, assessment *domain.MigrabilityAssessment) error

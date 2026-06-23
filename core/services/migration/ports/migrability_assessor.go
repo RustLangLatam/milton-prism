@@ -12,5 +12,7 @@ import (
 type MigrabilityAssessor interface {
 	// language is the BCP-47 tag for LLM prose (summary/reasons/blockers).
 	// Empty → "en". Module names and identifiers are never translated.
-	Assess(ctx context.Context, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error)
+	// userID/migrationID identify the spend owner so the adapter can record LLM
+	// token usage in billing (best-effort) after the model call.
+	Assess(ctx context.Context, userID, migrationID, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error)
 }

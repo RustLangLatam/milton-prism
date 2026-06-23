@@ -91,6 +91,16 @@ message UsageRecord {
       read_only: true
     }
   ];
+
+  // True when cost_usd is an ESTIMATE derived from a price table (e.g. a
+  // subscription/Claude-Code run that reports no per-call dollar cost), rather
+  // than the real per-API dollar cost reported by the provider. The UI shows an
+  // "estimated" label when this is set so a subscription run is not presented as
+  // a billed dollar amount. False when cost_usd is the provider's real cost.
+  bool cost_estimated = 11 [(openapi.v3.property) = {
+    description: "True when cost_usd is an estimate from the price table (subscription run); false when it is the provider's real cost."
+    example: {yaml: "false"}
+  }];
 }
 
 // UsageTotals is an aggregate of usage records: summed tokens and cost plus the

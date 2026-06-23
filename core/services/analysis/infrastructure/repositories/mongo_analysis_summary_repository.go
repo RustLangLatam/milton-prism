@@ -57,6 +57,7 @@ type mongoAnalysisSummaryDoc struct {
 	ArchitecturalPatternBytes  []byte              `bson:"architectural_pattern_bytes,omitempty"`
 	IntakeAssessmentBytes      []byte              `bson:"intake_assessment_bytes,omitempty"`
 	SecurityFindingsBytes      []byte              `bson:"security_findings_bytes,omitempty"`
+	AuthSchemeDetectionBytes   []byte              `bson:"auth_scheme_detection_bytes,omitempty"`
 	DeepAnalysisAvailable      bool                `bson:"deep_analysis_available,omitempty"`
 	TotalFiles                 uint64              `bson:"total_files,omitempty"`
 	TotalLines                 uint64              `bson:"total_lines,omitempty"`
@@ -88,13 +89,91 @@ func NewMongoAnalysisSummaryRepository(db *mongo.Database) *MongoAnalysisSummary
 			{Key: "state", Value: 1},
 			{Key: "create_time", Value: -1},
 		}},
+		// Hard DB block: at most one analysis summary per (repository_id, source_branch).
+		// Re-analysis updates this row in place (see SummaryWriter.Write); a stray
+		// second insert collides here and maps to ErrAnalysisAlreadyExists.
+		{Keys: bson.D{
+			{Key: "repository_id", Value: 1},
+			{Key: "source_branch", Value: 1},
+		}, Options: options.Index().SetUnique(true).SetName("uniq_repo_branch")},
 	}); err != nil {
 		applog.Warningf("mongo: create indexes on %s: error=%v", analysisSummariesCollName, err)
 	}
 	return r
 }
 
+// Create persists an analysis summary for (repository_id, source_branch).
+//
+// Analyses are unique per (repository_id, source_branch) — enforced by the
+// uniq_repo_branch unique index. Re-analysis is update-in-place: when a summary
+// already exists for the same repo+branch (e.g. a force re-run), its identifier
+// is reused and the record is reset to RUNNING with the prior result blobs
+// cleared, instead of inserting a second row. Only when no summary exists for
+// the repo+branch is a fresh identifier allocated and a new document inserted.
 func (r *MongoAnalysisSummaryRepository) Create(ctx context.Context, s *domain.AnalysisSummary) (*domain.AnalysisSummary, error) {
+	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+
+	// Update-in-place path: an analysis already exists for this repo+branch.
+	// Reuse its identifier and reset it to a fresh RUNNING run, clearing the
+	// previous run's result blobs so a re-analysis never serves stale data.
+	if s.GetRepositoryId() != 0 && s.GetSourceBranch() != "" {
+		var existing mongoAnalysisSummaryDoc
+		findErr := r.coll.FindOne(ctx, bson.M{
+			"repository_id": s.GetRepositoryId(),
+			"source_branch": s.GetSourceBranch(),
+		}).Decode(&existing)
+		if findErr == nil {
+			reset := bson.M{
+				"migration_id":      s.GetMigrationId(),
+				"owner_user_id":     s.GetOwnerUserId(),
+				"repository_url":    s.GetRepositoryUrl(),
+				"root_subdirectory": s.GetRootSubdirectory(),
+				"state":             int32(domain.AnalysisStateRunning),
+				"update_time":       now,
+			}
+			unset := bson.M{
+				"commit_sha":                   "",
+				"root_candidates":              "",
+				"technologies_bytes":           "",
+				"vulnerabilities_bytes":        "",
+				"dependency_graph_bytes":       "",
+				"module_cards_bytes":           "",
+				"blueprints_bytes":             "",
+				"module_classification_bytes":  "",
+				"migrability_score_bytes":      "",
+				"migrability_assessment_bytes": "",
+				"shared_state_hubs_bytes":      "",
+				"unreachable_modules_bytes":    "",
+				"database_detection_bytes":     "",
+				"architectural_pattern_bytes":  "",
+				"intake_assessment_bytes":      "",
+				"security_findings_bytes":      "",
+				"auth_scheme_detection_bytes":  "",
+				"deep_analysis_available":      "",
+				"total_files":                  "",
+				"total_lines":                  "",
+				"module_count_production":      "",
+				"module_count_test":            "",
+				"failure_reason":               "",
+				"delete_time":                  "",
+			}
+			var updated mongoAnalysisSummaryDoc
+			err := r.coll.FindOneAndUpdate(
+				ctx,
+				bson.M{"identifier": existing.Identifier},
+				bson.M{"$set": reset, "$unset": unset},
+				options.FindOneAndUpdate().SetReturnDocument(options.After),
+			).Decode(&updated)
+			if err != nil {
+				return nil, fmt.Errorf("analysis: re-analysis update-in-place failed: %w", err)
+			}
+			return summaryDocToDomain(&updated)
+		}
+		if !errors.Is(findErr, mongo.ErrNoDocuments) {
+			return nil, fmt.Errorf("analysis: lookup existing summary failed: %w", findErr)
+		}
+	}
+
 	id, err := generateIdentifier(ctx, r.db, analysisSummariesCollName)
 	if err != nil {
 		return nil, fmt.Errorf("analysis: identifier: %w", err)
@@ -104,8 +183,14 @@ func (r *MongoAnalysisSummaryRepository) Create(ctx context.Context, s *domain.A
 		return nil, fmt.Errorf("analysis: serialize: %w", err)
 	}
 	doc.Identifier = id
-	doc.CreateTime = primitive.NewDateTimeFromTime(time.Now().UTC())
+	doc.CreateTime = now
 	if _, err := r.coll.InsertOne(ctx, doc); err != nil {
+		// A duplicate-key collision on the uniq_repo_branch index means an analysis
+		// already exists for this (repository_id, source_branch). The normal path is
+		// update-in-place above; this is the race-safety net.
+		if mongo.IsDuplicateKeyError(err) {
+			return nil, domain.ErrAnalysisAlreadyExists
+		}
 		return nil, fmt.Errorf("analysis: insert failed: %w", err)
 	}
 	return summaryDocToDomain(doc)
@@ -224,6 +309,24 @@ func (r *MongoAnalysisSummaryRepository) SoftDelete(ctx context.Context, identif
 	return nil
 }
 
+// UpdateState transitions a non-deleted analysis summary to the given state.
+// Used by CancelAnalysis to move an analysis to ANALYSIS_STATE_CANCELLED.
+func (r *MongoAnalysisSummaryRepository) UpdateState(ctx context.Context, identifier uint64, state domain.AnalysisState) error {
+	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+	res, err := r.coll.UpdateOne(
+		ctx,
+		bson.M{"identifier": identifier, "delete_time": nil},
+		bson.M{"$set": bson.M{"state": int32(state), "update_time": now}},
+	)
+	if err != nil {
+		return fmt.Errorf("analysis: update state failed: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrAnalysisSummaryNotFound
+	}
+	return nil
+}
+
 // wrapperForTechnologies is a scratch proto message used to batch-marshal
 // a slice of Technology into a single bytes field.
 type wrapperForTechnologies struct {
@@ -237,17 +340,17 @@ func (m *wrapperForTechnologies) String() string              { return "" }
 
 func summaryToDoc(s *domain.AnalysisSummary) (*mongoAnalysisSummaryDoc, error) {
 	doc := &mongoAnalysisSummaryDoc{
-		RepositoryID:  s.GetRepositoryId(),
-		MigrationID:   s.GetMigrationId(),
-		OwnerUserID:   s.GetOwnerUserId(),
+		RepositoryID:     s.GetRepositoryId(),
+		MigrationID:      s.GetMigrationId(),
+		OwnerUserID:      s.GetOwnerUserId(),
 		RepositoryURL:    s.GetRepositoryUrl(),
 		SourceBranch:     s.GetSourceBranch(),
 		RootSubdirectory: s.GetRootSubdirectory(),
 		RootCandidates:   s.GetRootCandidates(),
 		CommitSHA:        s.GetCommitSha(),
 		State:            int32(s.GetState()),
-		TotalFiles:    s.GetTotalFiles(),
-		TotalLines:    s.GetTotalLines(),
+		TotalFiles:       s.GetTotalFiles(),
+		TotalLines:       s.GetTotalLines(),
 	}
 	// Encode repeated fields as wrapped proto bytes.
 	if len(s.GetTechnologies()) > 0 {
@@ -392,6 +495,13 @@ func summaryDocToDomain(d *mongoAnalysisSummaryDoc) (*domain.AnalysisSummary, er
 			return nil, fmt.Errorf("unmarshal security_findings: %w", err)
 		}
 		out.SecurityFindings = sf
+	}
+	if len(d.AuthSchemeDetectionBytes) > 0 {
+		asd, err := unmarshalAuthSchemeDetection(d.AuthSchemeDetectionBytes)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal auth_scheme_detection: %w", err)
+		}
+		out.AuthSchemeDetection = asd
 	}
 	if d.CreateTime != 0 {
 		out.CreateTime = timestamppb.New(d.CreateTime.Time())
@@ -672,4 +782,12 @@ func unmarshalSecurityFindings(b []byte) ([]*analysisv1.SecurityFinding, error) 
 		return nil, err
 	}
 	return wrapper.GetSecurityFindings(), nil
+}
+
+func unmarshalAuthSchemeDetection(b []byte) (*analysisv1.AuthSchemeDetection, error) {
+	wrapper := &analysisv1.AnalysisSummary{}
+	if err := proto.Unmarshal(b, wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.GetAuthSchemeDetection(), nil
 }

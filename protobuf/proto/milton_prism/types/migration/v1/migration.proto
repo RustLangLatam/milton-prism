@@ -4,6 +4,7 @@ package milton_prism.types.migration.v1;
 
 import "google/api/field_behavior.proto";
 import "google/protobuf/timestamp.proto";
+import "milton_prism/types/analysis/v1/analysis.proto";
 import "milton_prism/types/common/v1/migrability.proto";
 import "openapiv3/annotations.proto";
 
@@ -91,16 +92,21 @@ enum TargetDatabase {
   TARGET_DATABASE_MARIADB = 3;
 }
 
-// Transport is the inter-service communication protocol for generated services.
+// Transport is the protocol the generated service speaks. It is an axis that is
+// orthogonal to language and topology: the user picks it per migration, and any
+// (language, transport) cell must be enabled in the generator matrix (see
+// IsGenerableProtocol). gRPC is supported for every generable language; HTTP is
+// supported for Go (first certified HTTP cell). The grpc-api-gateway is only
+// emitted for the microservices+gRPC combination.
 enum Transport {
-  // Default unspecified.
+  // Default unspecified — canonicalised to TRANSPORT_GRPC on CreateMigration.
   TRANSPORT_UNSPECIFIED = 0;
-  // gRPC — fully supported in v1.
+  // gRPC — supported for every generable language.
   TRANSPORT_GRPC = 1;
-  // REST/HTTP — scaffold only in v1.
+  // REST/HTTP — service exposes an HTTP-native router; supported for Go in v1.
   TRANSPORT_HTTP = 2;
-  // NATS messaging — out of scope for v1.
-  TRANSPORT_NATS = 3;
+  // 3 was TRANSPORT_NATS — removed from the offered set (out of scope).
+  reserved 3;
 }
 
 // TargetTopology is the architectural shape of the generated output.
@@ -167,11 +173,15 @@ message Migration {
     }
   ];
 
-  // Branch of the source repository to analyse.
-  string source_branch = 4 [(openapi.v3.property) = {
-    description: "Source branch to analyse. Defaults to the repository's default branch."
-    example: {yaml: "main"}
-  }];
+  // Branch of the source repository to analyse. Mandatory — a migration must
+  // declare the branch it runs against.
+  string source_branch = 4 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Source branch to analyse. Required."
+      example: {yaml: "main"}
+    }
+  ];
 
   // Current lifecycle state.
   MigrationState state = 5 [(openapi.v3.property) = {
@@ -327,6 +337,19 @@ message Migration {
     description: "Optional repository-relative subdirectory to scope the analysis to (monorepos). Empty means the whole repository root. Forward-slash separated, must stay inside the repo (no leading slash, no '..')."
     example: {yaml: "backend"}
   }];
+
+  // Commit SHA the migration's analysis resolved (clone → resolveHEAD). Set by
+  // the analysis worker when the analysis completes and the migration is linked
+  // to its summary. Enforces uniqueness per (repository_id, source_branch,
+  // commit_sha): a second migration at the same commit fails with MIG223 (no new
+  // commits since the last migration). Empty while PENDING/ANALYZING.
+  string commit_sha = 24 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Commit SHA the migration's analysis resolved. Set once analysis completes. Empty while pending."
+      example: {yaml: "abc123def456"}
+    }
+  ];
 }
 
 // TargetConfig specifies the desired output stack for the generated microservices.
@@ -354,9 +377,11 @@ message TargetConfig {
     }
   ];
 
-  // Inter-service transport for generated services. Defaults to gRPC.
+  // Protocol the generated service speaks. Orthogonal to language and topology.
+  // Defaults to gRPC when unspecified. HTTP is supported for Go in v1; the
+  // (language, transport) cell must be enabled in IsGenerableProtocol.
   Transport inter_service_transport = 3 [(openapi.v3.property) = {
-    description: "Inter-service transport. Defaults to TRANSPORT_GRPC (only supported option in v1)."
+    description: "Protocol the generated service speaks. Defaults to TRANSPORT_GRPC when unspecified. TRANSPORT_GRPC is supported for every generable language; TRANSPORT_HTTP is supported for GO in v1 (the service exposes an HTTP-native router and no API gateway)."
     example: {yaml: "TRANSPORT_GRPC"}
   }];
 
@@ -378,6 +403,18 @@ message TargetConfig {
   TargetTopology topology = 5 [(openapi.v3.property) = {
     description: "Architectural target: MICROSERVICES (default, decompose + gateway) or MONOLITH (single HTTP-native service, no gateway)."
     example: {yaml: "TARGET_TOPOLOGY_MICROSERVICES"}
+  }];
+
+  // Optional override of the authentication scheme the generated service must
+  // implement. When UNSPECIFIED (the default), the generation engine uses the
+  // scheme detected in the analysis (AnalysisSummary.auth_scheme_detection).
+  // Set this to force a specific scheme regardless of what the source used —
+  // e.g. to generate JWT validation even when detection was inconclusive, or to
+  // generate no auth (AUTH_SCHEME_NONE) explicitly. v1 generates JWT and NONE;
+  // other schemes are detected but emitted only as an honest prompt note.
+  milton_prism.types.analysis.v1.AuthScheme target_auth_scheme = 6 [(openapi.v3.property) = {
+    description: "Optional override of the auth scheme the generated service implements. UNSPECIFIED uses the detected scheme. v1 generates JWT and NONE."
+    example: {yaml: "AUTH_SCHEME_UNSPECIFIED"}
   }];
 }
 
@@ -651,6 +688,30 @@ message ServiceGenerationRecord {
     (google.api.field_behavior) = OUTPUT_ONLY,
     (openapi.v3.property) = {description: "Raw agent output (generation report). Useful for debugging; empty while still generating."}
   ];
+
+  // Non-cached input tokens consumed by this service's generation run.
+  int64 input_tokens = 8 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Non-cached input tokens consumed by this service."}
+  ];
+
+  // Input tokens written to the prompt cache by this service's generation run.
+  int64 cache_creation_input_tokens = 9 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Cache-creation input tokens consumed by this service."}
+  ];
+
+  // Input tokens served from the prompt cache for this service's generation run.
+  int64 cache_read_input_tokens = 10 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Cache-read input tokens consumed by this service."}
+  ];
+
+  // Output tokens produced by this service's generation run.
+  int64 output_tokens = 11 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Output tokens produced by this service."}
+  ];
 }
 
 // FileArtifact represents one source file produced by the autonomous generation agent.
@@ -719,6 +780,26 @@ message ServiceGenerationSpec {
 
   // Path to the generator prompt document for the target profile.
   string generator_prompt_ref = 7 [(openapi.v3.property) = {description: "Path to the generator prompt document for this service's target profile."}];
+
+  // Effective authentication scheme the generated service must implement,
+  // resolved by the migration service as target_auth_scheme (override) ?? the
+  // scheme detected in the analysis. Lowercase canonical token: "jwt", "none",
+  // "oauth2", "session_cookie", "api_key", "basic". v1 generates "jwt" and
+  // "none"; any other value is carried for an honest prompt note (no guess).
+  // Empty is treated as "none".
+  string auth_scheme = 8 [(openapi.v3.property) = {
+    description: "Effective auth scheme to implement (jwt/none/oauth2/session_cookie/api_key/basic). v1 generates jwt and none."
+    example: {yaml: "jwt"}
+  }];
+
+  // JWT signature algorithm family the generated validation must accept, when
+  // auth_scheme is "jwt": "HS256" (symmetric secret) or "RS256"/"ES256"/"EdDSA"
+  // (asymmetric public key). Empty for non-JWT schemes or when undetermined —
+  // the generator then accepts the idiomatic default for the stack.
+  string auth_signature_alg = 9 [(openapi.v3.property) = {
+    description: "JWT signature algorithm family the generated validation accepts (HS256/RS256/ES256/EdDSA). Empty for non-JWT or undetermined."
+    example: {yaml: "HS256"}
+  }];
 }
 
 // GenerationPackage is the ready-to-use package assembled for a GENERATING migration.
@@ -953,5 +1034,36 @@ message MigrationsFilter {
   repeated MigrationState states = 4 [(openapi.v3.property) = {
     description: "Filter by multiple lifecycle states (OR). Takes precedence over state when non-empty."
     example: {yaml: "[MIGRATION_STATE_ANALYZING, MIGRATION_STATE_DESIGNING, MIGRATION_STATE_GENERATING]"}
+  }];
+
+  // Restrict results to migrations linked to this analysis summary. Enables
+  // listing every migration produced from one analysis (multi-migration per
+  // analysis) and powers the live-migration guard that blocks deleting an
+  // analysis while it still has active migrations.
+  optional uint64 analysis_summary_id = 5 [(openapi.v3.property) = {
+    description: "Filter by linked analysis summary identifier."
+    example: {yaml: "10"}
+  }];
+
+  // Restrict results to migrations with this target topology (MICROSERVICES /
+  // MONOLITH). Resolved server-side against the denormalized topology field.
+  optional TargetTopology topology = 6 [(openapi.v3.property) = {
+    description: "Filter by target topology (one cell axis of the generation matrix)."
+    example: {yaml: "TARGET_TOPOLOGY_MONOLITH"}
+  }];
+
+  // Restrict results to migrations whose inter-service transport (protocol) is
+  // this value (GRPC / HTTP). Resolved server-side against the denormalized
+  // protocol field.
+  optional Transport protocol = 7 [(openapi.v3.property) = {
+    description: "Filter by inter-service transport / protocol (one cell axis of the generation matrix)."
+    example: {yaml: "TRANSPORT_HTTP"}
+  }];
+
+  // Restrict results to migrations targeting this language (GO / RUST / PYTHON /
+  // NODE). Resolved server-side against the denormalized language field.
+  optional TargetLanguage language = 8 [(openapi.v3.property) = {
+    description: "Filter by target language (one cell axis of the generation matrix)."
+    example: {yaml: "TARGET_LANGUAGE_RUST"}
   }];
 }

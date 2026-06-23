@@ -127,7 +127,13 @@ type ListMigrationsRequest struct {
 	// Optional filter to narrow results.
 	Filter *v1.MigrationsFilter `protobuf:"bytes,1,opt,name=filter,proto3" json:"filter,omitempty"`
 	// Pagination parameters (page_number, page_size).
-	PageParams    *v11.PageQueryParams `protobuf:"bytes,2,opt,name=page_params,json=pageParams,proto3" json:"page_params,omitempty"`
+	PageParams *v11.PageQueryParams `protobuf:"bytes,2,opt,name=page_params,json=pageParams,proto3" json:"page_params,omitempty"`
+	// Optional AIP-132 ordering directive, e.g. "create_time desc" or "topology asc".
+	// The sort is resolved server-side in MongoDB, never on the client. A single
+	// field plus an optional "asc"/"desc" direction (default ascending). Allowed
+	// fields: create_time, topology, protocol, state, language. An unknown field
+	// is rejected with INVALID_ARGUMENT. Empty → "create_time desc".
+	OrderBy       string `protobuf:"bytes,3,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -174,6 +180,13 @@ func (x *ListMigrationsRequest) GetPageParams() *v11.PageQueryParams {
 		return x.PageParams
 	}
 	return nil
+}
+
+func (x *ListMigrationsRequest) GetOrderBy() string {
+	if x != nil {
+		return x.OrderBy
+	}
+	return ""
 }
 
 // ListMigrationsResponse carries a page of migrations with pagination metadata.
@@ -1124,11 +1137,12 @@ const file_milton_prism_services_migration_v1_migration_service_proto_rawDesc = 
 	"\x13GetMigrationRequest\x12C\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B#\xe0A\x02\xbaG\x1d:\x03\x12\x017\x92\x02\x15Migration identifier.R\n" +
-	"identifier\"\x9b\x02\n" +
+	"identifier\"\x97\x04\n" +
 	"\x15ListMigrationsRequest\x12~\n" +
 	"\x06filter\x18\x01 \x01(\v21.milton_prism.types.migration.v1.MigrationsFilterB3\xbaG0\x92\x02-Optional filter to narrow the migration list.R\x06filter\x12\x81\x01\n" +
 	"\vpage_params\x18\x02 \x01(\v23.milton_prism.types.query_params.v1.PageQueryParamsB+\xbaG(\x92\x02%Page number and page size parameters.R\n" +
-	"pageParams\"\xf5\x01\n" +
+	"pageParams\x12\xf9\x01\n" +
+	"\border_by\x18\x03 \x01(\tB\xdd\x01\xbaG\xd9\x01:\x12\x12\x10create_time desc\x92\x02\xc1\x01AIP-132 ordering, e.g. 'create_time desc'. Allowed fields: create_time, topology, protocol, state, language. Default 'create_time desc'. Unknown field → INVALID_ARGUMENT. Sort is server-side.R\aorderBy\"\xf5\x01\n" +
 	"\x16ListMigrationsResponse\x12q\n" +
 	"\n" +
 	"migrations\x18\x01 \x03(\v2*.milton_prism.types.migration.v1.MigrationB%\xbaG\"\x92\x02\x1fMigrations in this result page.R\n" +

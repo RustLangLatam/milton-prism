@@ -15,6 +15,7 @@ import (
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	workeradapters "milton_prism/core/worker/decomposition/infrastructure/adapters"
 	workerports "milton_prism/core/worker/decomposition/ports"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
 	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -33,12 +34,17 @@ type BlueprintGeneratorAdapter struct {
 	detector    workerports.InfraDetector
 	clusterer   *workeradapters.LouvainClusterer
 	client      analysisports.ModelClient
+	// recorder accounts LLM token spend in billing (best-effort). May be nil when
+	// billing is not wired — recording is then skipped.
+	recorder ports.UsageRecorder
 }
 
 // NewBlueprintGeneratorAdapter constructs the adapter.
 // analysisDB must be the analysis database (milton_prism_analysis).
+// recorder accounts LLM token spend in billing best-effort; pass nil to disable
+// recording (e.g. billing not configured).
 // Returns an error only when ANTHROPIC_API_KEY is absent from the environment.
-func NewBlueprintGeneratorAdapter(analysisDB *mongo.Database) (*BlueprintGeneratorAdapter, error) {
+func NewBlueprintGeneratorAdapter(analysisDB *mongo.Database, recorder ports.UsageRecorder) (*BlueprintGeneratorAdapter, error) {
 	client, err := analysisadapters.NewAnthropicModelClient(nil)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint generator: model client: %w", err)
@@ -48,6 +54,7 @@ func NewBlueprintGeneratorAdapter(analysisDB *mongo.Database) (*BlueprintGenerat
 		detector:    workeradapters.NewPHPAwareInfraDetector(),
 		clusterer:   workeradapters.NewLouvainClusterer(),
 		client:      client,
+		recorder:    recorder,
 	}, nil
 }
 
@@ -55,7 +62,7 @@ func NewBlueprintGeneratorAdapter(analysisDB *mongo.Database) (*BlueprintGenerat
 // propose microservice groupings anchored to the measured coupling in the graph.
 // The roadmap is used only to supply blocking step orders for precondition_note
 // and required_steps — it is not re-scored here.
-func (a *BlueprintGeneratorAdapter) Generate(ctx context.Context, analysisSummaryID uint64, roadmap *domain.RestructuringRoadmap) (*domain.ServiceBlueprint, error) {
+func (a *BlueprintGeneratorAdapter) Generate(ctx context.Context, userID, migrationID, analysisSummaryID uint64, roadmap *domain.RestructuringRoadmap) (*domain.ServiceBlueprint, error) {
 	graph, err := a.graphLoader.Load(ctx, analysisSummaryID)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint generator: load graph: %w", err)
@@ -90,54 +97,12 @@ func (a *BlueprintGeneratorAdapter) Generate(ctx context.Context, analysisSummar
 
 	digest := workerapp.Distill(graph, cls, clusterResult, cards, 0)
 
-	prompt := buildBlueprintPrompt(digest, roadmap)
-	req := analysisports.ModelRequest{
-		System:    blueprintSystemPrompt,
-		Prompt:    prompt,
-		MaxTokens: 3000,
-		Purpose:   "blueprint-generation",
-	}
-
-	type blueprintServiceJSON struct {
-		Name      string   `json:"name"`
-		Modules   []string `json:"modules"`
-		Rationale string   `json:"rationale"`
-	}
-	type blueprintResponseJSON struct {
-		Services         []blueprintServiceJSON `json:"services"`
-		IsHypothetical   bool                   `json:"is_hypothetical"`
-		PreconditionNote string                 `json:"precondition_note"`
-		RequiredSteps    []int32                `json:"required_steps"`
-		ConfidenceNote   string                 `json:"confidence_note"`
-	}
-
-	result, resp, err := enricherComplete[blueprintResponseJSON](ctx, a.client, req)
-	if err != nil {
-		return nil, fmt.Errorf("blueprint generator: llm: %w", err)
-	}
-
-	services := make([]*migrationv1.BlueprintService, len(result.Services))
-	for i, s := range result.Services {
-		services[i] = &migrationv1.BlueprintService{
-			Name:      s.Name,
-			Modules:   s.Modules,
-			Rationale: s.Rationale,
-		}
-	}
-	return &migrationv1.ServiceBlueprint{
-		Services:         services,
-		IsHypothetical:   result.IsHypothetical,
-		PreconditionNote: result.PreconditionNote,
-		RequiredSteps:    result.RequiredSteps,
-		CostUsd:          resp.CostUSD,
-		GeneratedTime:    timestamppb.New(time.Now().UTC()),
-		ConfidenceNote:   result.ConfidenceNote,
-	}, nil
+	return a.GenerateFromDigest(ctx, userID, migrationID, digest, roadmap)
 }
 
 // GenerateFromDigest accepts a pre-built AnalysisDigest, skipping the MongoDB
 // graph-load pipeline. Used in tests that inject fixtures directly.
-func (a *BlueprintGeneratorAdapter) GenerateFromDigest(ctx context.Context, digest *workerdomain.AnalysisDigest, roadmap *domain.RestructuringRoadmap) (*domain.ServiceBlueprint, error) {
+func (a *BlueprintGeneratorAdapter) GenerateFromDigest(ctx context.Context, userID, migrationID uint64, digest *workerdomain.AnalysisDigest, roadmap *domain.RestructuringRoadmap) (*domain.ServiceBlueprint, error) {
 	prompt := buildBlueprintPrompt(digest, roadmap)
 	req := analysisports.ModelRequest{
 		System:    blueprintSystemPrompt,
@@ -163,6 +128,17 @@ func (a *BlueprintGeneratorAdapter) GenerateFromDigest(ctx context.Context, dige
 	if err != nil {
 		return nil, fmt.Errorf("blueprint generator: llm: %w", err)
 	}
+
+	// Record LLM token spend in billing (best-effort). A failure is logged and
+	// swallowed — it must never break the generation.
+	recordMigrationSpend(ctx, a.recorder, ports.UsageSpend{
+		UserID:      userID,
+		MigrationID: migrationID,
+		Operation:   billingv1.UsageOperation_USAGE_OPERATION_MIGRATION,
+		TokensIn:    int64(resp.InputTokens),
+		TokensOut:   int64(resp.OutputTokens),
+		CostUSD:     resp.CostUSD,
+	})
 
 	services := make([]*migrationv1.BlueprintService, len(result.Services))
 	for i, s := range result.Services {

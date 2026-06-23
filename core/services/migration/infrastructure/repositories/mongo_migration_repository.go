@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"milton_prism/core/services/migration/domain"
@@ -25,6 +26,57 @@ import (
 
 const migrationsCollName = "migrations"
 
+// orderByFieldAllowlist maps the AIP-132 order_by field tokens accepted by
+// ListMigrations to their underlying BSON field name. The sort is resolved
+// here in Mongo (server-side), never on the client. A field outside this set
+// is rejected with domain.ErrInvalidOrderBy. The denormalized topology /
+// protocol / language fields back the matrix axes.
+var orderByFieldAllowlist = map[string]string{
+	"create_time": "create_time",
+	"topology":    "topology",
+	"protocol":    "protocol",
+	"state":       "state",
+	"language":    "language",
+}
+
+// parseOrderBy turns an AIP-132 order_by directive ("create_time desc",
+// "topology asc", or bare "state") into a Mongo sort document. An empty
+// directive defaults to "create_time desc". An unknown field or malformed
+// direction returns domain.ErrInvalidOrderBy so the caller never silently
+// receives an unverified ordering.
+func parseOrderBy(orderBy string) (bson.D, error) {
+	orderBy = strings.TrimSpace(orderBy)
+	if orderBy == "" {
+		return bson.D{{Key: "create_time", Value: -1}}, nil
+	}
+	fields := strings.Fields(orderBy)
+	if len(fields) == 0 || len(fields) > 2 {
+		return nil, domain.ErrInvalidOrderBy
+	}
+	col, ok := orderByFieldAllowlist[strings.ToLower(fields[0])]
+	if !ok {
+		return nil, domain.ErrInvalidOrderBy
+	}
+	dir := 1
+	if len(fields) == 2 {
+		switch strings.ToLower(fields[1]) {
+		case "asc":
+			dir = 1
+		case "desc":
+			dir = -1
+		default:
+			return nil, domain.ErrInvalidOrderBy
+		}
+	}
+	sort := bson.D{{Key: col, Value: dir}}
+	// Tie-break on identifier for a stable total order across pages when the
+	// primary key has duplicate values (e.g. many migrations share a state).
+	if col != "create_time" {
+		sort = append(sort, bson.E{Key: "create_time", Value: -1})
+	}
+	return sort, nil
+}
+
 var _ ports.MigrationRepository = (*MongoMigrationRepository)(nil)
 
 // mongoMigrationDoc is the BSON representation of a Migration record.
@@ -37,6 +89,19 @@ type mongoMigrationDoc struct {
 	OwnerUserID             uint64              `bson:"owner_user_id"`
 	SourceBranch            string              `bson:"source_branch,omitempty"`
 	RootSubdirectory        string              `bson:"root_subdirectory,omitempty"`
+	CommitSHA               string              `bson:"commit_sha,omitempty"`
+	// Topology is denormalized from target.topology (MICROSERVICES=1 / MONOLITH=2)
+	// so it can participate in the uniqueness index: two migrations of the same
+	// (repo, branch, commit) are allowed only when their topology differs.
+	Topology                int32               `bson:"topology"`
+	// Language and Protocol are denormalized from target.language and
+	// target.inter_service_transport (canonicalized at creation: UNSPECIFIED
+	// transport ⇒ GRPC) so they participate in the uniqueness index alongside
+	// topology: two migrations of the same (repo, branch, commit, topology) are
+	// allowed only when their language OR protocol differ — the matrix
+	// {language × protocol × topology} certifies distinct cells of the same repo/branch.
+	Language                int32               `bson:"language"`
+	Protocol                int32               `bson:"protocol"`
 	State                   int32               `bson:"state"`
 	TargetBytes             []byte              `bson:"target_bytes,omitempty"`
 	AnalysisSummaryID       uint64              `bson:"analysis_summary_id,omitempty"`
@@ -64,11 +129,52 @@ type MongoMigrationRepository struct {
 
 func NewMongoMigrationRepository(db *mongo.Database) *MongoMigrationRepository {
 	r := &MongoMigrationRepository{db: db, coll: db.Collection(migrationsCollName)}
+	// Idempotent migration of the uniqueness index: the old 4-dimension index
+	// (repo, branch, commit, topology) is superseded by the 6-dimension index
+	// below. Drop it if present so the new index can be created; ignore the
+	// "index not found" case (fresh DB or already migrated).
+	if _, err := r.coll.Indexes().DropOne(context.Background(), "uniq_repo_branch_commit_topology"); err != nil {
+		applog.Infof("mongo: drop legacy index uniq_repo_branch_commit_topology on %s (ok if absent): %v", migrationsCollName, err)
+	}
 	if _, err := r.coll.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
 		{Keys: bson.D{{Key: "identifier", Value: 1}}, Options: options.Index().SetUnique(true)},
 		{Keys: bson.D{{Key: "owner_user_id", Value: 1}}},
 		{Keys: bson.D{{Key: "repository_id", Value: 1}}},
 		{Keys: bson.D{{Key: "state", Value: 1}}},
+		// Supporting indexes for the server-side ListMigrations sorts/filters so the
+		// common owner-scoped queries are index-covered rather than collection scans.
+		// The leading owner_user_id matches the per-user listing the handler forces
+		// for non-system callers; the trailing create_time backs the default sort.
+		{Keys: bson.D{{Key: "owner_user_id", Value: 1}, {Key: "create_time", Value: -1}},
+			Options: options.Index().SetName("owner_create_time")},
+		{Keys: bson.D{{Key: "owner_user_id", Value: 1}, {Key: "state", Value: 1}, {Key: "create_time", Value: -1}},
+			Options: options.Index().SetName("owner_state_create_time")},
+		{Keys: bson.D{{Key: "owner_user_id", Value: 1}, {Key: "topology", Value: 1}, {Key: "create_time", Value: -1}},
+			Options: options.Index().SetName("owner_topology_create_time")},
+		{Keys: bson.D{{Key: "owner_user_id", Value: 1}, {Key: "protocol", Value: 1}, {Key: "create_time", Value: -1}},
+			Options: options.Index().SetName("owner_protocol_create_time")},
+		{Keys: bson.D{{Key: "owner_user_id", Value: 1}, {Key: "language", Value: 1}, {Key: "create_time", Value: -1}},
+			Options: options.Index().SetName("owner_language_create_time")},
+		// Hard DB block: at most one migration per (repository_id, source_branch,
+		// commit_sha, topology, language, protocol). PARTIAL filter so PENDING
+		// migrations (commit_sha empty/unset, resolved later during analysis) never
+		// collide. A second migration whose analysis resolves to the same commit AND
+		// the same topology+language+protocol hits this and is mapped to MIG223 — but
+		// two migrations that differ in ANY of topology, language or protocol
+		// (e.g. Go+gRPC+micro vs Python+gRPC+micro, or Go+gRPC+monolith vs
+		// Go+HTTP+monolith) are both allowed: distinct cells of the
+		// {language × protocol × topology} matrix for the same repo+branch+commit.
+		{Keys: bson.D{
+			{Key: "repository_id", Value: 1},
+			{Key: "source_branch", Value: 1},
+			{Key: "commit_sha", Value: 1},
+			{Key: "topology", Value: 1},
+			{Key: "language", Value: 1},
+			{Key: "protocol", Value: 1},
+		}, Options: options.Index().
+			SetUnique(true).
+			SetName("uniq_repo_branch_commit_topology_language_protocol").
+			SetPartialFilterExpression(bson.M{"commit_sha": bson.M{"$exists": true, "$gt": ""}})},
 	}); err != nil {
 		applog.Warningf("mongo: create indexes on %s: error=%v", migrationsCollName, err)
 	}
@@ -107,7 +213,11 @@ func (r *MongoMigrationRepository) GetByID(ctx context.Context, identifier uint6
 	return migrationDocToDomain(&doc)
 }
 
-func (r *MongoMigrationRepository) List(ctx context.Context, filter *domain.MigrationsFilter, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error) {
+func (r *MongoMigrationRepository) List(ctx context.Context, filter *domain.MigrationsFilter, orderBy string, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error) {
+	sort, err := parseOrderBy(orderBy)
+	if err != nil {
+		return nil, nil, err
+	}
 	q := bson.M{"delete_time": nil}
 	if filter != nil {
 		if filter.OwnerUserId != nil && filter.GetOwnerUserId() != 0 {
@@ -115,6 +225,21 @@ func (r *MongoMigrationRepository) List(ctx context.Context, filter *domain.Migr
 		}
 		if filter.RepositoryId != nil && filter.GetRepositoryId() != 0 {
 			q["repository_id"] = filter.GetRepositoryId()
+		}
+		if filter.AnalysisSummaryId != nil && filter.GetAnalysisSummaryId() != 0 {
+			q["analysis_summary_id"] = filter.GetAnalysisSummaryId()
+		}
+		// Matrix-axis filters resolved server-side against the denormalized
+		// topology / protocol / language fields (same fields that back the
+		// uniqueness index). Each is optional and skipped when UNSPECIFIED.
+		if filter.Topology != nil && filter.GetTopology() != migrationv1.TargetTopology_TARGET_TOPOLOGY_UNSPECIFIED {
+			q["topology"] = int32(filter.GetTopology())
+		}
+		if filter.Protocol != nil && filter.GetProtocol() != migrationv1.Transport_TRANSPORT_UNSPECIFIED {
+			q["protocol"] = int32(filter.GetProtocol())
+		}
+		if filter.Language != nil && filter.GetLanguage() != migrationv1.TargetLanguage_TARGET_LANGUAGE_UNSPECIFIED {
+			q["language"] = int32(filter.GetLanguage())
 		}
 		if len(filter.GetStates()) > 0 {
 			in := make(bson.A, 0, len(filter.GetStates()))
@@ -131,7 +256,7 @@ func (r *MongoMigrationRepository) List(ctx context.Context, filter *domain.Migr
 		pageNumber = 1
 	}
 	skip := int64((pageNumber - 1) * params.GetPageSize())
-	opts := options.Find().SetSkip(skip).SetLimit(int64(params.GetPageSize())).SetSort(bson.D{{Key: "create_time", Value: -1}})
+	opts := options.Find().SetSkip(skip).SetLimit(int64(params.GetPageSize())).SetSort(sort)
 	cur, err := r.coll.Find(ctx, q, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("migration: list failed: %w", err)
@@ -367,11 +492,16 @@ func migrationToDoc(m *domain.Migration) (*mongoMigrationDoc, error) {
 		OwnerUserID:             m.GetOwnerUserId(),
 		SourceBranch:            m.GetSourceBranch(),
 		RootSubdirectory:        m.GetRootSubdirectory(),
+		CommitSHA:               m.GetCommitSha(),
 		State:                   int32(m.GetState()),
 		AnalysisSummaryID:       m.GetAnalysisSummaryId(),
 		SourceAnalysisSummaryID: m.GetSourceAnalysisSummaryId(),
 		MigrabilityOverride:     m.GetMigrabilityOverride(),
 		AutoApprove:             m.GetAutoApprove(),
+		// Denormalized for the uniqueness index (see uniq_repo_branch_commit_topology_language_protocol).
+		Topology:                int32(m.GetTarget().GetTopology()),
+		Language:                int32(m.GetTarget().GetLanguage()),
+		Protocol:                int32(m.GetTarget().GetInterServiceTransport()),
 	}
 	if m.GetTarget() != nil {
 		b, err := proto.Marshal(m.GetTarget())
@@ -436,6 +566,7 @@ func migrationDocToDomain(d *mongoMigrationDoc) (*domain.Migration, error) {
 		OwnerUserId:             d.OwnerUserID,
 		SourceBranch:            d.SourceBranch,
 		RootSubdirectory:        d.RootSubdirectory,
+		CommitSha:               d.CommitSHA,
 		State:                   migrationv1.MigrationState(d.State),
 		AnalysisSummaryId:       d.AnalysisSummaryID,
 		SourceAnalysisSummaryId: d.SourceAnalysisSummaryID,

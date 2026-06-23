@@ -25,6 +25,20 @@ const (
 	// single service in subscription runs.
 	defaultAgentTimeout = 60 * time.Minute
 
+	// Rust (Tonic) profile resource limits. Compiling a Tonic/Prost service plus
+	// its crate graph is far heavier in RAM and wall-clock than Go/Node/Python:
+	// the default 1 GiB / 50% CPU cannot finish a `cargo build` (rustc + LLVM
+	// codegen of tonic/prost/tokio/mongodb regularly peaks well above 1 GiB).
+	// These limits apply only to the rust profile; every other profile keeps the
+	// defaults above. The agent image pre-warms the Cargo registry + a compiled
+	// dependency cache so the bulk of the crate compile is already done.
+	rustAgentCPUQuota = 200_000        // up to 2 CPUs for parallel codegen
+	rustAgentMemory   = int64(4) << 30 // 4 GiB — headroom for rustc/LLVM peaks
+	// Container lifetime covers the whole run (agent reasoning + every cargo
+	// build/test iteration). Rust builds are slow even with a warm cache, so the
+	// rust container gets a longer budget than the 60-min default.
+	rustAgentTimeout = 90 * time.Minute
+
 	// maxArtifactBytes is the upper size bound for a file to be captured as a
 	// generation artifact. Generated Go source and proto files are always well
 	// under this threshold. Any file that exceeds it (compiled binary, archive,
@@ -120,6 +134,9 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 		req.ServiceName,
 		req.ErrorPrefix,
 		req.OutputProfile,
+		req.Protocol,
+		req.AuthScheme,
+		req.AuthSignatureAlg,
 		req.BoundarySpec,
 		req.ProtoContent,
 	); err != nil {
@@ -166,10 +183,17 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 		out.CacheCreationInputTokens = parsed.Usage.CacheCreationInputTokens
 		out.CacheReadInputTokens = parsed.Usage.CacheReadInputTokens
 		out.OutputTokens = parsed.Usage.OutputTokens
+		out.Model = parsed.DominantModel()
 	}
 
 	if !out.Success {
-		out.FailureReason = extractFailureReason(runResult.Stdout + runResult.Stderr)
+		raw := extractFailureReason(runResult.Stdout + runResult.Stderr)
+		out.RawFailureReason = raw
+		out.FailureReason = SanitizeFailureReason(raw)
+		// Log the full raw blob server-side for diagnosis; never expose it to the
+		// user-visible FailureReason field.
+		applog.Warningf("agent invoker: service=%s gate failure (raw, server-only): %s",
+			req.ServiceName, raw)
 	}
 
 	applog.Infof("agent invoker: done service=%s exitCode=%d gatesPassed=%v cost=%.4f "+
@@ -206,6 +230,14 @@ func (a *ClaudeAgentInvoker) buildRunRequest(workspaceDir string, req ports.Invo
 	var env []string
 	var claudeCmd string
 
+	// Profile-aware resource limits: the rust profile needs more RAM/CPU/time to
+	// run `cargo build` inside the container (Tonic/Prost compile is heavy). All
+	// other profiles keep the invoker's configured defaults.
+	cpuQuota, memoryBytes, timeout := a.cpuQuota, a.memoryBytes, a.timeout
+	if req.OutputProfile == "rust" {
+		cpuQuota, memoryBytes, timeout = rustAgentCPUQuota, rustAgentMemory, rustAgentTimeout
+	}
+
 	if a.goModCache != "" {
 		mounts = append(mounts, a.goModCache+":/go/pkg/mod:ro")
 	}
@@ -221,10 +253,10 @@ func (a *ClaudeAgentInvoker) buildRunRequest(workspaceDir string, req ports.Invo
 			WorkDir:     "/workspace",
 			BindMounts:  mounts,
 			Env:         env,
-			CPUQuota:    a.cpuQuota,
-			MemoryBytes: a.memoryBytes,
+			CPUQuota:    cpuQuota,
+			MemoryBytes: memoryBytes,
 			NetworkName: a.networkName,
-			Timeout:     a.timeout,
+			Timeout:     timeout,
 		}, noop, nil
 	}
 
@@ -255,9 +287,9 @@ func (a *ClaudeAgentInvoker) buildRunRequest(workspaceDir string, req ports.Invo
 		WorkDir:     "/workspace",
 		BindMounts:  mounts,
 		Env:         env,
-		CPUQuota:    a.cpuQuota,
-		MemoryBytes: a.memoryBytes,
+		CPUQuota:    cpuQuota,
+		MemoryBytes: memoryBytes,
 		NetworkName: a.networkName,
-		Timeout:     a.timeout,
+		Timeout:     timeout,
 	}, noop, nil
 }

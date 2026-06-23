@@ -27,6 +27,19 @@ const (
 	ErrCodeInvalidTargetConfig     = "MIG105"
 	ErrCodeInvalidRootSubdirectory = "MIG106"
 	ErrCodeUnsupportedTargetLanguage = "MIG107"
+	// ErrCodeMissingSourceBranch: CreateMigration was called without a source_branch.
+	// The branch is mandatory — a migration must declare the branch it runs against.
+	ErrCodeMissingSourceBranch = "MIG108"
+	// ErrCodeUnsupportedProtocol: the requested (language, transport) cell is not
+	// in the generation matrix (IsGenerableProtocol). Rejected at creation so a
+	// migration never targets a protocol the generator cannot emit. Today the
+	// HTTP matrix is complete (Go, Python, Node and Rust all support HTTP), so
+	// MIG109 only fires for a non-generable language or an unknown transport.
+	ErrCodeUnsupportedProtocol = "MIG109"
+	// ErrCodeInvalidOrderBy: ListMigrations received an order_by directive whose
+	// field is not in the server-side allowlist (create_time, topology, protocol,
+	// state, language). Rejected so the client never relies on an unverified sort.
+	ErrCodeInvalidOrderBy = "MIG110"
 )
 
 var (
@@ -42,6 +55,16 @@ var (
 	// generator profile yet (only Go and Python are generable). Rejected at
 	// creation so a migration never silently falls back to Go.
 	ErrUnsupportedTargetLanguage = newError(ErrCodeUnsupportedTargetLanguage, "Failure_Unsupported_Target_Language")
+	// ErrMissingSourceBranch: CreateMigration rejected because no source_branch
+	// was supplied. The branch is mandatory.
+	ErrMissingSourceBranch = newError(ErrCodeMissingSourceBranch, "Failure_Missing_Source_Branch")
+	// ErrUnsupportedProtocol: the requested (language, transport) combination is
+	// not generable (see IsGenerableProtocol). The HTTP matrix is complete (Go,
+	// Python, Node and Rust all support HTTP). Rejected at creation so a migration
+	// never targets an unsupported protocol.
+	ErrUnsupportedProtocol = newError(ErrCodeUnsupportedProtocol, "Failure_Unsupported_Protocol")
+	// ErrInvalidOrderBy: order_by names a field outside the allowlist.
+	ErrInvalidOrderBy = newError(ErrCodeInvalidOrderBy, "Failure_Invalid_Order_By")
 )
 
 // ── Domain errors (MIG2xx) ────────────────────────────────────────────────────
@@ -102,6 +125,10 @@ const (
 	// plan count limit (migrations-per-month) has been reached. Hard block; the user
 	// must upgrade their plan or wait for the next billing month.
 	ErrCodePlanLimitExceeded = "MIG222"
+	// ErrCodeBranchUnchanged: at commit-resolution time another migration already
+	// exists for the same (repository_id, source_branch, commit_sha) — the branch
+	// has no new commits since the last migration. The migration is moved to FAILED.
+	ErrCodeBranchUnchanged = "MIG223"
 )
 
 var (
@@ -128,6 +155,9 @@ var (
 	// ErrPlanLimitExceeded carries an actionable default message; use
 	// NewErrPlanLimitExceeded to embed the concrete monthly cap.
 	ErrPlanLimitExceeded = newError(ErrCodePlanLimitExceeded, "Failure_Plan_Limit_Exceeded")
+	// ErrBranchUnchanged: a migration already exists for this repo+branch at the
+	// same commit; there are no new commits since the last migration.
+	ErrBranchUnchanged = newError(ErrCodeBranchUnchanged, "Failure_Migration_Branch_Unchanged")
 )
 
 // NewErrPlanLimitExceeded builds a plan-limit error whose message names the

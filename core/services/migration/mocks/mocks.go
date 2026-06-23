@@ -11,6 +11,7 @@ import (
 	"milton_prism/core/services/migration/ports"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
+	migrationv1 "milton_prism/pkg/pb/gen/milton_prism/types/migration/v1"
 	paginationv1 "milton_prism/pkg/pb/gen/milton_prism/types/pagination/v1"
 	queryparamsv1 "milton_prism/pkg/pb/gen/milton_prism/types/query_params/v1"
 
@@ -33,7 +34,25 @@ var (
 	_ ports.BlueprintGenerator           = (*MockBlueprintGenerator)(nil)
 	_ ports.StackDetector                = (*MockStackDetector)(nil)
 	_ ports.BillingClient                = (*MockBillingClient)(nil)
+	_ ports.GenerationResultReader       = (*MockGenerationResultReader)(nil)
 )
+
+// MockGenerationResultReader is a testify mock for ports.GenerationResultReader.
+type MockGenerationResultReader struct {
+	mock.Mock
+}
+
+func (m *MockGenerationResultReader) ReadResults(ctx context.Context, migrationID uint64) ([]*migrationv1.ServiceGenerationRecord, error) {
+	args := m.Called(ctx, migrationID)
+	v, _ := args.Get(0).([]*migrationv1.ServiceGenerationRecord)
+	return v, args.Error(1)
+}
+
+func (m *MockGenerationResultReader) ReadUsageTotals(ctx context.Context, migrationID uint64) (ports.GenerationUsageTotals, error) {
+	args := m.Called(ctx, migrationID)
+	v, _ := args.Get(0).(ports.GenerationUsageTotals)
+	return v, args.Error(1)
+}
 
 // MockMigrationRepository is a testify mock for ports.MigrationRepository.
 type MockMigrationRepository struct {
@@ -52,8 +71,8 @@ func (m *MockMigrationRepository) GetByID(ctx context.Context, identifier uint64
 	return v, args.Error(1)
 }
 
-func (m *MockMigrationRepository) List(ctx context.Context, filter *domain.MigrationsFilter, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error) {
-	args := m.Called(ctx, filter, params)
+func (m *MockMigrationRepository) List(ctx context.Context, filter *domain.MigrationsFilter, orderBy string, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error) {
+	args := m.Called(ctx, filter, orderBy, params)
 	items, _ := args.Get(0).([]*domain.Migration)
 	pag, _ := args.Get(1).(*paginationv1.Pagination)
 	return items, pag, args.Error(2)
@@ -113,6 +132,15 @@ func (m *MockBillingClient) GetUserPlan(ctx context.Context, userID uint64) (*bi
 	args := m.Called(ctx, userID)
 	v, _ := args.Get(0).(*billingv1.Plan)
 	return v, args.Error(1)
+}
+
+func (m *MockBillingClient) RecordUsage(ctx context.Context, spend ports.UsageSpend) error {
+	return m.Called(ctx, spend).Error(0)
+}
+
+func (m *MockBillingClient) CountUsageRecords(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (int, error) {
+	args := m.Called(ctx, migrationID, op)
+	return args.Int(0), args.Error(1)
 }
 
 // MockTransactionManager is a pass-through implementation of ports.TransactionManager.
@@ -216,8 +244,8 @@ type MockMigrabilityAssessor struct {
 	mock.Mock
 }
 
-func (m *MockMigrabilityAssessor) Assess(ctx context.Context, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error) {
-	args := m.Called(ctx, analysisSummaryID, language)
+func (m *MockMigrabilityAssessor) Assess(ctx context.Context, userID, migrationID, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error) {
+	args := m.Called(ctx, userID, migrationID, analysisSummaryID, language)
 	v, _ := args.Get(0).(*domain.MigrabilityAssessment)
 	return v, args.Error(1)
 }
@@ -227,8 +255,8 @@ type MockRoadmapEnricher struct {
 	mock.Mock
 }
 
-func (m *MockRoadmapEnricher) Enrich(ctx context.Context, roadmap *domain.RestructuringRoadmap) (*domain.RoadmapEnrichment, error) {
-	args := m.Called(ctx, roadmap)
+func (m *MockRoadmapEnricher) Enrich(ctx context.Context, userID, migrationID uint64, roadmap *domain.RestructuringRoadmap) (*domain.RoadmapEnrichment, error) {
+	args := m.Called(ctx, userID, migrationID, roadmap)
 	v, _ := args.Get(0).(*domain.RoadmapEnrichment)
 	return v, args.Error(1)
 }
@@ -238,8 +266,8 @@ type MockBlueprintGenerator struct {
 	mock.Mock
 }
 
-func (m *MockBlueprintGenerator) Generate(ctx context.Context, analysisSummaryID uint64, roadmap *domain.RestructuringRoadmap) (*domain.ServiceBlueprint, error) {
-	args := m.Called(ctx, analysisSummaryID, roadmap)
+func (m *MockBlueprintGenerator) Generate(ctx context.Context, userID, migrationID, analysisSummaryID uint64, roadmap *domain.RestructuringRoadmap) (*domain.ServiceBlueprint, error) {
+	args := m.Called(ctx, userID, migrationID, analysisSummaryID, roadmap)
 	v, _ := args.Get(0).(*domain.ServiceBlueprint)
 	return v, args.Error(1)
 }

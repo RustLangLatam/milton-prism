@@ -4,6 +4,7 @@ package milton_prism.services.analysis.v1;
 
 import "google/api/annotations.proto";
 import "google/api/field_behavior.proto";
+import "google/protobuf/empty.proto";
 import "milton_prism/types/analysis/v1/analysis.proto";
 import "milton_prism/types/common/v1/migrability.proto";
 import "milton_prism/types/pagination/v1/pagination.proto";
@@ -113,6 +114,62 @@ service AnalysisService {
       description: "Picks one of the detected candidate project roots for an analysis in ANALYSIS_STATE_AWAITING_ROOT_SELECTION, persists it, and re-enqueues the analysis scoped to that root. The choice must be among root_candidates; invalid/empty choices are rejected."
     };
   }
+
+  // CancelAnalysis transitions a non-terminal analysis to CANCELLED.
+  //
+  // Only the owner or a system user may cancel an analysis. A cancel on an
+  // analysis already in a terminal state (COMPLETED, FAILED, CANCELLED) is
+  // rejected. Soft-cancel: any in-flight worker computation may finish but its
+  // result is discarded. Returns the updated AnalysisSummary.
+  rpc CancelAnalysis(CancelAnalysisRequest) returns (milton_prism.types.analysis.v1.AnalysisSummary) {
+    option (google.api.http) = {
+      post: "/v1/analysis_summaries/{identifier}:cancel"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Cancel an analysis"
+      description: "Transitions the analysis to ANALYSIS_STATE_CANCELLED from any non-terminal state. Rejected when the analysis is already terminal."
+    };
+  }
+
+  // DeleteAnalysisSummary soft-deletes an analysis summary by identifier.
+  //
+  // Only analyses in a terminal state (COMPLETED, FAILED, CANCELLED) may be
+  // deleted, and only when no active (non-terminal) migration still references
+  // them — otherwise the delete is rejected so a running migration never loses
+  // its analysis. Only the owner or a system user may delete. The record is
+  // retained until the purge window expires.
+  rpc DeleteAnalysisSummary(DeleteAnalysisSummaryRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/analysis_summaries/{identifier}"};
+    option (openapi.v3.operation) = {
+      summary: "Soft-delete an analysis summary"
+      description: "Marks a terminal-state analysis summary as deleted. Rejected when the analysis is non-terminal or still has active migrations referencing it. Record retained until the purge window expires."
+    };
+  }
+}
+
+// CancelAnalysisRequest cancels a non-terminal analysis.
+message CancelAnalysisRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Analysis summary identifier."
+      example: {yaml: "42"}
+    }
+  ];
+}
+
+// DeleteAnalysisSummaryRequest identifies the analysis summary to soft-delete.
+message DeleteAnalysisSummaryRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Analysis summary identifier."
+      example: {yaml: "42"}
+    }
+  ];
 }
 
 // SelectRootRequest selects the project root for an awaiting-selection analysis.
@@ -203,11 +260,12 @@ message RunAnalysisRequest {
     description: "Migration identifier that triggered this run (0 if standalone)."
     example: {yaml: "7"}
   }];
-  // Branch to analyse. When empty the repository's default_branch is used.
+  // Branch to analyse. Mandatory — analyses are unique per
+  // (repository_id, source_branch); there is no default-branch fallback.
   string source_branch = 3 [
-    (google.api.field_behavior) = OPTIONAL,
+    (google.api.field_behavior) = REQUIRED,
     (openapi.v3.property) = {
-      description: "Branch to analyse. Defaults to the repository's default_branch when empty."
+      description: "Branch to analyse. Required — analyses are unique per repository and branch."
       example: {yaml: "develop"}
     }
   ];

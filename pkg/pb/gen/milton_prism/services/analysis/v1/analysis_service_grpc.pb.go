@@ -11,6 +11,7 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	v1 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 	v11 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 )
@@ -26,6 +27,8 @@ const (
 	AnalysisService_RunAnalysis_FullMethodName           = "/milton_prism.services.analysis.v1.AnalysisService/RunAnalysis"
 	AnalysisService_EvaluateMigrability_FullMethodName   = "/milton_prism.services.analysis.v1.AnalysisService/EvaluateMigrability"
 	AnalysisService_SelectRoot_FullMethodName            = "/milton_prism.services.analysis.v1.AnalysisService/SelectRoot"
+	AnalysisService_CancelAnalysis_FullMethodName        = "/milton_prism.services.analysis.v1.AnalysisService/CancelAnalysis"
+	AnalysisService_DeleteAnalysisSummary_FullMethodName = "/milton_prism.services.analysis.v1.AnalysisService/DeleteAnalysisSummary"
 )
 
 // AnalysisServiceClient is the client API for AnalysisService service.
@@ -84,6 +87,21 @@ type AnalysisServiceClient interface {
 	// chosen root, transitioning back to ANALYSIS_STATE_RUNNING. Returns the
 	// updated AnalysisSummary.
 	SelectRoot(ctx context.Context, in *SelectRootRequest, opts ...grpc.CallOption) (*v1.AnalysisSummary, error)
+	// CancelAnalysis transitions a non-terminal analysis to CANCELLED.
+	//
+	// Only the owner or a system user may cancel an analysis. A cancel on an
+	// analysis already in a terminal state (COMPLETED, FAILED, CANCELLED) is
+	// rejected. Soft-cancel: any in-flight worker computation may finish but its
+	// result is discarded. Returns the updated AnalysisSummary.
+	CancelAnalysis(ctx context.Context, in *CancelAnalysisRequest, opts ...grpc.CallOption) (*v1.AnalysisSummary, error)
+	// DeleteAnalysisSummary soft-deletes an analysis summary by identifier.
+	//
+	// Only analyses in a terminal state (COMPLETED, FAILED, CANCELLED) may be
+	// deleted, and only when no active (non-terminal) migration still references
+	// them — otherwise the delete is rejected so a running migration never loses
+	// its analysis. Only the owner or a system user may delete. The record is
+	// retained until the purge window expires.
+	DeleteAnalysisSummary(ctx context.Context, in *DeleteAnalysisSummaryRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type analysisServiceClient struct {
@@ -138,6 +156,26 @@ func (c *analysisServiceClient) SelectRoot(ctx context.Context, in *SelectRootRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(v1.AnalysisSummary)
 	err := c.cc.Invoke(ctx, AnalysisService_SelectRoot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *analysisServiceClient) CancelAnalysis(ctx context.Context, in *CancelAnalysisRequest, opts ...grpc.CallOption) (*v1.AnalysisSummary, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(v1.AnalysisSummary)
+	err := c.cc.Invoke(ctx, AnalysisService_CancelAnalysis_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *analysisServiceClient) DeleteAnalysisSummary(ctx context.Context, in *DeleteAnalysisSummaryRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, AnalysisService_DeleteAnalysisSummary_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +238,21 @@ type AnalysisServiceServer interface {
 	// chosen root, transitioning back to ANALYSIS_STATE_RUNNING. Returns the
 	// updated AnalysisSummary.
 	SelectRoot(context.Context, *SelectRootRequest) (*v1.AnalysisSummary, error)
+	// CancelAnalysis transitions a non-terminal analysis to CANCELLED.
+	//
+	// Only the owner or a system user may cancel an analysis. A cancel on an
+	// analysis already in a terminal state (COMPLETED, FAILED, CANCELLED) is
+	// rejected. Soft-cancel: any in-flight worker computation may finish but its
+	// result is discarded. Returns the updated AnalysisSummary.
+	CancelAnalysis(context.Context, *CancelAnalysisRequest) (*v1.AnalysisSummary, error)
+	// DeleteAnalysisSummary soft-deletes an analysis summary by identifier.
+	//
+	// Only analyses in a terminal state (COMPLETED, FAILED, CANCELLED) may be
+	// deleted, and only when no active (non-terminal) migration still references
+	// them — otherwise the delete is rejected so a running migration never loses
+	// its analysis. Only the owner or a system user may delete. The record is
+	// retained until the purge window expires.
+	DeleteAnalysisSummary(context.Context, *DeleteAnalysisSummaryRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedAnalysisServiceServer()
 }
 
@@ -224,6 +277,12 @@ func (UnimplementedAnalysisServiceServer) EvaluateMigrability(context.Context, *
 }
 func (UnimplementedAnalysisServiceServer) SelectRoot(context.Context, *SelectRootRequest) (*v1.AnalysisSummary, error) {
 	return nil, status.Error(codes.Unimplemented, "method SelectRoot not implemented")
+}
+func (UnimplementedAnalysisServiceServer) CancelAnalysis(context.Context, *CancelAnalysisRequest) (*v1.AnalysisSummary, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelAnalysis not implemented")
+}
+func (UnimplementedAnalysisServiceServer) DeleteAnalysisSummary(context.Context, *DeleteAnalysisSummaryRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteAnalysisSummary not implemented")
 }
 func (UnimplementedAnalysisServiceServer) mustEmbedUnimplementedAnalysisServiceServer() {}
 func (UnimplementedAnalysisServiceServer) testEmbeddedByValue()                         {}
@@ -336,6 +395,42 @@ func _AnalysisService_SelectRoot_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AnalysisService_CancelAnalysis_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelAnalysisRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AnalysisServiceServer).CancelAnalysis(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AnalysisService_CancelAnalysis_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AnalysisServiceServer).CancelAnalysis(ctx, req.(*CancelAnalysisRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AnalysisService_DeleteAnalysisSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteAnalysisSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AnalysisServiceServer).DeleteAnalysisSummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AnalysisService_DeleteAnalysisSummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AnalysisServiceServer).DeleteAnalysisSummary(ctx, req.(*DeleteAnalysisSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AnalysisService_ServiceDesc is the grpc.ServiceDesc for AnalysisService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -362,6 +457,14 @@ var AnalysisService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SelectRoot",
 			Handler:    _AnalysisService_SelectRoot_Handler,
+		},
+		{
+			MethodName: "CancelAnalysis",
+			Handler:    _AnalysisService_CancelAnalysis_Handler,
+		},
+		{
+			MethodName: "DeleteAnalysisSummary",
+			Handler:    _AnalysisService_DeleteAnalysisSummary_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

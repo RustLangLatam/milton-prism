@@ -15,13 +15,30 @@ type ServiceSpec struct {
 	Incomplete         bool
 	IncompleteReason   string
 	GeneratorPromptRef string
+	// Protocol is the transport the generated service speaks ("grpc" | "http").
+	// Orthogonal to OutputProfile (the language). It selects the generator prompt
+	// per (profile, protocol) and the transport section injected into the prompt.
+	// Empty is treated as "grpc" for backward compatibility.
+	Protocol string
+	// AuthScheme is the effective authentication scheme the generated service must
+	// implement ("jwt"/"none"/…), resolved as override ?? detected. v1 generates
+	// "jwt" and "none". Empty is treated as "none".
+	AuthScheme string
+	// AuthSignatureAlg is the JWT signature algorithm family the generated
+	// validation accepts when AuthScheme is "jwt" (HS256/RS256/ES256/EdDSA). Empty
+	// for non-JWT or undetermined.
+	AuthSignatureAlg string
 }
 
 // GenerationPackage is the worker-internal view of the assembled generation specs.
 type GenerationPackage struct {
 	MigrationID   uint64
 	OutputProfile string
-	Services      []ServiceSpec
+	// Protocol is the transport every service in this package speaks
+	// ("grpc" | "http"). Read from the migration's TargetConfig
+	// inter_service_transport. Empty is treated as "grpc".
+	Protocol string
+	Services []ServiceSpec
 }
 
 // GenerationPackageReader reads the assembled generation specs for a GENERATING migration.

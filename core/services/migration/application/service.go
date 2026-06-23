@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	billingdomain "milton_prism/core/services/billing/domain"
 	"milton_prism/core/services/migration/domain"
@@ -102,15 +103,19 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 	if m.GetRepositoryId() == 0 {
 		return nil, domain.ErrMissingRepositoryID
 	}
+	if m.GetSourceBranch() == "" {
+		return nil, domain.ErrMissingSourceBranch
+	}
 	if m.GetTarget() == nil ||
 		m.GetTarget().GetLanguage() == domain.TargetLanguageUnspecified ||
 		m.GetTarget().GetDatabase() == domain.TargetDatabaseUnspecified {
 		return nil, domain.ErrInvalidTargetConfig
 	}
-	// Reject target languages without a real generator profile (Node/Rust are enum
-	// values but generator holes). Without this guard CreateMigration would accept
-	// them and the generation step would silently fall back to Go (outputProfileLabel
-	// defaults to "go"), producing the wrong language with no signal to the user.
+	// Reject target languages without a real generator profile. Without this guard
+	// CreateMigration would accept an enum value whose generator is a hole and the
+	// generation step would silently fall back to Go (outputProfileLabel defaults
+	// to "go"), producing the wrong language with no signal to the user. Go,
+	// Python, Node and Rust are filled profiles; any other enum value is rejected.
 	if !domain.IsGenerableLanguage(m.GetTarget().GetLanguage()) {
 		return nil, domain.ErrUnsupportedTargetLanguage
 	}
@@ -127,6 +132,20 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 	// UNSPECIFIED is treated as MICROSERVICES (no break to the existing flow).
 	if m.GetTarget().GetTopology() == domain.TargetTopologyUnspecified {
 		m.Target.Topology = domain.TargetTopologyMicroservices
+	}
+	// Canonicalise the PROTOCOL axis the same way as topology: UNSPECIFIED is
+	// treated as gRPC so existing migrations (and any caller that omits the field)
+	// keep their current behaviour. The persisted TargetConfig is then explicit so
+	// the generation worker never has to infer the transport.
+	if m.GetTarget().GetInterServiceTransport() == domain.TransportUnspecified {
+		m.Target.InterServiceTransport = domain.TransportGRPC
+	}
+	// Reject (language, transport) cells the generator cannot emit. The language is
+	// already known to be generable (MIG107 above); this guards the protocol axis:
+	// HTTP is only supported for Go in v1. Rejected at creation so a migration never
+	// targets a protocol with no prompt/assembler behaviour.
+	if !domain.IsGenerableProtocol(m.GetTarget().GetLanguage(), m.GetTarget().GetInterServiceTransport()) {
+		return nil, domain.ErrUnsupportedProtocol
 	}
 	if s.identity != nil {
 		if err := s.identity.ValidateUserExists(ctx, m.GetOwnerUserId()); err != nil {
@@ -223,16 +242,96 @@ func (s *Service) GetMigration(ctx context.Context, identifier uint64) (*domain.
 			}
 		}
 	}
+	// Reconcile the GENERATION spend at a terminal generation state. The
+	// generation worker has no token signing key, so it cannot record billing;
+	// migration-services does it here, idempotently, when the migration is
+	// observed in a terminal generation state. Best-effort: never break the read.
+	if m.GetState() == domain.MigrationStateReady || m.GetState() == domain.MigrationStateFailed {
+		s.finalizeGenerationBilling(ctx, m)
+	}
 	return m, nil
 }
 
-// ListMigrations returns a paginated, filtered list of migrations.
-func (s *Service) ListMigrations(ctx context.Context, filter *domain.MigrationsFilter, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error) {
-	return s.repo.List(ctx, filter, params)
+// finalizeGenerationBilling records the migration's GENERATION token spend in
+// billing exactly once, attributed to the migration owner. It is the close hook
+// for generation accounting: the generation worker cannot mint the system token
+// RecordUsage requires, so the spend is recorded from migration-services when a
+// migration is observed in a terminal generation state (READY/FAILED).
+//
+// Idempotent: it first checks billing for an existing GENERATION record for the
+// migration and skips when one is present, so repeated GetMigration calls (or a
+// re-triggered finalize) never double-count. Best-effort: every failure is
+// logged and swallowed — it must never break the surrounding read.
+//
+// Cost: the real agent-reported total_cost_usd is used when present (apikey
+// mode); otherwise the cost is estimated by token using the billing price sheet
+// (subscription mode, where total_cost_usd is 0). The estimated case is marked
+// in the log; a structured cost_estimated flag on UsageRecord is PENDING (needs
+// a proto change, deferred).
+func (s *Service) finalizeGenerationBilling(ctx context.Context, m *domain.Migration) {
+	if s.billing == nil || s.generationResultReader == nil {
+		return
+	}
+	migrationID := m.GetIdentifier()
+	ownerID := m.GetOwnerUserId()
+	if migrationID == 0 || ownerID == 0 {
+		return
+	}
+
+	// Idempotency: skip when a GENERATION record already exists for this migration.
+	existing, err := s.billing.CountUsageRecords(ctx, migrationID, billingdomain.OperationGeneration)
+	if err != nil {
+		applog.Warningf("migration: finalize generation billing — idempotency check failed migration_id=%d: %v", migrationID, err)
+		return
+	}
+	if existing > 0 {
+		return
+	}
+
+	totals, err := s.generationResultReader.ReadUsageTotals(ctx, migrationID)
+	if err != nil {
+		applog.Warningf("migration: finalize generation billing — read totals failed migration_id=%d: %v", migrationID, err)
+		return
+	}
+	if totals.Records == 0 || (totals.TokensIn == 0 && totals.TokensOut == 0) {
+		// Nothing was generated (or no token data) — nothing to bill.
+		return
+	}
+
+	cost := totals.RealCostUSD
+	estimated := false
+	if cost <= 0 {
+		cost = billingdomain.EstimateCostUSD(totals.Model, totals.TokensIn, 0, 0, totals.TokensOut)
+		estimated = true
+	}
+
+	if err := s.billing.RecordUsage(ctx, ports.UsageSpend{
+		UserID:        ownerID,
+		MigrationID:   migrationID,
+		Operation:     billingdomain.OperationGeneration,
+		TokensIn:      totals.TokensIn,
+		TokensOut:     totals.TokensOut,
+		CostUSD:       cost,
+		Model:         totals.Model,
+		CostEstimated: estimated,
+	}); err != nil {
+		applog.Warningf("migration: finalize generation billing — record failed migration_id=%d: %v", migrationID, err)
+		return
+	}
+	applog.Infof("migration: GENERATION spend recorded migration_id=%d owner=%d tokensIn=%d tokensOut=%d costUSD=%.4f estimated=%v model=%q",
+		migrationID, ownerID, totals.TokensIn, totals.TokensOut, cost, estimated, totals.Model)
 }
 
-// DeleteMigration soft-deletes a migration by identifier. Only migrations in a
-// terminal state (PUSHED, FAILED, CANCELLED) may be deleted.
+// ListMigrations returns a paginated, filtered, ordered list of migrations.
+// orderBy is an AIP-132 directive resolved server-side by the repository;
+// empty means the default "create_time desc".
+func (s *Service) ListMigrations(ctx context.Context, filter *domain.MigrationsFilter, orderBy string, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error) {
+	return s.repo.List(ctx, filter, orderBy, params)
+}
+
+// DeleteMigration soft-deletes a migration by identifier. Only finished (not
+// in-progress) migrations may be deleted: READY, PUSHED, FAILED, CANCELLED, and
+// RESTRUCTURING_READY. In-progress migrations are rejected.
 func (s *Service) DeleteMigration(ctx context.Context, identifier uint64) error {
 	if identifier == 0 {
 		return domain.ErrMissingIdentifier
@@ -241,7 +340,7 @@ func (s *Service) DeleteMigration(ctx context.Context, identifier uint64) error 
 	if err != nil {
 		return err
 	}
-	if !isTerminalState(m.GetState()) {
+	if !isDeletableMigrationState(m.GetState()) {
 		return domain.ErrInvalidStateTransition
 	}
 	return s.repo.SoftDelete(ctx, identifier)
@@ -506,7 +605,7 @@ func (s *Service) AssessMigrability(ctx context.Context, identifier uint64, lang
 	if s.migrabilityAssessor == nil {
 		return nil, fmt.Errorf("migration: migrability assessor not configured")
 	}
-	assessment, err := s.migrabilityAssessor.Assess(ctx, m.GetAnalysisSummaryId(), language)
+	assessment, err := s.migrabilityAssessor.Assess(ctx, m.GetOwnerUserId(), identifier, m.GetAnalysisSummaryId(), language)
 	if err != nil {
 		return nil, fmt.Errorf("migration: assess migrability: %w", err)
 	}
@@ -559,7 +658,7 @@ func (s *Service) EnrichRoadmap(ctx context.Context, identifier uint64) (*domain
 	if s.roadmapEnricher == nil {
 		return nil, fmt.Errorf("migration: roadmap enricher not configured")
 	}
-	enrichment, err := s.roadmapEnricher.Enrich(ctx, roadmap)
+	enrichment, err := s.roadmapEnricher.Enrich(ctx, m.GetOwnerUserId(), identifier, roadmap)
 	if err != nil {
 		return nil, fmt.Errorf("migration: enrich roadmap: %w", err)
 	}
@@ -596,7 +695,7 @@ func (s *Service) GenerateBlueprint(ctx context.Context, identifier uint64) (*do
 	if s.blueprintGenerator == nil {
 		return nil, fmt.Errorf("migration: blueprint generator not configured")
 	}
-	blueprint, err := s.blueprintGenerator.Generate(ctx, m.GetAnalysisSummaryId(), roadmap)
+	blueprint, err := s.blueprintGenerator.Generate(ctx, m.GetOwnerUserId(), identifier, m.GetAnalysisSummaryId(), roadmap)
 	if err != nil {
 		return nil, fmt.Errorf("migration: generate blueprint: %w", err)
 	}
@@ -635,7 +734,9 @@ func migrabilityBlocked(m *domain.Migration) bool {
 	return v.GetVerdict() == domain.MigrabilityVerdictNotMigrable && !m.GetMigrabilityOverride()
 }
 
-// CancelMigration transitions a migration to CANCELLED from any non-terminal state.
+// CancelMigration transitions a migration to CANCELLED. Only in-progress
+// migrations may be cancelled: PENDING, ANALYZING, DESIGNING, AWAITING_APPROVAL,
+// GENERATING, and TESTING. READY and terminal states are rejected.
 func (s *Service) CancelMigration(ctx context.Context, identifier uint64) (*domain.Migration, error) {
 	if identifier == 0 {
 		return nil, domain.ErrMissingIdentifier
@@ -644,7 +745,7 @@ func (s *Service) CancelMigration(ctx context.Context, identifier uint64) (*doma
 	if err != nil {
 		return nil, err
 	}
-	if isTerminalState(m.GetState()) {
+	if !isCancelableMigrationState(m.GetState()) {
 		return nil, domain.ErrInvalidStateTransition
 	}
 	if err := s.repo.UpdateState(ctx, identifier, domain.MigrationStateCancelled); err != nil {
@@ -684,7 +785,28 @@ func (s *Service) GetGenerationPackage(ctx context.Context, identifier uint64) (
 	}
 
 	profile := outputProfileLabel(m.GetTarget())
-	promptRef := generatorPromptRef(profile)
+	promptRef := generatorPromptRef(profile, m.GetTarget().GetInterServiceTransport())
+
+	// Resolve the effective authentication scheme the generated service must
+	// implement: the per-migration override (TargetConfig.target_auth_scheme) wins;
+	// otherwise the scheme detected in the linked analysis summary. Best-effort: a
+	// summary fetch failure (or no link) degrades to "none" — generation never fails
+	// for lack of an auth signal. v1 generates jwt and none; other detected schemes
+	// flow through as a label for the prompt's honest note (no guess).
+	authScheme, authSigAlg := "none", ""
+	if override := m.GetTarget().GetTargetAuthScheme(); override != analysisv1.AuthScheme_AUTH_SCHEME_UNSPECIFIED {
+		authScheme = authSchemeToken(override)
+	} else if s.analysis != nil && m.GetAnalysisSummaryId() != 0 {
+		if summary, fetchErr := s.analysis.GetAnalysisSummary(ctx, m.GetAnalysisSummaryId()); fetchErr == nil {
+			if asd := summary.GetAuthSchemeDetection(); asd != nil {
+				authScheme = authSchemeToken(asd.GetScheme())
+				authSigAlg = asd.GetSignatureAlg()
+			}
+		} else {
+			applog.Warningf("migration: GetGenerationPackage auth-scheme summary fetch failed migration_id=%d summary_id=%d: %v",
+				identifier, m.GetAnalysisSummaryId(), fetchErr)
+		}
+	}
 
 	specs := make([]*migrationv1.ServiceGenerationSpec, len(artifacts))
 	for i, a := range artifacts {
@@ -696,8 +818,12 @@ func (s *Service) GetGenerationPackage(ctx context.Context, identifier uint64) (
 			Incomplete:         a.Incomplete,
 			IncompleteReason:   a.IncompleteReason,
 			GeneratorPromptRef: promptRef,
+			AuthScheme:         authScheme,
+			AuthSignatureAlg:   authSigAlg,
 		}
 	}
+	applog.Infof("migration: generation package auth migration_id=%d scheme=%s sig=%s services=%d",
+		identifier, authScheme, authSigAlg, len(specs))
 
 	return &migrationv1.GenerationPackage{
 		MigrationId:   identifier,
@@ -770,7 +896,8 @@ func (s *Service) GetGenerationArtifacts(ctx context.Context, migrationID uint64
 	if migrationID == 0 {
 		return nil, domain.ErrMissingIdentifier
 	}
-	if _, err := s.repo.GetByID(ctx, migrationID, false); err != nil {
+	m, err := s.repo.GetByID(ctx, migrationID, false)
+	if err != nil {
 		return nil, err
 	}
 
@@ -778,6 +905,14 @@ func (s *Service) GetGenerationArtifacts(ctx context.Context, migrationID uint64
 	if err != nil {
 		return nil, fmt.Errorf("generation-artifacts: read files: %w", err)
 	}
+
+	// BUG 2: the deliverable assembler renames the source root python/ → core/
+	// (Python profile) and node/ → core/ (Node profile) (assembler.go step 3b).
+	// The viewer must mirror that rename so the displayed paths match the
+	// downloaded ZIP. We rewrite only the response paths here; stored artifacts
+	// keep their raw python/… or node/… paths. The source-root prefix is derived
+	// from the migration's profile so the viewer and assembler stay in lockstep.
+	sourceRoot := profileSourceRoot(outputProfileLabel(m.GetTarget()))
 
 	// Index agent_raw_result per service from generation_results.
 	rawResults := make(map[string]string)
@@ -790,16 +925,37 @@ func (s *Service) GetGenerationArtifacts(ctx context.Context, migrationID uint64
 	}
 
 	// Group files by service name preserving sort order (files are pre-sorted).
+	//
+	// DEFECT 3: FileArtifact.content is a proto3 string, which the gRPC codec
+	// requires to be valid UTF-8. A binary artifact that slipped past the
+	// collector (DEFECT 2) would make the whole response fail to marshal with
+	// "string field contains invalid UTF-8", returning 500. We defend here so
+	// the endpoint ALWAYS returns 200: any file whose content is not valid UTF-8
+	// is listed with EMPTY content (its path/existence is still surfaced) rather
+	// than crashing the response. Source code is always valid UTF-8, so this is
+	// invisible for legitimate artifacts.
 	byService := make(map[string][]*migrationv1.FileArtifact)
 	order := make([]string, 0)
+	skippedNonUTF8 := 0
 	for _, f := range files {
 		if _, seen := byService[f.ServiceName]; !seen {
 			order = append(order, f.ServiceName)
 		}
+		content := f.Content
+		if !utf8.ValidString(content) {
+			applog.Warningf("generation-artifacts: dropping non-UTF8 content migration_id=%d service=%s path=%s bytes=%d",
+				migrationID, f.ServiceName, f.Path, len(content))
+			content = ""
+			skippedNonUTF8++
+		}
 		byService[f.ServiceName] = append(byService[f.ServiceName], &migrationv1.FileArtifact{
-			Path:    f.Path,
-			Content: f.Content,
+			Path:    sourceRootToCorePath(f.Path, sourceRoot),
+			Content: content,
 		})
+	}
+	if skippedNonUTF8 > 0 {
+		applog.Warningf("generation-artifacts: migration_id=%d dropped content of %d non-UTF8 artifact(s)",
+			migrationID, skippedNonUTF8)
 	}
 	sort.Strings(order)
 
@@ -814,6 +970,41 @@ func (s *Service) GetGenerationArtifacts(ctx context.Context, migrationID uint64
 	return &migsvcv1.GetGenerationArtifactsResponse{Services: svcs}, nil
 }
 
+// profileSourceRoot returns the source-root directory the agent writes a
+// profile's generated code under, before the assembler renames it to core/.
+// Python writes under python/, Node under node/, Rust under rust/; Go already
+// writes under core/ (no rename), so its source root is "" (the rename is a
+// no-op). This is the single mapping the viewer and assembler share for the
+// source-root rename.
+func profileSourceRoot(profile string) string {
+	switch profile {
+	case "python":
+		return "python"
+	case "node":
+		return "node"
+	case "rust":
+		return "rust"
+	default:
+		return ""
+	}
+}
+
+// sourceRootToCorePath rewrites a stored artifact path's source root
+// (python/, node/ or rust/) → core/, mirroring the deliverable assembler's step
+// 3b rename so the code viewer matches the downloaded ZIP. When sourceRoot is ""
+// (Go profile) the path is returned unchanged. Only the leading source-root
+// segment is rewritten (identical condition to assembler.go), so e.g.
+// "rust/services/user/src/main.rs" → "core/services/user/src/main.rs".
+func sourceRootToCorePath(p, sourceRoot string) string {
+	if sourceRoot == "" {
+		return p
+	}
+	if p == sourceRoot || strings.HasPrefix(p, sourceRoot+"/") {
+		return "core" + strings.TrimPrefix(p, sourceRoot)
+	}
+	return p
+}
+
 // outputProfileLabel maps the migration's TargetLanguage to a short profile name.
 // Defaults to "go" for unset or unknown languages.
 func outputProfileLabel(tc *migrationv1.TargetConfig) string {
@@ -823,18 +1014,78 @@ func outputProfileLabel(tc *migrationv1.TargetConfig) string {
 	switch tc.GetLanguage() {
 	case migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON:
 		return "python"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_NODE:
+		return "node"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST:
+		return "rust"
 	default:
 		return "go"
 	}
 }
 
+// authSchemeToken maps an AuthScheme enum to the lowercase canonical token carried
+// in ServiceGenerationSpec.auth_scheme ("jwt"/"none"/"oauth2"/"session_cookie"/
+// "api_key"/"basic"). UNSPECIFIED and NONE both canonicalise to "none" so the
+// generator never has to interpret an empty/unset value.
+func authSchemeToken(s analysisv1.AuthScheme) string {
+	switch s {
+	case analysisv1.AuthScheme_AUTH_SCHEME_JWT:
+		return "jwt"
+	case analysisv1.AuthScheme_AUTH_SCHEME_OAUTH2:
+		return "oauth2"
+	case analysisv1.AuthScheme_AUTH_SCHEME_SESSION_COOKIE:
+		return "session_cookie"
+	case analysisv1.AuthScheme_AUTH_SCHEME_API_KEY:
+		return "api_key"
+	case analysisv1.AuthScheme_AUTH_SCHEME_BASIC:
+		return "basic"
+	default:
+		return "none"
+	}
+}
+
+// protocolLabel maps the migration's inter_service_transport to the short
+// protocol label used by the assembler and worker ("grpc" | "http"). A nil
+// TargetConfig or TRANSPORT_UNSPECIFIED canonicalises to "grpc" (the platform
+// default), mirroring CreateMigration's canonicalisation.
+func protocolLabel(tc *migrationv1.TargetConfig) string {
+	if tc == nil {
+		return "grpc"
+	}
+	if tc.GetInterServiceTransport() == migrationv1.Transport_TRANSPORT_HTTP {
+		return "http"
+	}
+	return "grpc"
+}
+
 // generatorPromptRef returns the path to the generator prompt document for the
-// given profile. The Go profile is the only filled profile in v1.
-func generatorPromptRef(profile string) string {
+// given (profile, transport) cell. The transport selects the prompt per protocol:
+// Go + HTTP, Python + HTTP, Node + HTTP and Rust + HTTP use their dedicated
+// HTTP-native prompts; every other generable cell uses its gRPC prompt. Go,
+// Python, Node and Rust are filled profiles with a complete HTTP matrix. MUST
+// stay in lockstep with the worker's profileAndPromptForLanguage /
+// promptProfileBindings.
+func generatorPromptRef(profile string, transport migrationv1.Transport) string {
 	switch profile {
 	case "python":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-python-http.md"
+		}
 		return "docs/prism/milton-prism-service-generator-prompt-python.md"
+	case "node":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-node-http.md"
+		}
+		return "docs/prism/milton-prism-service-generator-prompt-node.md"
+	case "rust":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-rust-http.md"
+		}
+		return "docs/prism/milton-prism-service-generator-prompt-rust.md"
 	default:
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-go-http.md"
+		}
 		return "docs/prism/milton-prism-service-generator-prompt.md"
 	}
 }
@@ -886,7 +1137,7 @@ func (s *Service) BackfillRepositoryURLs(ctx context.Context) {
 	const pageSize = 100
 	params := &queryparamsv1.PageQueryParams{PageNumber: 1, PageSize: pageSize}
 	for {
-		migrations, pagination, err := s.repo.List(ctx, nil, params)
+		migrations, pagination, err := s.repo.List(ctx, nil, "", params)
 		if err != nil {
 			applog.Warningf("migration: BackfillRepositoryURLs list page=%d failed: %v", params.PageNumber, err)
 			return
@@ -1160,6 +1411,41 @@ func formatModuleList(modules []string, max int) string {
 		modules = modules[:max]
 	}
 	return strings.Join(modules, ", ")
+}
+
+// isCancelableMigrationState reports whether a migration in the given state is
+// still in progress and may therefore be cancelled. In-progress states are
+// PENDING, ANALYZING, DESIGNING, AWAITING_APPROVAL, GENERATING, and TESTING.
+// READY and the terminal states are NOT cancelable.
+func isCancelableMigrationState(state domain.MigrationState) bool {
+	switch state {
+	case domain.MigrationStatePending,
+		domain.MigrationStateAnalyzing,
+		domain.MigrationStateDesigning,
+		domain.MigrationStateAwaitingApproval,
+		domain.MigrationStateGenerating,
+		domain.MigrationStateTesting:
+		return true
+	default:
+		return false
+	}
+}
+
+// isDeletableMigrationState reports whether a migration in the given state is
+// finished (not in progress) and may therefore be deleted. Deletable states are
+// the complement of the cancelable (in-progress) set: READY, PUSHED, FAILED,
+// CANCELLED, and RESTRUCTURING_READY. In-progress migrations are NOT deletable.
+func isDeletableMigrationState(state domain.MigrationState) bool {
+	switch state {
+	case domain.MigrationStateReady,
+		domain.MigrationStatePushed,
+		domain.MigrationStateFailed,
+		domain.MigrationStateCancelled,
+		domain.MigrationStateRestructuringReady:
+		return true
+	default:
+		return false
+	}
 }
 
 // isTerminalState reports whether state is a terminal node in the state machine.

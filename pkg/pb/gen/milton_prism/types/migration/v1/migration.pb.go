@@ -11,6 +11,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	v11 "milton_prism/pkg/pb/gen/milton_prism/types/analysis/v1"
 	v1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	_ "milton_prism/pkg/pb/gen/openapiv3"
 	reflect "reflect"
@@ -252,18 +253,21 @@ func (TargetDatabase) EnumDescriptor() ([]byte, []int) {
 	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{2}
 }
 
-// Transport is the inter-service communication protocol for generated services.
+// Transport is the protocol the generated service speaks. It is an axis that is
+// orthogonal to language and topology: the user picks it per migration, and any
+// (language, transport) cell must be enabled in the generator matrix (see
+// IsGenerableProtocol). gRPC is supported for every generable language; HTTP is
+// supported for Go (first certified HTTP cell). The grpc-api-gateway is only
+// emitted for the microservices+gRPC combination.
 type Transport int32
 
 const (
-	// Default unspecified.
+	// Default unspecified — canonicalised to TRANSPORT_GRPC on CreateMigration.
 	Transport_TRANSPORT_UNSPECIFIED Transport = 0
-	// gRPC — fully supported in v1.
+	// gRPC — supported for every generable language.
 	Transport_TRANSPORT_GRPC Transport = 1
-	// REST/HTTP — scaffold only in v1.
+	// REST/HTTP — service exposes an HTTP-native router; supported for Go in v1.
 	Transport_TRANSPORT_HTTP Transport = 2
-	// NATS messaging — out of scope for v1.
-	Transport_TRANSPORT_NATS Transport = 3
 )
 
 // Enum value maps for Transport.
@@ -272,13 +276,11 @@ var (
 		0: "TRANSPORT_UNSPECIFIED",
 		1: "TRANSPORT_GRPC",
 		2: "TRANSPORT_HTTP",
-		3: "TRANSPORT_NATS",
 	}
 	Transport_value = map[string]int32{
 		"TRANSPORT_UNSPECIFIED": 0,
 		"TRANSPORT_GRPC":        1,
 		"TRANSPORT_HTTP":        2,
-		"TRANSPORT_NATS":        3,
 	}
 )
 
@@ -434,7 +436,8 @@ type Migration struct {
 	RepositoryId uint64 `protobuf:"varint,2,opt,name=repository_id,json=repositoryId,proto3" json:"repository_id,omitempty"`
 	// Identifier of the user that owns this migration.
 	OwnerUserId uint64 `protobuf:"varint,3,opt,name=owner_user_id,json=ownerUserId,proto3" json:"owner_user_id,omitempty"`
-	// Branch of the source repository to analyse.
+	// Branch of the source repository to analyse. Mandatory — a migration must
+	// declare the branch it runs against.
 	SourceBranch string `protobuf:"bytes,4,opt,name=source_branch,json=sourceBranch,proto3" json:"source_branch,omitempty"`
 	// Current lifecycle state.
 	State MigrationState `protobuf:"varint,5,opt,name=state,proto3,enum=milton_prism.types.migration.v1.MigrationState" json:"state,omitempty"`
@@ -502,8 +505,14 @@ type Migration struct {
 	// stay inside the repository (no leading "/", no ".." traversal); an invalid
 	// value is rejected at migration creation.
 	RootSubdirectory string `protobuf:"bytes,23,opt,name=root_subdirectory,json=rootSubdirectory,proto3" json:"root_subdirectory,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Commit SHA the migration's analysis resolved (clone → resolveHEAD). Set by
+	// the analysis worker when the analysis completes and the migration is linked
+	// to its summary. Enforces uniqueness per (repository_id, source_branch,
+	// commit_sha): a second migration at the same commit fails with MIG223 (no new
+	// commits since the last migration). Empty while PENDING/ANALYZING.
+	CommitSha     string `protobuf:"bytes,24,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Migration) Reset() {
@@ -697,6 +706,13 @@ func (x *Migration) GetRootSubdirectory() string {
 	return ""
 }
 
+func (x *Migration) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
 // TargetConfig specifies the desired output stack for the generated microservices.
 type TargetConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -704,7 +720,9 @@ type TargetConfig struct {
 	Language TargetLanguage `protobuf:"varint,1,opt,name=language,proto3,enum=milton_prism.types.migration.v1.TargetLanguage" json:"language,omitempty"`
 	// Storage engine for generated microservices.
 	Database TargetDatabase `protobuf:"varint,2,opt,name=database,proto3,enum=milton_prism.types.migration.v1.TargetDatabase" json:"database,omitempty"`
-	// Inter-service transport for generated services. Defaults to gRPC.
+	// Protocol the generated service speaks. Orthogonal to language and topology.
+	// Defaults to gRPC when unspecified. HTTP is supported for Go in v1; the
+	// (language, transport) cell must be enabled in IsGenerableProtocol.
 	InterServiceTransport Transport `protobuf:"varint,3,opt,name=inter_service_transport,json=interServiceTransport,proto3,enum=milton_prism.types.migration.v1.Transport" json:"inter_service_transport,omitempty"`
 	// When true, the generated stack is exposed through an API gateway.
 	// Ignored when topology is TARGET_TOPOLOGY_MONOLITH (a monolith is HTTP-native
@@ -717,9 +735,17 @@ type TargetConfig struct {
 	// MONOLITH instructs the decomposition engine to emit a single-service plan
 	// (one service owning every domain module) and the generator to produce an
 	// HTTP-native service with no API gateway.
-	Topology      TargetTopology `protobuf:"varint,5,opt,name=topology,proto3,enum=milton_prism.types.migration.v1.TargetTopology" json:"topology,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Topology TargetTopology `protobuf:"varint,5,opt,name=topology,proto3,enum=milton_prism.types.migration.v1.TargetTopology" json:"topology,omitempty"`
+	// Optional override of the authentication scheme the generated service must
+	// implement. When UNSPECIFIED (the default), the generation engine uses the
+	// scheme detected in the analysis (AnalysisSummary.auth_scheme_detection).
+	// Set this to force a specific scheme regardless of what the source used —
+	// e.g. to generate JWT validation even when detection was inconclusive, or to
+	// generate no auth (AUTH_SCHEME_NONE) explicitly. v1 generates JWT and NONE;
+	// other schemes are detected but emitted only as an honest prompt note.
+	TargetAuthScheme v11.AuthScheme `protobuf:"varint,6,opt,name=target_auth_scheme,json=targetAuthScheme,proto3,enum=milton_prism.types.analysis.v1.AuthScheme" json:"target_auth_scheme,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *TargetConfig) Reset() {
@@ -785,6 +811,13 @@ func (x *TargetConfig) GetTopology() TargetTopology {
 		return x.Topology
 	}
 	return TargetTopology_TARGET_TOPOLOGY_UNSPECIFIED
+}
+
+func (x *TargetConfig) GetTargetAuthScheme() v11.AuthScheme {
+	if x != nil {
+		return x.TargetAuthScheme
+	}
+	return v11.AuthScheme(0)
 }
 
 // RestructurePlan is the design engine's proposed decomposition of the monolith.
@@ -1408,8 +1441,16 @@ type ServiceGenerationRecord struct {
 	// Raw textual output from the generation agent (verification report, file list).
 	// Useful for diagnosing generation results in the UI.
 	AgentRawResult string `protobuf:"bytes,7,opt,name=agent_raw_result,json=agentRawResult,proto3" json:"agent_raw_result,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Non-cached input tokens consumed by this service's generation run.
+	InputTokens int64 `protobuf:"varint,8,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
+	// Input tokens written to the prompt cache by this service's generation run.
+	CacheCreationInputTokens int64 `protobuf:"varint,9,opt,name=cache_creation_input_tokens,json=cacheCreationInputTokens,proto3" json:"cache_creation_input_tokens,omitempty"`
+	// Input tokens served from the prompt cache for this service's generation run.
+	CacheReadInputTokens int64 `protobuf:"varint,10,opt,name=cache_read_input_tokens,json=cacheReadInputTokens,proto3" json:"cache_read_input_tokens,omitempty"`
+	// Output tokens produced by this service's generation run.
+	OutputTokens  int64 `protobuf:"varint,11,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ServiceGenerationRecord) Reset() {
@@ -1489,6 +1530,34 @@ func (x *ServiceGenerationRecord) GetAgentRawResult() string {
 		return x.AgentRawResult
 	}
 	return ""
+}
+
+func (x *ServiceGenerationRecord) GetInputTokens() int64 {
+	if x != nil {
+		return x.InputTokens
+	}
+	return 0
+}
+
+func (x *ServiceGenerationRecord) GetCacheCreationInputTokens() int64 {
+	if x != nil {
+		return x.CacheCreationInputTokens
+	}
+	return 0
+}
+
+func (x *ServiceGenerationRecord) GetCacheReadInputTokens() int64 {
+	if x != nil {
+		return x.CacheReadInputTokens
+	}
+	return 0
+}
+
+func (x *ServiceGenerationRecord) GetOutputTokens() int64 {
+	if x != nil {
+		return x.OutputTokens
+	}
+	return 0
 }
 
 // FileArtifact represents one source file produced by the autonomous generation agent.
@@ -1632,8 +1701,20 @@ type ServiceGenerationSpec struct {
 	IncompleteReason string `protobuf:"bytes,6,opt,name=incomplete_reason,json=incompleteReason,proto3" json:"incomplete_reason,omitempty"`
 	// Path to the generator prompt document for the target profile.
 	GeneratorPromptRef string `protobuf:"bytes,7,opt,name=generator_prompt_ref,json=generatorPromptRef,proto3" json:"generator_prompt_ref,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Effective authentication scheme the generated service must implement,
+	// resolved by the migration service as target_auth_scheme (override) ?? the
+	// scheme detected in the analysis. Lowercase canonical token: "jwt", "none",
+	// "oauth2", "session_cookie", "api_key", "basic". v1 generates "jwt" and
+	// "none"; any other value is carried for an honest prompt note (no guess).
+	// Empty is treated as "none".
+	AuthScheme string `protobuf:"bytes,8,opt,name=auth_scheme,json=authScheme,proto3" json:"auth_scheme,omitempty"`
+	// JWT signature algorithm family the generated validation must accept, when
+	// auth_scheme is "jwt": "HS256" (symmetric secret) or "RS256"/"ES256"/"EdDSA"
+	// (asymmetric public key). Empty for non-JWT schemes or when undetermined —
+	// the generator then accepts the idiomatic default for the stack.
+	AuthSignatureAlg string `protobuf:"bytes,9,opt,name=auth_signature_alg,json=authSignatureAlg,proto3" json:"auth_signature_alg,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ServiceGenerationSpec) Reset() {
@@ -1711,6 +1792,20 @@ func (x *ServiceGenerationSpec) GetIncompleteReason() string {
 func (x *ServiceGenerationSpec) GetGeneratorPromptRef() string {
 	if x != nil {
 		return x.GeneratorPromptRef
+	}
+	return ""
+}
+
+func (x *ServiceGenerationSpec) GetAuthScheme() string {
+	if x != nil {
+		return x.AuthScheme
+	}
+	return ""
+}
+
+func (x *ServiceGenerationSpec) GetAuthSignatureAlg() string {
+	if x != nil {
+		return x.AuthSignatureAlg
 	}
 	return ""
 }
@@ -2430,7 +2525,22 @@ type MigrationsFilter struct {
 	// Restrict results to migrations in ANY of these lifecycle states.
 	// When non-empty, takes precedence over state (singular).
 	// Translates to a single MongoDB $in query so pagination covers the union.
-	States        []MigrationState `protobuf:"varint,4,rep,packed,name=states,proto3,enum=milton_prism.types.migration.v1.MigrationState" json:"states,omitempty"`
+	States []MigrationState `protobuf:"varint,4,rep,packed,name=states,proto3,enum=milton_prism.types.migration.v1.MigrationState" json:"states,omitempty"`
+	// Restrict results to migrations linked to this analysis summary. Enables
+	// listing every migration produced from one analysis (multi-migration per
+	// analysis) and powers the live-migration guard that blocks deleting an
+	// analysis while it still has active migrations.
+	AnalysisSummaryId *uint64 `protobuf:"varint,5,opt,name=analysis_summary_id,json=analysisSummaryId,proto3,oneof" json:"analysis_summary_id,omitempty"`
+	// Restrict results to migrations with this target topology (MICROSERVICES /
+	// MONOLITH). Resolved server-side against the denormalized topology field.
+	Topology *TargetTopology `protobuf:"varint,6,opt,name=topology,proto3,enum=milton_prism.types.migration.v1.TargetTopology,oneof" json:"topology,omitempty"`
+	// Restrict results to migrations whose inter-service transport (protocol) is
+	// this value (GRPC / HTTP). Resolved server-side against the denormalized
+	// protocol field.
+	Protocol *Transport `protobuf:"varint,7,opt,name=protocol,proto3,enum=milton_prism.types.migration.v1.Transport,oneof" json:"protocol,omitempty"`
+	// Restrict results to migrations targeting this language (GO / RUST / PYTHON /
+	// NODE). Resolved server-side against the denormalized language field.
+	Language      *TargetLanguage `protobuf:"varint,8,opt,name=language,proto3,enum=milton_prism.types.migration.v1.TargetLanguage,oneof" json:"language,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2493,18 +2603,46 @@ func (x *MigrationsFilter) GetStates() []MigrationState {
 	return nil
 }
 
+func (x *MigrationsFilter) GetAnalysisSummaryId() uint64 {
+	if x != nil && x.AnalysisSummaryId != nil {
+		return *x.AnalysisSummaryId
+	}
+	return 0
+}
+
+func (x *MigrationsFilter) GetTopology() TargetTopology {
+	if x != nil && x.Topology != nil {
+		return *x.Topology
+	}
+	return TargetTopology_TARGET_TOPOLOGY_UNSPECIFIED
+}
+
+func (x *MigrationsFilter) GetProtocol() Transport {
+	if x != nil && x.Protocol != nil {
+		return *x.Protocol
+	}
+	return Transport_TRANSPORT_UNSPECIFIED
+}
+
+func (x *MigrationsFilter) GetLanguage() TargetLanguage {
+	if x != nil && x.Language != nil {
+		return *x.Language
+	}
+	return TargetLanguage_TARGET_LANGUAGE_UNSPECIFIED
+}
+
 var File_milton_prism_types_migration_v1_migration_proto protoreflect.FileDescriptor
 
 const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\n" +
-	"/milton_prism/types/migration/v1/migration.proto\x12\x1fmilton_prism.types.migration.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xb6\x1c\n" +
+	"/milton_prism/types/migration/v1/migration.proto\x12\x1fmilton_prism.types.migration.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a-milton_prism/types/analysis/v1/analysis.proto\x1a.milton_prism/types/common/v1/migrability.proto\x1a\x1bopenapiv3/annotations.proto\"\xb0\x1d\n" +
 	"\tMigration\x12P\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B0\xe0A\b\xbaG*:\x03\x12\x017\x92\x02\"System-assigned unique identifier.R\n" +
 	"identifier\x12X\n" +
 	"\rrepository_id\x18\x02 \x01(\x04B3\xe0A\x02\xbaG-:\x04\x12\x0242\x92\x02$Identifier of the source repository.R\frepositoryId\x12P\n" +
-	"\rowner_user_id\x18\x03 \x01(\x04B,\xe0A\x02\xbaG&:\x03\x12\x011\x92\x02\x1eIdentifier of the owning user.R\vownerUserId\x12y\n" +
-	"\rsource_branch\x18\x04 \x01(\tBT\xbaGQ:\x06\x12\x04main\x92\x02FSource branch to analyse. Defaults to the repository's default branch.R\fsourceBranch\x12\x91\x01\n" +
+	"\rowner_user_id\x18\x03 \x01(\x04B,\xe0A\x02\xbaG&:\x03\x12\x011\x92\x02\x1eIdentifier of the owning user.R\vownerUserId\x12Y\n" +
+	"\rsource_branch\x18\x04 \x01(\tB4\xe0A\x02\xbaG.:\x06\x12\x04main\x92\x02#Source branch to analyse. Required.R\fsourceBranch\x12\x91\x01\n" +
 	"\x05state\x18\x05 \x01(\x0e2/.milton_prism.types.migration.v1.MigrationStateBJ\xbaGG:\x19\x12\x17MIGRATION_STATE_PENDING\x92\x02)Current lifecycle state of the migration.R\x05state\x12\x96\x01\n" +
 	"\x06target\x18\x06 \x01(\v2-.milton_prism.types.migration.v1.TargetConfigBO\xbaGL\x92\x02ITarget language, database, and transport for the generated microservices.R\x06target\x12s\n" +
 	"\x13analysis_summary_id\x18\a \x01(\x04BC\xbaG@:\x03\x12\x010\x92\x028AnalysisSummary identifier; set once analysis completes.R\x11analysisSummaryId\x12\x93\x01\n" +
@@ -2528,15 +2666,18 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x15restructuring_roadmap\x18\x14 \x01(\v25.milton_prism.types.migration.v1.RestructuringRoadmapB\x7f\xe0A\x03\xbaGy\x92\x02vRestructuring roadmap for NOT_MIGRABLE or no-boundary migrations. Absent until GenerateRestructuringRoadmap is called.R\x14restructuringRoadmap\x12\xdd\x01\n" +
 	"\x1asource_analysis_summary_id\x18\x15 \x01(\x04B\x9f\x01\xe0A\x04\xbaG\x98\x01:\x03\x12\x010\x92\x02\x8f\x01Optional: identifier of a completed AnalysisSummary to reuse. When set, StartMigration skips re-analysis and transitions directly to DESIGNING.R\x17sourceAnalysisSummaryId\x12\xdf\x01\n" +
 	"\fauto_approve\x18\x16 \x01(\bB\xbb\x01\xbaG\xb7\x01:\a\x12\x05false\x92\x02\xaa\x01When true, the design plan is auto-approved on reaching AWAITING_APPROVAL so the full roadmap runs end-to-end (stops before the human-gated publish). Set by RunMigration.R\vautoApprove\x12\x87\x02\n" +
-	"\x11root_subdirectory\x18\x17 \x01(\tB\xd9\x01\xbaG\xd5\x01:\t\x12\abackend\x92\x02\xc6\x01Optional repository-relative subdirectory to scope the analysis to (monorepos). Empty means the whole repository root. Forward-slash separated, must stay inside the repo (no leading slash, no '..').R\x10rootSubdirectory:O\xbaGLJ\tMigration\x92\x02>A migration run that decomposes a monolith into microservices.B\x0e\n" +
+	"\x11root_subdirectory\x18\x17 \x01(\tB\xd9\x01\xbaG\xd5\x01:\t\x12\abackend\x92\x02\xc6\x01Optional repository-relative subdirectory to scope the analysis to (monorepos). Empty means the whole repository root. Forward-slash separated, must stay inside the repo (no leading slash, no '..').R\x10rootSubdirectory\x12\x97\x01\n" +
+	"\n" +
+	"commit_sha\x18\x18 \x01(\tBx\xe0A\x03\xbaGr:\x0e\x12\fabc123def456\x92\x02_Commit SHA the migration's analysis resolved. Set once analysis completes. Empty while pending.R\tcommitSha:O\xbaGLJ\tMigration\x92\x02>A migration run that decomposes a monolith into microservices.B\x0e\n" +
 	"\f_delete_timeB\r\n" +
-	"\v_purge_time\"\xfc\t\n" +
+	"\v_purge_time\"\xab\r\n" +
 	"\fTargetConfig\x12\x97\x03\n" +
 	"\blanguage\x18\x01 \x01(\x0e2/.milton_prism.types.migration.v1.TargetLanguageB\xc9\x02\xe0A\x02\xbaG\xc2\x02:\x14\x12\x12TARGET_LANGUAGE_GO\x92\x02\xa8\x02Output language. GO is the only certified target in v1. PYTHON is experimental (profile + generator prompt exist, not end-to-end certified). RUST and NODE are registered for selection but are generator holes (no profile/prompt; not generable). See the TargetLanguage enum for per-language status.R\blanguage\x12\xb1\x01\n" +
-	"\bdatabase\x18\x02 \x01(\x0e2/.milton_prism.types.migration.v1.TargetDatabaseBd\xe0A\x02\xbaG^:\x19\x12\x17TARGET_DATABASE_MONGODB\x92\x02@Storage engine. Only TARGET_DATABASE_MONGODB is supported in v1.R\bdatabase\x12\xce\x01\n" +
-	"\x17inter_service_transport\x18\x03 \x01(\x0e2*.milton_prism.types.migration.v1.TransportBj\xbaGg:\x10\x12\x0eTRANSPORT_GRPC\x92\x02RInter-service transport. Defaults to TRANSPORT_GRPC (only supported option in v1).R\x15interServiceTransport\x12\x87\x01\n" +
+	"\bdatabase\x18\x02 \x01(\x0e2/.milton_prism.types.migration.v1.TargetDatabaseBd\xe0A\x02\xbaG^:\x19\x12\x17TARGET_DATABASE_MONGODB\x92\x02@Storage engine. Only TARGET_DATABASE_MONGODB is supported in v1.R\bdatabase\x12\xf5\x02\n" +
+	"\x17inter_service_transport\x18\x03 \x01(\x0e2*.milton_prism.types.migration.v1.TransportB\x90\x02\xbaG\x8c\x02:\x10\x12\x0eTRANSPORT_GRPC\x92\x02\xf6\x01Protocol the generated service speaks. Defaults to TRANSPORT_GRPC when unspecified. TRANSPORT_GRPC is supported for every generable language; TRANSPORT_HTTP is supported for GO in v1 (the service exposes an HTTP-native router and no API gateway).R\x15interServiceTransport\x12\x87\x01\n" +
 	"\x0fuse_api_gateway\x18\x04 \x01(\bB_\xbaG\\:\x06\x12\x04true\x92\x02QWrap generated services with an HTTP/gRPC gateway. Ignored for MONOLITH topology.R\ruseApiGateway\x12\xee\x01\n" +
-	"\btopology\x18\x05 \x01(\x0e2/.milton_prism.types.migration.v1.TargetTopologyB\xa0\x01\xbaG\x9c\x01:\x1f\x12\x1dTARGET_TOPOLOGY_MICROSERVICES\x92\x02xArchitectural target: MICROSERVICES (default, decompose + gateway) or MONOLITH (single HTTP-native service, no gateway).R\btopology:R\xbaGOJ\fTargetConfig\x92\x02>Target stack: language, database, and inter-service transport.\"\xd7\x0e\n" +
+	"\btopology\x18\x05 \x01(\x0e2/.milton_prism.types.migration.v1.TargetTopologyB\xa0\x01\xbaG\x9c\x01:\x1f\x12\x1dTARGET_TOPOLOGY_MICROSERVICES\x92\x02xArchitectural target: MICROSERVICES (default, decompose + gateway) or MONOLITH (single HTTP-native service, no gateway).R\btopology\x12\x85\x02\n" +
+	"\x12target_auth_scheme\x18\x06 \x01(\x0e2*.milton_prism.types.analysis.v1.AuthSchemeB\xaa\x01\xbaG\xa6\x01:\x19\x12\x17AUTH_SCHEME_UNSPECIFIED\x92\x02\x87\x01Optional override of the auth scheme the generated service implements. UNSPECIFIED uses the detected scheme. v1 generates JWT and NONE.R\x10targetAuthScheme:R\xbaGOJ\fTargetConfig\x92\x02>Target stack: language, database, and inter-service transport.\"\xd7\x0e\n" +
 	"\x0fRestructurePlan\x12\x80\x01\n" +
 	"\bservices\x18\x01 \x03(\v20.milton_prism.types.migration.v1.ProposedServiceB2\xbaG/\x92\x02,Proposed microservices in the decomposition.R\bservices\x12\xb4\x01\n" +
 	"\trationale\x18\x02 \x01(\tB\x95\x01\xbaG\x91\x01:P\x12NOrders and inventory are decoupled by domain and have different scaling needs.\x92\x02<Design rationale explaining the proposed service boundaries.R\trationale\x12\xe7\x01\n" +
@@ -2583,7 +2724,7 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\routput_target\x18\x01 \x01(\x0e2-.milton_prism.types.migration.v1.OutputTargetBd\xbaGa:\x1a\x12\x18OUTPUT_TARGET_NEW_BRANCH\x92\x02BWhether the output was pushed to a new branch or a new repository.R\foutputTarget\x12\x85\x01\n" +
 	"\vbranch_name\x18\x02 \x01(\tBd\xbaGa:\x17\x12\x15migration/output-2025\x92\x02EBranch that received the migration output (when pushing to a branch).R\n" +
 	"branchName\x12\xa3\x01\n" +
-	"\x12new_repository_url\x18\x03 \x01(\tBu\xbaGr:,\x12*https://github.com/org/my-service-migrated\x92\x02AURL of the newly created repository (when pushing to a new repo).R\x10newRepositoryUrl:J\xbaGGJ\x0fMigrationOutput\x92\x023Push coordinates of the committed migration output.\"\xe1\x05\n" +
+	"\x12new_repository_url\x18\x03 \x01(\tBu\xbaGr:,\x12*https://github.com/org/my-service-migrated\x92\x02AURL of the newly created repository (when pushing to a new repo).R\x10newRepositoryUrl:J\xbaGGJ\x0fMigrationOutput\x92\x023Push coordinates of the committed migration output.\"\x89\t\n" +
 	"\x17ServiceGenerationRecord\x126\n" +
 	"\fservice_name\x18\x01 \x01(\tB\x13\xbaG\x10\x92\x02\rService name.R\vserviceName\x12X\n" +
 	"\x06status\x18\x02 \x01(\tB@\xbaG=\x92\x02:Generation status: generating, verifying, done, or failed.R\x06status\x12Q\n" +
@@ -2591,14 +2732,19 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x0efailure_reason\x18\x04 \x01(\tB<\xbaG9\x92\x026Failure reason when status is failed. Empty otherwise.R\rfailureReason\x12H\n" +
 	"\x0etotal_cost_usd\x18\x05 \x01(\x01B\"\xbaG\x1f\x92\x02\x1cAccumulated API cost in USD.R\ftotalCostUsd\x12P\n" +
 	"\x14generated_file_count\x18\x06 \x01(\x05B\x1e\xbaG\x1b\x92\x02\x18Number of files emitted.R\x12generatedFileCount\x12\x8c\x01\n" +
-	"\x10agent_raw_result\x18\a \x01(\tBb\xe0A\x03\xbaG\\\x92\x02YRaw agent output (generation report). Useful for debugging; empty while still generating.R\x0eagentRawResult:Q\xbaGNJ\x17ServiceGenerationRecord\x92\x022Per-service outcome of autonomous code generation.\"\xa6\x02\n" +
+	"\x10agent_raw_result\x18\a \x01(\tBb\xe0A\x03\xbaG\\\x92\x02YRaw agent output (generation report). Useful for debugging; empty while still generating.R\x0eagentRawResult\x12]\n" +
+	"\finput_tokens\x18\b \x01(\x03B:\xe0A\x03\xbaG4\x92\x021Non-cached input tokens consumed by this service.R\vinputTokens\x12}\n" +
+	"\x1bcache_creation_input_tokens\x18\t \x01(\x03B>\xe0A\x03\xbaG8\x92\x025Cache-creation input tokens consumed by this service.R\x18cacheCreationInputTokens\x12q\n" +
+	"\x17cache_read_input_tokens\x18\n" +
+	" \x01(\x03B:\xe0A\x03\xbaG4\x92\x021Cache-read input tokens consumed by this service.R\x14cacheReadInputTokens\x12U\n" +
+	"\routput_tokens\x18\v \x01(\x03B0\xe0A\x03\xbaG*\x92\x02'Output tokens produced by this service.R\foutputTokens:Q\xbaGNJ\x17ServiceGenerationRecord\x92\x022Per-service outcome of autonomous code generation.\"\xa6\x02\n" +
 	"\fFileArtifact\x12c\n" +
 	"\x04path\x18\x01 \x01(\tBO\xbaGL:%\x12#core/services/user/domain/domain.go\x92\x02\"Relative path within the monorepo.R\x04path\x12K\n" +
 	"\acontent\x18\x02 \x01(\tB1\xbaG.\x92\x02+UTF-8 source content of the generated file.R\acontent:d\xbaGaJ\fFileArtifact\x92\x02PA single generated source file produced by the autonomous code generation agent.\"\x9d\x03\n" +
 	"\x1aServiceGenerationArtifacts\x126\n" +
 	"\fservice_name\x18\x01 \x01(\tB\x13\xbaG\x10\x92\x02\rService name.R\vserviceName\x12q\n" +
 	"\x05files\x18\x02 \x03(\v2-.milton_prism.types.migration.v1.FileArtifactB,\xbaG)\x92\x02&Generated source files sorted by path.R\x05files\x12q\n" +
-	"\x10agent_raw_result\x18\x03 \x01(\tBG\xbaGD\x92\x02ARaw agent output for this service. Useful for debugging failures.R\x0eagentRawResult:a\xbaG^J\x1aServiceGenerationArtifacts\x92\x02?Generated source files and generation metadata for one service.\"\x89\x06\n" +
+	"\x10agent_raw_result\x18\x03 \x01(\tBG\xbaGD\x92\x02ARaw agent output for this service. Useful for debugging failures.R\x0eagentRawResult:a\xbaG^J\x1aServiceGenerationArtifacts\x92\x02?Generated source files and generation metadata for one service.\"\xe6\b\n" +
 	"\x15ServiceGenerationSpec\x12'\n" +
 	"\x04name\x18\x01 \x01(\tB\x13\xbaG\x10\x92\x02\rService name.R\x04name\x12T\n" +
 	"\ferror_prefix\x18\x02 \x01(\tB1\xbaG.\x92\x02+Error-code prefix assigned to this service.R\verrorPrefix\x12^\n" +
@@ -2608,7 +2754,10 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"incomplete\x18\x05 \x01(\bBH\xbaGE\x92\x02BTrue when the contract deriver flagged this service as incomplete.R\n" +
 	"incomplete\x12]\n" +
 	"\x11incomplete_reason\x18\x06 \x01(\tB0\xbaG-\x92\x02*Reason the service was flagged incomplete.R\x10incompleteReason\x12\x80\x01\n" +
-	"\x14generator_prompt_ref\x18\a \x01(\tBN\xbaGK\x92\x02HPath to the generator prompt document for this service's target profile.R\x12generatorPromptRef:k\xbaGhJ\x15ServiceGenerationSpec\x92\x02NAll artifacts needed to generate one microservice from the decomposition plan.\"\x86\x03\n" +
+	"\x14generator_prompt_ref\x18\a \x01(\tBN\xbaGK\x92\x02HPath to the generator prompt document for this service's target profile.R\x12generatorPromptRef\x12\x9b\x01\n" +
+	"\vauth_scheme\x18\b \x01(\tBz\xbaGw:\x05\x12\x03jwt\x92\x02mEffective auth scheme to implement (jwt/none/oauth2/session_cookie/api_key/basic). v1 generates jwt and none.R\n" +
+	"authScheme\x12\xbc\x01\n" +
+	"\x12auth_signature_alg\x18\t \x01(\tB\x8d\x01\xbaG\x89\x01:\a\x12\x05HS256\x92\x02}JWT signature algorithm family the generated validation accepts (HS256/RS256/ES256/EdDSA). Empty for non-JWT or undetermined.R\x10authSignatureAlg:k\xbaGhJ\x15ServiceGenerationSpec\x92\x02NAll artifacts needed to generate one microservice from the decomposition plan.\"\x86\x03\n" +
 	"\x11GenerationPackage\x12>\n" +
 	"\fmigration_id\x18\x01 \x01(\x04B\x1b\xbaG\x18\x92\x02\x15Migration identifier.R\vmigrationId\x12P\n" +
 	"\x0eoutput_profile\x18\x02 \x01(\tB)\xbaG&\x92\x02#Output profile name (go or python).R\routputProfile\x12w\n" +
@@ -2667,15 +2816,23 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x0erequired_steps\x18\x04 \x03(\x05BX\xbaGU\x92\x02RActionItem.order values that must be resolved before this blueprint is actionable.R\rrequiredSteps\x12V\n" +
 	"\bcost_usd\x18\x05 \x01(\x01B;\xbaG8\x92\x025Accumulated API cost in USD for this generation call.R\acostUsd\x12p\n" +
 	"\x0egenerated_time\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampB-\xe0A\x03\xbaG'\x92\x02$When the LLM blueprint was produced.R\rgeneratedTime\x12|\n" +
-	"\x0fconfidence_note\x18\a \x01(\tBS\xbaGP\x92\x02MLLM confidence note on the proposed groupings. Empty when confidence is high.R\x0econfidenceNote:\x87\x01\xbaG\x83\x01J\x10ServiceBlueprint\x92\x02nLLM-proposed microservice grouping anchored to the dependency graph. Absent until GenerateBlueprint is called.\"\xca\x05\n" +
+	"\x0fconfidence_note\x18\a \x01(\tBS\xbaGP\x92\x02MLLM confidence note on the proposed groupings. Empty when confidence is high.R\x0econfidenceNote:\x87\x01\xbaG\x83\x01J\x10ServiceBlueprint\x92\x02nLLM-proposed microservice grouping anchored to the dependency graph. Absent until GenerateBlueprint is called.\"\xa7\v\n" +
 	"\x10MigrationsFilter\x12T\n" +
 	"\rowner_user_id\x18\x01 \x01(\x04B+\xbaG(:\x03\x12\x011\x92\x02 Filter by owner user identifier.H\x00R\vownerUserId\x88\x01\x01\x12]\n" +
 	"\rrepository_id\x18\x02 \x01(\x04B3\xbaG0:\x04\x12\x0242\x92\x02'Filter by source repository identifier.H\x01R\frepositoryId\x88\x01\x01\x12\x91\x01\n" +
 	"\x05state\x18\x03 \x01(\x0e2/.milton_prism.types.migration.v1.MigrationStateBE\xbaGB:\x19\x12\x17MIGRATION_STATE_PENDING\x92\x02$Filter by migration lifecycle state.H\x02R\x05state\x88\x01\x01\x12\xfc\x01\n" +
-	"\x06states\x18\x04 \x03(\x0e2/.milton_prism.types.migration.v1.MigrationStateB\xb2\x01\xbaG\xae\x01:T\x12R[MIGRATION_STATE_ANALYZING, MIGRATION_STATE_DESIGNING, MIGRATION_STATE_GENERATING]\x92\x02UFilter by multiple lifecycle states (OR). Takes precedence over state when non-empty.R\x06states:@\xbaG=J\x10MigrationsFilter\x92\x02(Optional filters for listing migrations.B\x10\n" +
+	"\x06states\x18\x04 \x03(\x0e2/.milton_prism.types.migration.v1.MigrationStateB\xb2\x01\xbaG\xae\x01:T\x12R[MIGRATION_STATE_ANALYZING, MIGRATION_STATE_DESIGNING, MIGRATION_STATE_GENERATING]\x92\x02UFilter by multiple lifecycle states (OR). Takes precedence over state when non-empty.R\x06states\x12n\n" +
+	"\x13analysis_summary_id\x18\x05 \x01(\x04B9\xbaG6:\x04\x12\x0210\x92\x02-Filter by linked analysis summary identifier.H\x03R\x11analysisSummaryId\x88\x01\x01\x12\xb7\x01\n" +
+	"\btopology\x18\x06 \x01(\x0e2/.milton_prism.types.migration.v1.TargetTopologyBe\xbaGb:\x1a\x12\x18TARGET_TOPOLOGY_MONOLITH\x92\x02CFilter by target topology (one cell axis of the generation matrix).H\x04R\btopology\x88\x01\x01\x12\xbb\x01\n" +
+	"\bprotocol\x18\a \x01(\x0e2*.milton_prism.types.migration.v1.TransportBn\xbaGk:\x10\x12\x0eTRANSPORT_HTTP\x92\x02VFilter by inter-service transport / protocol (one cell axis of the generation matrix).H\x05R\bprotocol\x88\x01\x01\x12\xb3\x01\n" +
+	"\blanguage\x18\b \x01(\x0e2/.milton_prism.types.migration.v1.TargetLanguageBa\xbaG^:\x16\x12\x14TARGET_LANGUAGE_RUST\x92\x02CFilter by target language (one cell axis of the generation matrix).H\x06R\blanguage\x88\x01\x01:@\xbaG=J\x10MigrationsFilter\x92\x02(Optional filters for listing migrations.B\x10\n" +
 	"\x0e_owner_user_idB\x10\n" +
 	"\x0e_repository_idB\b\n" +
-	"\x06_state*\x8b\x03\n" +
+	"\x06_stateB\x16\n" +
+	"\x14_analysis_summary_idB\v\n" +
+	"\t_topologyB\v\n" +
+	"\t_protocolB\v\n" +
+	"\t_language*\x8b\x03\n" +
 	"\x0eMigrationState\x12\x1f\n" +
 	"\x1bMIGRATION_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17MIGRATION_STATE_PENDING\x10\x01\x12\x1d\n" +
@@ -2700,12 +2857,11 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x1bTARGET_DATABASE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TARGET_DATABASE_MONGODB\x10\x01\x12\x1c\n" +
 	"\x18TARGET_DATABASE_POSTGRES\x10\x02\x12\x1b\n" +
-	"\x17TARGET_DATABASE_MARIADB\x10\x03*b\n" +
+	"\x17TARGET_DATABASE_MARIADB\x10\x03*T\n" +
 	"\tTransport\x12\x19\n" +
 	"\x15TRANSPORT_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eTRANSPORT_GRPC\x10\x01\x12\x12\n" +
-	"\x0eTRANSPORT_HTTP\x10\x02\x12\x12\n" +
-	"\x0eTRANSPORT_NATS\x10\x03*r\n" +
+	"\x0eTRANSPORT_HTTP\x10\x02\"\x04\b\x03\x10\x03*r\n" +
 	"\x0eTargetTopology\x12\x1f\n" +
 	"\x1bTARGET_TOPOLOGY_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dTARGET_TOPOLOGY_MICROSERVICES\x10\x01\x12\x1c\n" +
@@ -2762,6 +2918,7 @@ var file_milton_prism_types_migration_v1_migration_proto_goTypes = []any{
 	(*MigrationsFilter)(nil),           // 28: milton_prism.types.migration.v1.MigrationsFilter
 	(*timestamppb.Timestamp)(nil),      // 29: google.protobuf.Timestamp
 	(*v1.MigrabilityAssessment)(nil),   // 30: milton_prism.types.common.v1.MigrabilityAssessment
+	(v11.AuthScheme)(0),                // 31: milton_prism.types.analysis.v1.AuthScheme
 }
 var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	0,  // 0: milton_prism.types.migration.v1.Migration.state:type_name -> milton_prism.types.migration.v1.MigrationState
@@ -2779,31 +2936,35 @@ var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	2,  // 12: milton_prism.types.migration.v1.TargetConfig.database:type_name -> milton_prism.types.migration.v1.TargetDatabase
 	3,  // 13: milton_prism.types.migration.v1.TargetConfig.inter_service_transport:type_name -> milton_prism.types.migration.v1.Transport
 	4,  // 14: milton_prism.types.migration.v1.TargetConfig.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
-	11, // 15: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
-	13, // 16: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
-	9,  // 17: milton_prism.types.migration.v1.RestructurePlan.candidate_groupings:type_name -> milton_prism.types.migration.v1.CandidateGrouping
-	10, // 18: milton_prism.types.migration.v1.RestructurePlan.restructure_recommendations:type_name -> milton_prism.types.migration.v1.RestructureRecommendation
-	12, // 19: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
-	5,  // 20: milton_prism.types.migration.v1.MigrationOutput.output_target:type_name -> milton_prism.types.migration.v1.OutputTarget
-	16, // 21: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
-	18, // 22: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
-	23, // 23: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
-	29, // 24: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
-	20, // 25: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
-	21, // 26: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
-	22, // 27: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
-	29, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
-	24, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
-	27, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
-	26, // 31: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
-	29, // 32: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
-	0,  // 33: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
-	0,  // 34: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
-	35, // [35:35] is the sub-list for method output_type
-	35, // [35:35] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	31, // 15: milton_prism.types.migration.v1.TargetConfig.target_auth_scheme:type_name -> milton_prism.types.analysis.v1.AuthScheme
+	11, // 16: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
+	13, // 17: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
+	9,  // 18: milton_prism.types.migration.v1.RestructurePlan.candidate_groupings:type_name -> milton_prism.types.migration.v1.CandidateGrouping
+	10, // 19: milton_prism.types.migration.v1.RestructurePlan.restructure_recommendations:type_name -> milton_prism.types.migration.v1.RestructureRecommendation
+	12, // 20: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
+	5,  // 21: milton_prism.types.migration.v1.MigrationOutput.output_target:type_name -> milton_prism.types.migration.v1.OutputTarget
+	16, // 22: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
+	18, // 23: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
+	23, // 24: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
+	29, // 25: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
+	20, // 26: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
+	21, // 27: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
+	22, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
+	29, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
+	24, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
+	27, // 31: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
+	26, // 32: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
+	29, // 33: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
+	0,  // 34: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
+	0,  // 35: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
+	4,  // 36: milton_prism.types.migration.v1.MigrationsFilter.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
+	3,  // 37: milton_prism.types.migration.v1.MigrationsFilter.protocol:type_name -> milton_prism.types.migration.v1.Transport
+	1,  // 38: milton_prism.types.migration.v1.MigrationsFilter.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
+	39, // [39:39] is the sub-list for method output_type
+	39, // [39:39] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_milton_prism_types_migration_v1_migration_proto_init() }

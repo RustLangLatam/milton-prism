@@ -163,12 +163,17 @@ func (m *mockStateUpdater) MarkFailed(_ context.Context, migrationID uint64) err
 
 type mockPackageReader struct {
 	services []ports.ServiceSpec
+	profile  string // OutputProfile; defaults to "go" when empty
 }
 
 func (r *mockPackageReader) ReadPackage(_ context.Context, migrationID uint64) (*ports.GenerationPackage, error) {
+	profile := r.profile
+	if profile == "" {
+		profile = "go"
+	}
 	return &ports.GenerationPackage{
 		MigrationID:   migrationID,
-		OutputProfile: "go",
+		OutputProfile: profile,
 		Services:      r.services,
 	}, nil
 }

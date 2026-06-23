@@ -23,7 +23,18 @@ var (
 	_ ports.RepositoryClient          = (*MockRepositoryClient)(nil)
 	_ ports.JobEnqueuer               = (*MockJobEnqueuer)(nil)
 	_ ports.PlanProvider              = (*MockPlanProvider)(nil)
+	_ ports.MigrationClient           = (*MockMigrationClient)(nil)
 )
+
+// MockMigrationClient is a testify mock for ports.MigrationClient.
+type MockMigrationClient struct {
+	mock.Mock
+}
+
+func (m *MockMigrationClient) CountLiveMigrationsByAnalysis(ctx context.Context, analysisSummaryID uint64) (int64, error) {
+	args := m.Called(ctx, analysisSummaryID)
+	return args.Get(0).(int64), args.Error(1)
+}
 
 // MockAnalysisSummaryRepository is a testify mock for ports.AnalysisSummaryRepository.
 type MockAnalysisSummaryRepository struct {
@@ -51,6 +62,10 @@ func (m *MockAnalysisSummaryRepository) List(ctx context.Context, filter *analys
 
 func (m *MockAnalysisSummaryRepository) SoftDelete(ctx context.Context, identifier uint64) error {
 	return m.Called(ctx, identifier).Error(0)
+}
+
+func (m *MockAnalysisSummaryRepository) UpdateState(ctx context.Context, identifier uint64, state domain.AnalysisState) error {
+	return m.Called(ctx, identifier, state).Error(0)
 }
 
 func (m *MockAnalysisSummaryRepository) UpdateMigrabilityAssessment(ctx context.Context, identifier uint64, assessment *domain.MigrabilityAssessment) error {

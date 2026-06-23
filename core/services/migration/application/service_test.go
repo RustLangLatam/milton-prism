@@ -4,11 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"milton_prism/core/services/migration/application"
 	billingdomain "milton_prism/core/services/billing/domain"
+	"milton_prism/core/services/migration/application"
 	"milton_prism/core/services/migration/domain"
 	"milton_prism/core/services/migration/mocks"
 	"milton_prism/core/services/migration/ports"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func newSvc(t *testing.T) (*application.Service, *mocks.MockMigrationRepository, *mocks.MockTransactionManager, *mocks.MockIdentityClient, *mocks.MockRepositoryClient, *mocks.MockAnalysisClient) {
@@ -96,6 +98,17 @@ func TestCreateMigration_MissingRepositoryID(t *testing.T) {
 	assertDomainError(t, err, domain.ErrCodeMissingRepositoryID)
 }
 
+// TestCreateMigration_MissingSourceBranch verifies source_branch is mandatory:
+// an empty branch is rejected with MIG108 before any ownership/repo lookup.
+func TestCreateMigration_MissingSourceBranch(t *testing.T) {
+	svc, repo, _, _, _, _ := newSvc(t)
+	m := validMigration()
+	m.SourceBranch = ""
+	_, err := svc.CreateMigration(context.Background(), m)
+	assertDomainError(t, err, domain.ErrCodeMissingSourceBranch)
+	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
 func TestCreateMigration_InvalidTargetConfig_NilTarget(t *testing.T) {
 	svc, _, _, _, _, _ := newSvc(t)
 	m := validMigration()
@@ -112,20 +125,40 @@ func TestCreateMigration_InvalidTargetConfig_UnspecifiedLanguage(t *testing.T) {
 	assertDomainError(t, err, domain.ErrCodeInvalidTargetConfig)
 }
 
-func TestCreateMigration_UnsupportedTargetLanguage_Rust(t *testing.T) {
-	svc, _, _, _, _, _ := newSvc(t)
+// TestCreateMigration_Rust_Generable_Accepted proves the Rust target language is
+// now a filled generator profile (E10): CreateMigration accepts it (no MIG107
+// Unsupported_Target_Language) and proceeds to create the migration, exactly like
+// Go, Python and Node. Unit-level proof that MIG107 was lifted for Rust.
+func TestCreateMigration_Rust_Generable_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
 	m := validMigration()
 	m.Target.Language = domain.TargetLanguageRust
-	_, err := svc.CreateMigration(context.Background(), m)
-	assertDomainError(t, err, domain.ErrCodeUnsupportedTargetLanguage)
+	stored := &domain.Migration{Identifier: 10005, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10005), out.GetIdentifier())
 }
 
-func TestCreateMigration_UnsupportedTargetLanguage_Node(t *testing.T) {
-	svc, _, _, _, _, _ := newSvc(t)
+// TestCreateMigration_Node_Generable_Accepted proves the Node target language is
+// now a filled generator profile: CreateMigration accepts it (no MIG107
+// Unsupported_Target_Language) and proceeds to create the migration, exactly like
+// Go and Python. This is the unit-level proof that MIG107 was lifted for Node.
+func TestCreateMigration_Node_Generable_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
 	m := validMigration()
 	m.Target.Language = domain.TargetLanguageNode
-	_, err := svc.CreateMigration(context.Background(), m)
-	assertDomainError(t, err, domain.ErrCodeUnsupportedTargetLanguage)
+	stored := &domain.Migration{Identifier: 10003, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10003), out.GetIdentifier())
 }
 
 func TestCreateMigration_Python_Generable_Accepted(t *testing.T) {
@@ -296,8 +329,8 @@ func TestGetMigration_NotFound(t *testing.T) {
 func TestListMigrations_Success(t *testing.T) {
 	svc, repo, _, _, _, _ := newSvc(t)
 	items := []*domain.Migration{{Identifier: 1}, {Identifier: 2}}
-	repo.On("List", mock.Anything, mock.Anything, mock.Anything).Return(items, nil, nil)
-	out, _, err := svc.ListMigrations(context.Background(), nil, &queryparamsv1.PageQueryParams{PageNumber: 1, PageSize: 10})
+	repo.On("List", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(items, nil, nil)
+	out, _, err := svc.ListMigrations(context.Background(), nil, "", &queryparamsv1.PageQueryParams{PageNumber: 1, PageSize: 10})
 	require.NoError(t, err)
 	assert.Len(t, out, 2)
 }
@@ -316,8 +349,8 @@ func TestListMigrations_MultiStateFilter(t *testing.T) {
 		return len(f.GetStates()) == 2 &&
 			f.GetStates()[0] == migrationv1.MigrationState_MIGRATION_STATE_ANALYZING &&
 			f.GetStates()[1] == migrationv1.MigrationState_MIGRATION_STATE_DESIGNING
-	}), mock.Anything).Return(items, nil, nil)
-	out, _, err := svc.ListMigrations(context.Background(), filter, &queryparamsv1.PageQueryParams{PageNumber: 1, PageSize: 10})
+	}), mock.Anything, mock.Anything).Return(items, nil, nil)
+	out, _, err := svc.ListMigrations(context.Background(), filter, "", &queryparamsv1.PageQueryParams{PageNumber: 1, PageSize: 10})
 	require.NoError(t, err)
 	assert.Len(t, out, 2)
 	repo.AssertExpectations(t)
@@ -325,9 +358,18 @@ func TestListMigrations_MultiStateFilter(t *testing.T) {
 
 // ── DeleteMigration ───────────────────────────────────────────────────────────
 
-func TestDeleteMigration_TerminalState_Success(t *testing.T) {
+func TestDeleteMigration_DeletableState_Success(t *testing.T) {
 	svc, repo, _, _, _, _ := newSvc(t)
-	for _, state := range []domain.MigrationState{domain.MigrationStatePushed, domain.MigrationStateFailed, domain.MigrationStateCancelled} {
+	// Deletable = finished (not in-progress): READY, PUSHED, FAILED, CANCELLED,
+	// RESTRUCTURING_READY. READY is now deletable (was the bug).
+	deletable := []domain.MigrationState{
+		domain.MigrationStateReady,
+		domain.MigrationStatePushed,
+		domain.MigrationStateFailed,
+		domain.MigrationStateCancelled,
+		domain.MigrationStateRestructuringReady,
+	}
+	for _, state := range deletable {
 		repo.ExpectedCalls = nil
 		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.Migration{Identifier: 7, State: state}, nil)
 		repo.On("SoftDelete", mock.Anything, uint64(7)).Return(nil)
@@ -336,18 +378,18 @@ func TestDeleteMigration_TerminalState_Success(t *testing.T) {
 	}
 }
 
-func TestDeleteMigration_NonTerminalState_Rejected(t *testing.T) {
+func TestDeleteMigration_InProgressState_Rejected(t *testing.T) {
 	svc, repo, _, _, _, _ := newSvc(t)
-	nonTerminal := []domain.MigrationState{
+	// In-progress migrations are NOT deletable; READY is no longer here.
+	inProgress := []domain.MigrationState{
 		domain.MigrationStatePending,
 		domain.MigrationStateAnalyzing,
 		domain.MigrationStateDesigning,
 		domain.MigrationStateAwaitingApproval,
 		domain.MigrationStateGenerating,
 		domain.MigrationStateTesting,
-		domain.MigrationStateReady,
 	}
-	for _, state := range nonTerminal {
+	for _, state := range inProgress {
 		repo.ExpectedCalls = nil
 		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.Migration{Identifier: 7, State: state}, nil)
 		err := svc.DeleteMigration(context.Background(), 7)
@@ -620,18 +662,18 @@ func TestApproveDesign_Rejected_DoesNotDispatchGenerationJob(t *testing.T) {
 
 // ── CancelMigration ───────────────────────────────────────────────────────────
 
-func TestCancelMigration_FromAnyNonTerminal_Success(t *testing.T) {
+func TestCancelMigration_FromInProgress_Success(t *testing.T) {
 	svc, repo, _, _, _, _ := newSvc(t)
-	nonTerminal := []domain.MigrationState{
+	// Cancelable = in-progress only; READY is no longer cancelable.
+	inProgress := []domain.MigrationState{
 		domain.MigrationStatePending,
 		domain.MigrationStateAnalyzing,
 		domain.MigrationStateDesigning,
 		domain.MigrationStateAwaitingApproval,
 		domain.MigrationStateGenerating,
 		domain.MigrationStateTesting,
-		domain.MigrationStateReady,
 	}
-	for _, state := range nonTerminal {
+	for _, state := range inProgress {
 		repo.ExpectedCalls = nil
 		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.Migration{Identifier: 7, State: state}, nil)
 		repo.On("UpdateState", mock.Anything, uint64(7), domain.MigrationStateCancelled).Return(nil)
@@ -641,14 +683,17 @@ func TestCancelMigration_FromAnyNonTerminal_Success(t *testing.T) {
 	}
 }
 
-func TestCancelMigration_AlreadyTerminal_Rejected(t *testing.T) {
+func TestCancelMigration_NotInProgress_Rejected(t *testing.T) {
 	svc, repo, _, _, _, _ := newSvc(t)
-	terminal := []domain.MigrationState{
+	// READY and terminal states are not cancelable. READY was the bug.
+	notCancelable := []domain.MigrationState{
+		domain.MigrationStateReady,
 		domain.MigrationStatePushed,
 		domain.MigrationStateFailed,
 		domain.MigrationStateCancelled,
+		domain.MigrationStateRestructuringReady,
 	}
-	for _, state := range terminal {
+	for _, state := range notCancelable {
 		repo.ExpectedCalls = nil
 		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.Migration{Identifier: 7, State: state}, nil)
 		_, err := svc.CancelMigration(context.Background(), 7)
@@ -689,6 +734,79 @@ func TestGetGenerationPackage_OK(t *testing.T) {
 	assert.Equal(t, "ART", pkg.GetServices()[0].GetErrorPrefix())
 	assert.Equal(t, "proto...", pkg.GetServices()[0].GetProtoContent())
 	assert.Contains(t, pkg.GetServices()[0].GetGeneratorPromptRef(), "service-generator-prompt")
+}
+
+// TestGetGenerationPackage_AuthFromDetection asserts the effective auth scheme is
+// read from the linked analysis summary's auth_scheme_detection and propagated to
+// every ServiceGenerationSpec (A2 propagation).
+func TestGetGenerationPackage_AuthFromDetection(t *testing.T) {
+	t.Parallel()
+	repo := &mocks.MockMigrationRepository{}
+	tx := &mocks.MockTransactionManager{}
+	tx.On("WithTransaction", mock.Anything, mock.Anything).Return(nil)
+	artifacts := &mocks.MockArtifactReader{}
+	analysis := &mocks.MockAnalysisClient{}
+	svc := application.NewService(repo, tx, nil, nil, analysis, artifacts, nil, nil, nil, nil, nil, nil, nil, nil, "")
+
+	m := &domain.Migration{
+		Identifier:        7,
+		State:             domain.MigrationStateGenerating,
+		AnalysisSummaryId: 99,
+		Plan:              &migrationv1.RestructurePlan{Services: []*migrationv1.ProposedService{{Name: "articles", ErrorPrefix: "ART"}}},
+		Target:            &migrationv1.TargetConfig{Language: domain.TargetLanguageGo},
+	}
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
+	artifacts.On("ReadArtifacts", mock.Anything, uint64(7)).Return([]domain.ServiceArtifact{
+		{ServiceName: "articles", ProtoContent: "proto...", BoundarySpec: "spec..."},
+	}, nil)
+	analysis.On("GetAnalysisSummary", mock.Anything, uint64(99)).Return(&analysisv1.AnalysisSummary{
+		Identifier: 99,
+		AuthSchemeDetection: &analysisv1.AuthSchemeDetection{
+			Scheme:       analysisv1.AuthScheme_AUTH_SCHEME_JWT,
+			SignatureAlg: "HS256",
+		},
+	}, nil)
+
+	pkg, err := svc.GetGenerationPackage(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, pkg.GetServices(), 1)
+	assert.Equal(t, "jwt", pkg.GetServices()[0].GetAuthScheme())
+	assert.Equal(t, "HS256", pkg.GetServices()[0].GetAuthSignatureAlg())
+}
+
+// TestGetGenerationPackage_AuthOverrideWins asserts the per-migration override
+// (TargetConfig.target_auth_scheme) wins over the detected scheme and that the
+// analysis summary is not even consulted when an override is present.
+func TestGetGenerationPackage_AuthOverrideWins(t *testing.T) {
+	t.Parallel()
+	repo := &mocks.MockMigrationRepository{}
+	tx := &mocks.MockTransactionManager{}
+	tx.On("WithTransaction", mock.Anything, mock.Anything).Return(nil)
+	artifacts := &mocks.MockArtifactReader{}
+	analysis := &mocks.MockAnalysisClient{}
+	svc := application.NewService(repo, tx, nil, nil, analysis, artifacts, nil, nil, nil, nil, nil, nil, nil, nil, "")
+
+	m := &domain.Migration{
+		Identifier:        7,
+		State:             domain.MigrationStateGenerating,
+		AnalysisSummaryId: 99,
+		Plan:              &migrationv1.RestructurePlan{Services: []*migrationv1.ProposedService{{Name: "articles", ErrorPrefix: "ART"}}},
+		Target: &migrationv1.TargetConfig{
+			Language:         domain.TargetLanguageGo,
+			TargetAuthScheme: analysisv1.AuthScheme_AUTH_SCHEME_JWT,
+		},
+	}
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
+	artifacts.On("ReadArtifacts", mock.Anything, uint64(7)).Return([]domain.ServiceArtifact{
+		{ServiceName: "articles", ProtoContent: "proto...", BoundarySpec: "spec..."},
+	}, nil)
+	// No analysis.On(...): the override must short-circuit the summary fetch.
+
+	pkg, err := svc.GetGenerationPackage(context.Background(), 7)
+	require.NoError(t, err)
+	require.Len(t, pkg.GetServices(), 1)
+	assert.Equal(t, "jwt", pkg.GetServices()[0].GetAuthScheme())
+	analysis.AssertNotCalled(t, "GetAnalysisSummary", mock.Anything, mock.Anything)
 }
 
 // TestGetGenerationPackage_PythonProfile asserts a PYTHON-target migration routes
@@ -911,6 +1029,104 @@ func TestPublishMigration_SamePathSameContent_NotAConflict(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestGetGenerationArtifacts_PythonRewritesToCore proves BUG 2 fix: for a Python
+// migration the viewer rewrites stored python/… paths to core/… (mirroring the
+// deliverable assembler's step 3b rename) so the viewer matches the ZIP. The raw
+// "python/" prefix must never appear in the response.
+func TestGetGenerationArtifacts_PythonRewritesToCore(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, fileReader := newSvcWithPublish(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{
+			Identifier: 7,
+			State:      domain.MigrationStateReady,
+			Target:     &migrationv1.TargetConfig{Language: migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON},
+		}, nil)
+	fileReader.On("ListArtifacts", mock.Anything, uint64(7), "").Return([]ports.GeneratedFile{
+		{ServiceName: "user", Path: "python/services/user/v1/main.py", Content: "x\n"},
+		{ServiceName: "user", Path: "python/shared/errors.py", Content: "y\n"},
+	}, nil)
+
+	resp, err := svc.GetGenerationArtifacts(context.Background(), 7, "")
+	require.NoError(t, err)
+
+	var paths []string
+	for _, s := range resp.GetServices() {
+		for _, f := range s.GetFiles() {
+			paths = append(paths, f.GetPath())
+		}
+	}
+	require.Len(t, paths, 2)
+	for _, p := range paths {
+		assert.False(t, strings.HasPrefix(p, "python"), "python/ prefix must be rewritten, got %q", p)
+	}
+	assert.Contains(t, paths, "core/services/user/v1/main.py")
+	assert.Contains(t, paths, "core/shared/errors.py")
+}
+
+// TestGetGenerationArtifacts_GoLeavesPathsUnchanged proves the Go profile is not
+// affected by the python→core rewrite: paths are returned exactly as stored.
+func TestGetGenerationArtifacts_GoLeavesPathsUnchanged(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, fileReader := newSvcWithPublish(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{
+			Identifier: 7,
+			State:      domain.MigrationStateReady,
+			Target:     &migrationv1.TargetConfig{Language: migrationv1.TargetLanguage_TARGET_LANGUAGE_GO},
+		}, nil)
+	fileReader.On("ListArtifacts", mock.Anything, uint64(7), "").Return([]ports.GeneratedFile{
+		{ServiceName: "user", Path: "core/services/user/domain/domain.go", Content: "package domain\n"},
+	}, nil)
+
+	resp, err := svc.GetGenerationArtifacts(context.Background(), 7, "")
+	require.NoError(t, err)
+	require.Len(t, resp.GetServices(), 1)
+	require.Len(t, resp.GetServices()[0].GetFiles(), 1)
+	assert.Equal(t, "core/services/user/domain/domain.go", resp.GetServices()[0].GetFiles()[0].GetPath())
+}
+
+// TestGetGenerationArtifacts_NonUTF8DoesNotError proves the DEFECT 3 fix: an
+// artifact with non-UTF-8 content must NOT crash the response. proto3 string
+// fields require valid UTF-8, so a binary payload would otherwise make the gRPC
+// marshal fail with "string field contains invalid UTF-8" (HTTP 500). The fix
+// drops the offending content (empty string) while still returning the file and
+// a successful response — and the response must actually marshal.
+func TestGetGenerationArtifacts_NonUTF8DoesNotError(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, fileReader := newSvcWithPublish(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(
+		&domain.Migration{
+			Identifier: 7,
+			State:      domain.MigrationStateReady,
+			Target:     &migrationv1.TargetConfig{Language: migrationv1.TargetLanguage_TARGET_LANGUAGE_GO},
+		}, nil)
+	fileReader.On("ListArtifacts", mock.Anything, uint64(7), "").Return([]ports.GeneratedFile{
+		{ServiceName: "user", Path: "core/services/user/domain/domain.go", Content: "package domain\n"},
+		// Invalid UTF-8 byte sequence stored as content (binary that slipped in).
+		{ServiceName: "user", Path: "core/services/user/blob.bin", Content: string([]byte{0xff, 0xfe, 0x00, 0x80})},
+	}, nil)
+
+	resp, err := svc.GetGenerationArtifacts(context.Background(), 7, "")
+	require.NoError(t, err)
+	require.Len(t, resp.GetServices(), 1)
+	files := resp.GetServices()[0].GetFiles()
+	require.Len(t, files, 2)
+
+	// The valid file keeps its content; the binary file is surfaced with empty
+	// content so the path is still visible but marshaling never breaks.
+	byPath := map[string]string{}
+	for _, f := range files {
+		byPath[f.GetPath()] = f.GetContent()
+	}
+	assert.Equal(t, "package domain\n", byPath["core/services/user/domain/domain.go"])
+	assert.Equal(t, "", byPath["core/services/user/blob.bin"])
+
+	// The response must actually marshal over the wire (this is what failed at 500).
+	_, marshalErr := proto.Marshal(resp)
+	require.NoError(t, marshalErr)
+}
+
 // ── AssessMigrability ─────────────────────────────────────────────────────────
 
 func newSvcWithAssessor(t *testing.T) (*application.Service, *mocks.MockMigrationRepository, *mocks.MockMigrabilityAssessor) {
@@ -950,7 +1166,7 @@ func TestAssessMigrability_Success_PersistsVerdict(t *testing.T) {
 		Confidence: "HIGH",
 	}
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	assessor.On("Assess", mock.Anything, uint64(10047), mock.AnythingOfType("string")).Return(verdict, nil)
+	assessor.On("Assess", mock.Anything, uint64(0), uint64(7), uint64(10047), mock.AnythingOfType("string")).Return(verdict, nil)
 	repo.On("SetMigrabilityAssessment", mock.Anything, uint64(7), verdict).Return(nil)
 
 	out, err := svc.AssessMigrability(context.Background(), 7, "en")
@@ -968,7 +1184,7 @@ func TestAssessMigrability_Idempotent_UpdatesExistingVerdict(t *testing.T) {
 	m := &domain.Migration{Identifier: 7, State: domain.MigrationStateAwaitingApproval, AnalysisSummaryId: 10047, MigrabilityAssessment: prev}
 	newVerdict := &commonv1.MigrabilityAssessment{Verdict: domain.MigrabilityVerdictMigrable, Confidence: "HIGH"}
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	assessor.On("Assess", mock.Anything, uint64(10047), mock.AnythingOfType("string")).Return(newVerdict, nil)
+	assessor.On("Assess", mock.Anything, uint64(0), uint64(7), uint64(10047), mock.AnythingOfType("string")).Return(newVerdict, nil)
 	repo.On("SetMigrabilityAssessment", mock.Anything, uint64(7), newVerdict).Return(nil)
 
 	out, err := svc.AssessMigrability(context.Background(), 7, "en")
@@ -1006,7 +1222,7 @@ func TestAssessMigrability_UsesPathAScore(t *testing.T) {
 	storedSummary := &analysisv1.AnalysisSummary{MigrabilityScore: pathAScore}
 
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	assessor.On("Assess", mock.Anything, uint64(10047), mock.AnythingOfType("string")).Return(pathBVerdict, nil)
+	assessor.On("Assess", mock.Anything, uint64(0), uint64(7), uint64(10047), mock.AnythingOfType("string")).Return(pathBVerdict, nil)
 	analysisClient.On("GetAnalysisSummary", mock.Anything, uint64(10047)).Return(storedSummary, nil)
 	repo.On("SetMigrabilityAssessment", mock.Anything, uint64(7), mock.MatchedBy(func(a *commonv1.MigrabilityAssessment) bool {
 		return a.GetMigrabilityScore() == 82
@@ -1435,7 +1651,7 @@ func TestEnrichRoadmap_Success_PersistsEnrichment(t *testing.T) {
 	}
 
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	enricher.On("Enrich", mock.Anything, roadmap).Return(enrichment, nil)
+	enricher.On("Enrich", mock.Anything, uint64(0), uint64(7), roadmap).Return(enrichment, nil)
 	repo.On("SetRoadmapEnrichment", mock.Anything, uint64(7), enrichment).Return(nil)
 
 	out, err := svc.EnrichRoadmap(context.Background(), 7)
@@ -1473,7 +1689,7 @@ func TestEnrichRoadmap_Idempotent_ReplacesExistingEnrichment(t *testing.T) {
 	}
 
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	enricher.On("Enrich", mock.Anything, roadmap).Return(newEnrichment, nil)
+	enricher.On("Enrich", mock.Anything, uint64(0), uint64(7), roadmap).Return(newEnrichment, nil)
 	repo.On("SetRoadmapEnrichment", mock.Anything, uint64(7), newEnrichment).Return(nil)
 
 	out, err := svc.EnrichRoadmap(context.Background(), 7)
@@ -1561,7 +1777,7 @@ func TestGenerateBlueprint_Success_PersistsBlueprint(t *testing.T) {
 	}
 
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	gen.On("Generate", mock.Anything, uint64(10003), roadmap).Return(blueprint, nil)
+	gen.On("Generate", mock.Anything, uint64(0), uint64(7), uint64(10003), roadmap).Return(blueprint, nil)
 	repo.On("SetServiceBlueprint", mock.Anything, uint64(7), blueprint).Return(nil)
 
 	out, err := svc.GenerateBlueprint(context.Background(), 7)
@@ -1600,7 +1816,7 @@ func TestGenerateBlueprint_Idempotent_ReplacesExistingBlueprint(t *testing.T) {
 	}
 
 	repo.On("GetByID", mock.Anything, uint64(7), false).Return(m, nil)
-	gen.On("Generate", mock.Anything, uint64(10003), roadmap).Return(newBlueprint, nil)
+	gen.On("Generate", mock.Anything, uint64(0), uint64(7), uint64(10003), roadmap).Return(newBlueprint, nil)
 	repo.On("SetServiceBlueprint", mock.Anything, uint64(7), newBlueprint).Return(nil)
 
 	out, err := svc.GenerateBlueprint(context.Background(), 7)

@@ -4,8 +4,9 @@ package agent
 // This file is compiled only during `go test`.
 
 var (
-	CaptureArtifacts    = captureArtifacts
-	CopyMonorepo        = copyMonorepo
-	IsRootLevelBinary   = isRootLevelBinary
-	WriteCombinedPrompt = writeCombinedPrompt
+	CaptureArtifacts      = captureArtifacts
+	CopyMonorepo          = copyMonorepo
+	IsRootLevelBinary     = isRootLevelBinary
+	WriteCombinedPrompt   = writeCombinedPrompt
+	PromptProfileBindings = promptProfileBindings
 )

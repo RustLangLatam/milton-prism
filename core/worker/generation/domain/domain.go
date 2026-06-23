@@ -32,6 +32,10 @@ type ServiceGenerationRecord struct {
 	CacheCreationInputTokens int64
 	CacheReadInputTokens     int64
 	OutputTokens             int64
+	// Model is the dominant model id reported by the agent for this run (e.g.
+	// "claude-opus-4-8[1m]"). Empty when none was reported. Used downstream to
+	// estimate cost by token when no real API cost is available.
+	Model string
 	// AgentRawResult is the final "result" text from Claude Code's JSON output.
 	// Preserved for debugging and post-hoc inspection.
 	AgentRawResult string

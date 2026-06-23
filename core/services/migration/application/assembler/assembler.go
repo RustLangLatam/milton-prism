@@ -36,12 +36,173 @@ type File struct {
 type Assembler struct {
 	skeletonRoot  string // absolute path to PRISM_MONOREPO_PATH
 	useApiGateway bool   // whether to include the generated API gateway entrypoint
+	profile       string // output profile: "go" (default) or "python"
+	protocol      string // transport: "grpc" (default) or "http"
 }
 
 // New returns an Assembler that reads skeleton files from skeletonRoot.
 // useApiGateway controls whether api-gateway/cmd/... is synthesised; false omits it.
-func New(skeletonRoot string, useApiGateway bool) *Assembler {
-	return &Assembler{skeletonRoot: skeletonRoot, useApiGateway: useApiGateway}
+// profile selects the skeleton and post-Assemble behaviour: "python" emits a
+// Python deliverable (Python shared scaffolding + protos only, zero Go);
+// "node" emits a TypeScript/gRPC deliverable (generated TS + protos only, zero
+// Go/Python); any other value (including "" or "go") emits the Go deliverable
+// unchanged.
+//
+// protocol selects the transport variant of a deliverable. For Go, "http" emits a
+// Go HTTP-native deliverable: the pkg/gateway/ subtree is excluded EXCEPT
+// pkg/gateway/common/error/ (pure error maps reused by the REST handlers), since
+// an HTTP-native service is its own entry point and never wires the gRPC gateway.
+// For Python, "http" emits a FastAPI-native deliverable: the gRPC server bootstrap
+// (grpc.server/add_*Servicer_to_server) and the runtime gRPC proto stubs
+// (*_pb2_grpc.py) are excluded from the generated artifacts, since the FastAPI app
+// is the sole entry point and the messages are modelled with pydantic. For Node,
+// "http" emits a Fastify-native deliverable (the @grpc/grpc-js server bootstrap
+// and *_grpc_pb stubs are excluded). For Rust, "http" emits an axum-native
+// deliverable: the tonic gRPC server bootstrap (tonic::transport::Server /
+// add_service) and the tonic-generated server trait impl (infrastructure/grpc/)
+// are excluded, since the axum app is the sole entry point and the messages are
+// modelled with plain Rust/serde structs.
+// Empty or "grpc" keeps the gateway subtree / gRPC server (the established gRPC
+// behaviour).
+func New(skeletonRoot string, useApiGateway bool, profile, protocol string) *Assembler {
+	return &Assembler{skeletonRoot: skeletonRoot, useApiGateway: useApiGateway, profile: profile, protocol: protocol}
+}
+
+// isGoHTTP reports whether this Assembler targets the Go HTTP-native deliverable
+// (Go profile + HTTP transport). The gateway subtree is excluded for this cell.
+func (a *Assembler) isGoHTTP() bool {
+	return a.protocol == "http" && !a.isPython() && !a.isNode() && !a.isRust()
+}
+
+// isPython reports whether this Assembler targets the Python output profile.
+func (a *Assembler) isPython() bool { return a.profile == "python" }
+
+// isPythonHTTP reports whether this Assembler targets the Python HTTP-native
+// (FastAPI) deliverable (Python profile + HTTP transport). The gRPC server
+// bootstrap and runtime gRPC proto stubs are excluded for this cell — the FastAPI
+// app is the sole entrypoint and the messages are modelled with pydantic, so no
+// grpc.server/add_*Servicer_to_server bootstrap and no *_pb2_grpc.py runtime stub
+// belong in the package. The grpc-api-gateway is already excluded for HTTP by the
+// download path (useApiGateway = micro && gRPC).
+func (a *Assembler) isPythonHTTP() bool {
+	return a.isPython() && a.protocol == "http"
+}
+
+// isPythonGRPCArtifact reports whether a generated artifact is gRPC-specific and
+// therefore must NOT ship in a Python HTTP-native (FastAPI) deliverable. Two cases:
+//   - *_pb2_grpc.py — the generated gRPC client/server proto stubs, unused when the
+//     messages are modelled with pydantic and the transport is FastAPI.
+//   - any .py whose body bootstraps a gRPC server (grpc.server( / grpc.aio.server(
+//     or an add_*Servicer_to_server call) — the gRPC server __main__/entrypoint,
+//     which the FastAPI app replaces. Identified by content so a FastAPI __main__
+//     (uvicorn runner) is kept while a gRPC __main__ is dropped.
+func isPythonGRPCArtifact(path, content string) bool {
+	if strings.HasSuffix(path, "_pb2_grpc.py") {
+		return true
+	}
+	if !strings.HasSuffix(path, ".py") {
+		return false
+	}
+	if strings.Contains(content, "grpc.server(") || strings.Contains(content, "grpc.aio.server(") {
+		return true
+	}
+	// add_<Name>Servicer_to_server( — the servicer registration call.
+	if i := strings.Index(content, "Servicer_to_server("); i >= 0 &&
+		strings.LastIndex(content[:i], "add_") >= 0 {
+		return true
+	}
+	return false
+}
+
+// isNode reports whether this Assembler targets the Node (TypeScript) profile.
+func (a *Assembler) isNode() bool { return a.profile == "node" }
+
+// isNodeHTTP reports whether this Assembler targets the Node HTTP-native (Fastify)
+// deliverable (Node profile + HTTP transport). The gRPC server bootstrap
+// (new Server()/addService over @grpc/grpc-js) and the runtime gRPC proto stubs
+// (*_grpc_pb) are excluded for this cell — the Fastify app is the sole entrypoint
+// and the messages are modelled with plain TypeScript types, so no gRPC server
+// bootstrap and no *_grpc_pb runtime stub belong in the package. The
+// grpc-api-gateway is already excluded for HTTP by the download path
+// (useApiGateway = micro && gRPC).
+func (a *Assembler) isNodeHTTP() bool {
+	return a.isNode() && a.protocol == "http"
+}
+
+// isNodeGRPCArtifact reports whether a generated artifact is gRPC-specific and
+// therefore must NOT ship in a Node HTTP-native (Fastify) deliverable. Two cases:
+//   - *_grpc_pb.{ts,js,d.ts} — the generated gRPC client/server proto stubs, unused
+//     when the messages are plain TS types and the transport is Fastify.
+//   - any .ts/.js whose body bootstraps a @grpc/grpc-js server: a `new Server(`
+//     (the grpc.Server constructor) or an `.addService(` call (servicer
+//     registration) — the gRPC server bootstrap/entrypoint, which the Fastify app
+//     replaces. Identified by content so a Fastify main.ts (listen runner) is kept
+//     while a gRPC bootstrap is dropped.
+func isNodeGRPCArtifact(path, content string) bool {
+	if strings.Contains(path, "_grpc_pb") {
+		return true
+	}
+	if !strings.HasSuffix(path, ".ts") && !strings.HasSuffix(path, ".js") {
+		return false
+	}
+	if strings.Contains(content, "new Server(") || strings.Contains(content, ".addService(") {
+		return true
+	}
+	return false
+}
+
+// isRust reports whether this Assembler targets the Rust profile.
+func (a *Assembler) isRust() bool { return a.profile == "rust" }
+
+// isRustHTTP reports whether this Assembler targets the Rust HTTP-native (axum)
+// deliverable (Rust profile + HTTP transport). The tonic gRPC server bootstrap
+// (tonic::transport::Server / add_service) and the tonic-generated server trait
+// impl are excluded for this cell — the axum app is the sole entrypoint and the
+// messages are modelled with plain Rust/serde structs, so no tonic server
+// bootstrap and no tonic-build server codegen belong in the package. The
+// grpc-api-gateway is already excluded for HTTP by the download path
+// (useApiGateway = micro && gRPC).
+func (a *Assembler) isRustHTTP() bool {
+	return a.isRust() && a.protocol == "http"
+}
+
+// isRustGRPCArtifact reports whether a generated artifact is tonic-gRPC-specific
+// and therefore must NOT ship in a Rust HTTP-native (axum) deliverable. Two cases:
+//   - any .rs whose body bootstraps a tonic server: a `tonic::transport::Server`
+//     / `transport::Server::builder(` (the server builder) or an `.add_service(`
+//     call (servicer registration) — the gRPC server bootstrap/entrypoint, which
+//     the axum app replaces. Identified by content so a `main.rs` that runs axum
+//     (`axum::serve` / `Router`) is kept while a tonic bootstrap is dropped.
+//   - any .rs under an `infrastructure/grpc/` path — the tonic generated-service
+//     trait impl (the gRPC handlers), replaced by `infrastructure/http/` for axum.
+func isRustGRPCArtifact(path, content string) bool {
+	if !strings.HasSuffix(path, ".rs") {
+		return false
+	}
+	if strings.Contains(path, "/infrastructure/grpc/") {
+		return true
+	}
+	if strings.Contains(content, "transport::Server") || strings.Contains(content, ".add_service(") {
+		return true
+	}
+	return false
+}
+
+// sourceRoot returns the directory the agent writes generated code under for a
+// non-Go profile (python/, node/ or rust/), which step 3b renames to core/.
+// Returns "" for the Go profile (no rename). Must stay in lockstep with
+// profileSourceRoot in the migration application layer.
+func (a *Assembler) sourceRoot() string {
+	switch a.profile {
+	case "python":
+		return "python"
+	case "node":
+		return "node"
+	case "rust":
+		return "rust"
+	default:
+		return ""
+	}
 }
 
 // Assemble returns the full set of files for a standalone, compilable deliverable.
@@ -63,22 +224,151 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		if f.Path == "" {
 			continue
 		}
+		// Profile guard: a Python deliverable must never carry Go artifacts. The
+		// generation pipeline's __pipeline__ aggregator emits a Go gateway error
+		// map (pkg/gateway/common/error/message_error.go) regardless of profile;
+		// for Python that file is irrelevant (errors are handled by
+		// python/shared/errors) and must not leak into the package.
+		if a.isPython() && (strings.HasSuffix(f.Path, ".go") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile") {
+			continue
+		}
+		// Profile+protocol guard: a Python HTTP-native (FastAPI) deliverable is its
+		// own entry point and models messages with pydantic, so the gRPC server
+		// bootstrap (grpc.server/add_*Servicer_to_server) and the runtime gRPC proto
+		// stubs (*_pb2_grpc.py) must not ship — only the FastAPI app and its support
+		// code. A FastAPI __main__ (uvicorn runner) is kept (it carries no gRPC
+		// server call); only gRPC-bootstrap .py files are dropped.
+		if a.isPythonHTTP() && isPythonGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
+		// Profile guard: a Node (TypeScript) deliverable must never carry Go or
+		// Python artifacts. Same rationale as Python — the Go error aggregator is
+		// skipped for the node profile in the pipeline, but defend here too so a
+		// stray .go/.py (or Go go.mod) can never leak into a TS package.
+		if a.isNode() && (strings.HasSuffix(f.Path, ".go") ||
+			strings.HasSuffix(f.Path, ".py") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile") {
+			continue
+		}
+		// Profile+protocol guard: a Node HTTP-native (Fastify) deliverable is its own
+		// entry point and models messages with plain TS types, so the gRPC server
+		// bootstrap (new Server()/addService over @grpc/grpc-js) and the runtime gRPC
+		// proto stubs (*_grpc_pb) must not ship — only the Fastify app and its support
+		// code. A Fastify main.ts (listen runner) is kept (it carries no gRPC server
+		// call); only gRPC-bootstrap .ts/.js files are dropped.
+		if a.isNodeHTTP() && isNodeGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
+		// Profile guard: a Rust (Tonic) deliverable must never carry Go, Python or
+		// Node artifacts. Same rationale as Python/Node — the Go error aggregator
+		// is skipped for the rust profile in the pipeline, but defend here too so a
+		// stray .go/.py/.ts (or Go/Node manifest) can never leak into a Rust crate.
+		if a.isRust() && (strings.HasSuffix(f.Path, ".go") ||
+			strings.HasSuffix(f.Path, ".py") ||
+			strings.HasSuffix(f.Path, ".ts") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile" ||
+			strings.HasSuffix(f.Path, "/package.json") || f.Path == "package.json" ||
+			strings.HasSuffix(f.Path, "/package-lock.json") || f.Path == "package-lock.json" ||
+			// cargo build output and lockfile: defence-in-depth (the worker's
+			// artifact collector already drops these, but a stray one must never
+			// land in the deliverable).
+			isCargoBuildArtifact(f.Path)) {
+			continue
+		}
+		// Profile+protocol guard: a Rust HTTP-native (axum) deliverable is its own
+		// entry point and models messages with plain Rust/serde structs, so the
+		// tonic gRPC server bootstrap (tonic::transport::Server / add_service) and
+		// the tonic-generated server trait impl (infrastructure/grpc/) must not ship
+		// — only the axum app and its support code. An axum main.rs (serve runner)
+		// is kept (it carries no tonic server call); only tonic-bootstrap .rs files
+		// and the grpc handler dir are dropped.
+		if a.isRustHTTP() && isRustGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
+		// Profile guard: a Go HTTP-native deliverable is its own entry point and
+		// never wires the gRPC gateway, so the grpc-gateway transcoder
+		// (*.pb.gw.go) and the gRPC server stub (*_grpc.pb.go) must not ship —
+		// the message *.pb.go types are kept. Their imports (pkg/gateway runtime,
+		// grpc server) are excluded from the HTTP skeleton, so shipping them would
+		// break go build.
+		if a.isGoHTTP() && (strings.HasSuffix(f.Path, ".pb.gw.go") || strings.HasSuffix(f.Path, "_grpc.pb.go")) {
+			continue
+		}
 		merged[f.Path] = []byte(f.Content)
 	}
 
 	// 3. Append config.toml.example files (per-service, always), per-service
 	// Makefiles, and the API gateway entrypoint (conditional on useApiGateway).
 	// Neither ever contains real credentials.
-	if err := generateConfigExamples(merged); err != nil {
-		return nil, fmt.Errorf("assembler: config examples: %w", err)
-	}
-	if err := generateServiceMakefiles(merged); err != nil {
-		return nil, fmt.Errorf("assembler: service makefiles: %w", err)
-	}
-	if a.useApiGateway {
-		if err := generateGatewayCode(merged, a.skeletonRoot); err != nil {
-			return nil, fmt.Errorf("assembler: gateway code: %w", err)
+	//
+	// All three post-Assemble steps synthesise Go (Go config.toml.example with
+	// the milton_prism/pkg/config CONFIG_PACKAGE, Go service Makefiles, and the
+	// Go gateway main.go). They are skipped for the Python and Node profiles,
+	// which must contain zero Go scaffolding; the language-appropriate extras
+	// arrive via the generated artifacts list plus the per-profile .env.example.
+	if !a.isPython() && !a.isNode() && !a.isRust() {
+		if err := generateConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: config examples: %w", err)
 		}
+		if err := generateServiceMakefiles(merged); err != nil {
+			return nil, fmt.Errorf("assembler: service makefiles: %w", err)
+		}
+		if a.useApiGateway {
+			if err := generateGatewayCode(merged, a.skeletonRoot); err != nil {
+				return nil, fmt.Errorf("assembler: gateway code: %w", err)
+			}
+		}
+	}
+
+	// 3a. Python profile: append a per-service .env.example (the pydantic homologue
+	// of the Go config.toml.example) BEFORE the python/ → core/ rename, so the
+	// generator sees service dirs keyed under python/services/<svc>/. The emitted
+	// .env.example paths are rewritten to core/services/<svc>/.env.example by the
+	// rename step below, matching the Go per-service placement.
+	if a.isPython() {
+		if err := generatePythonConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: python config examples: %w", err)
+		}
+	}
+
+	// 3a-node. Node profile: append a per-service .env.example (the TypeScript
+	// homologue of the Go config.toml.example / Python .env.example) BEFORE the
+	// node/ → core/ rename, so service dirs are still keyed under
+	// node/services/<svc>/. The emitted .env.example paths are rewritten to
+	// core/services/<svc>/.env.example by the rename step below.
+	if a.isNode() {
+		if err := generateNodeConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: node config examples: %w", err)
+		}
+	}
+
+	// 3a-rust. Rust profile: append a per-service .env.example (the Tonic homologue
+	// of the Go config.toml.example / Python / Node .env.example) BEFORE the
+	// rust/ → core/ rename, so service dirs are still keyed under
+	// rust/services/<svc>/. The emitted .env.example paths are rewritten to
+	// core/services/<svc>/.env.example by the rename step below.
+	if a.isRust() {
+		if err := generateRustConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: rust config examples: %w", err)
+		}
+	}
+
+	// 3b. Python/Node/Rust profile: rename the source-root dir (python/, node/ or rust/) →
+	// core/ to homologate with the Go deliverable layout (Go uses core/). The
+	// Python imports are top-level packages relative to the source root and the
+	// Node imports are relative paths within the source root, so renaming the
+	// root dir does NOT change any import — only the directory name. Protos
+	// (protobuf/…) and any other paths are untouched.
+	if root := a.sourceRoot(); root != "" {
+		renamed := make(map[string][]byte, len(merged))
+		for p, c := range merged {
+			if p == root || strings.HasPrefix(p, root+"/") {
+				p = "core" + strings.TrimPrefix(p, root)
+			}
+			renamed[p] = c
+		}
+		merged = renamed
 	}
 
 	// 4. Flatten to sorted slice for deterministic output.
@@ -104,13 +394,13 @@ func (a *Assembler) walkSkeleton(dst map[string][]byte) error {
 		rel = filepath.ToSlash(rel) // canonical forward-slash paths
 
 		if d.IsDir() {
-			if skipDir(rel) {
+			if a.skipDir(rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if !isSkeletonFile(rel) {
+		if !a.isSkeletonFile(rel) {
 			return nil
 		}
 
@@ -121,6 +411,51 @@ func (a *Assembler) walkSkeleton(dst map[string][]byte) error {
 		dst[rel] = content
 		return nil
 	})
+}
+
+// skipDir dispatches to the per-profile directory filter.
+func (a *Assembler) skipDir(rel string) bool {
+	if a.isPython() {
+		return skipDirPython(rel)
+	}
+	if a.isNode() {
+		return skipDirNode(rel)
+	}
+	if a.isRust() {
+		return skipDirRust(rel)
+	}
+	return skipDir(rel)
+}
+
+// isSkeletonFile dispatches to the per-profile file filter.
+func (a *Assembler) isSkeletonFile(rel string) bool {
+	if a.isPython() {
+		return isSkeletonFilePython(rel)
+	}
+	if a.isNode() {
+		return isSkeletonFileNode(rel)
+	}
+	if a.isRust() {
+		return isSkeletonFileRust(rel)
+	}
+	// Go HTTP-native: exclude the whole pkg/gateway/ subtree EXCEPT
+	// pkg/gateway/common/error/ (pure error maps the REST handlers reuse). The
+	// HTTP service is its own entry point and never wires the gRPC gateway, so the
+	// gateway runtime/transcoder code has no place in the deliverable.
+	if a.isGoHTTP() && strings.HasPrefix(rel, "pkg/gateway/") &&
+		!strings.HasPrefix(rel, "pkg/gateway/common/error/") {
+		return false
+	}
+	// Go HTTP-native: drop two gRPC-only skeleton files whose imports are not
+	// shipped in this cell — build_server_group.go wires the gRPC server + the
+	// excluded pkg/gateway runtime, and grpc_billing_client.go imports the
+	// platform billing service stub (services/billing/v1). Neither is referenced
+	// by the HTTP-native entry point, so excluding them keeps go build green.
+	if a.isGoHTTP() && (rel == "core/internal/svc/build_server_group.go" ||
+		rel == "core/shared/grpc_client_sdk/grpc_billing_client.go") {
+		return false
+	}
+	return isSkeletonFile(rel)
 }
 
 // skipDir returns true for directories that should be skipped entirely.
@@ -165,8 +500,11 @@ func isSkeletonFile(rel string) bool {
 	}
 
 	// ── buf config files ────────────────────────────────────────────────────
+	// buf.deliverable.openapi.yaml lets the deliverable regenerate its own
+	// docs/openapi.yaml from the shipped protos.
 	switch rel {
-	case "protobuf/buf.yaml", "protobuf/buf.go.gen.yaml", "protobuf/buf.docs.gen.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.go.gen.yaml",
+		"protobuf/buf.docs.gen.yaml", "protobuf/buf.deliverable.openapi.yaml":
 		return true
 	}
 
@@ -176,6 +514,7 @@ func isSkeletonFile(rel string) bool {
 	for _, dir := range []string{
 		"pkg/pb/gen/openapiv3/",
 		"pkg/pb/gen/milton_prism/types/token/",
+		"pkg/pb/gen/milton_prism/types/articles/",
 		"pkg/pb/gen/milton_prism/types/pagination/",
 		"pkg/pb/gen/milton_prism/types/query_params/",
 	} {
@@ -217,6 +556,263 @@ func isSkeletonFile(rel string) bool {
 		if strings.HasPrefix(rel, dir) && strings.HasSuffix(rel, ".go") {
 			return true
 		}
+	}
+
+	return false
+}
+
+// ── Python profile skeleton filters ─────────────────────────────────────────
+
+// skipDirPython returns true for directories that should be skipped entirely
+// when assembling a Python deliverable. It prunes the whole Go monorepo
+// (core/, pkg/, api-gateway/), all proto source trees, the generated python
+// subtrees (python/services, python/gen — these arrive via artifacts), and
+// every Python cache/junk dir.
+func skipDirPython(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a Python deliverable.
+		"core", "pkg", "api-gateway",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFilePython.
+		"protobuf/proto",
+		// Generated Python artifacts arrive via the artifacts list, not skeleton.
+		"python/services", "python/gen",
+		// Python cache / junk dirs anywhere under python/.
+		"python/.ruff_cache", "python/.pytest_cache",
+		"python/.import_linter_cache", "python/.mypy_cache",
+		"python/.coverage", "python/.venv", "python/__pycache__",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any __pycache__ / cache dir at any depth under python/shared etc.
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "__pycache__", ".ruff_cache", ".pytest_cache",
+		".import_linter_cache", ".mypy_cache", ".venv":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFilePython returns true when the file at rel belongs in the Python
+// deliverable skeleton. It admits ONLY the shared Python scaffolding under
+// python/ plus the neutral buf configs. No Go file can pass this filter: every
+// admitted path is rooted at python/ or is an explicit non-Go buf config.
+func isSkeletonFilePython(rel string) bool {
+	// Hard exclude: never emit Go or Go-tree files in a Python deliverable.
+	if strings.HasSuffix(rel, ".go") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// Never re-emit cache/junk files (defensive; dirs are pruned in skipDir).
+	if strings.HasSuffix(rel, ".pyc") {
+		return false
+	}
+
+	// ── Neutral buf config files (Go gen config buf.go.gen.yaml is excluded) ──
+	switch rel {
+	case "protobuf/buf.yaml", "protobuf/buf.docs.gen.yaml",
+		"protobuf/buf.deliverable.openapi.yaml":
+		return true
+	}
+
+	// ── Top-level shared Python scaffolding ─────────────────────────────────
+	switch rel {
+	case "python/__init__.py",
+		"python/conftest.py",
+		"python/pyproject.toml",
+		"python/poetry.lock",
+		"python/.importlinter":
+		return true
+	}
+
+	// ── python/shared/**/*.py and python/scripts/*.py ───────────────────────
+	if strings.HasPrefix(rel, "python/shared/") && strings.HasSuffix(rel, ".py") {
+		return true
+	}
+	if strings.HasPrefix(rel, "python/scripts/") && strings.HasSuffix(rel, ".py") {
+		return true
+	}
+
+	return false
+}
+
+// ── Node (TypeScript) profile skeleton filters ───────────────────────────────
+
+// skipDirNode returns true for directories that should be skipped entirely when
+// assembling a Node deliverable. The monorepo has NO node/ skeleton tree: a Node
+// deliverable is built entirely from generated artifacts (the agent writes a
+// complete TS workspace under node/) plus the neutral buf configs at protobuf/
+// root. So this prunes the whole Go monorepo (core/, pkg/, api-gateway/), the
+// whole Python tree (python/), all proto source trees, and repo-wide noise.
+func skipDirNode(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a Node deliverable.
+		"core", "pkg", "api-gateway",
+		// Entire Python tree — never in a Node deliverable.
+		"python",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFileNode.
+		"protobuf/proto",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any node_modules / cache dir at any depth (defensive).
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "node_modules", "dist", ".turbo", "coverage":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFileNode returns true when the file at rel belongs in the Node
+// deliverable skeleton. It admits ONLY the neutral buf configs at protobuf/
+// root — there is no node/ source skeleton in the monorepo. No Go or Python
+// file can pass this filter: every admitted path is an explicit non-code buf
+// config. All TypeScript source, package.json, tsconfig, and protos arrive via
+// the generated artifacts list, never from the repo skeleton.
+func isSkeletonFileNode(rel string) bool {
+	// Hard exclude: never emit Go or Python files in a Node deliverable.
+	if strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, ".py") ||
+		strings.HasSuffix(rel, ".pyc") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// ── Neutral buf config files (Go gen config buf.go.gen.yaml is excluded) ──
+	switch rel {
+	case "protobuf/buf.yaml", "protobuf/buf.docs.gen.yaml",
+		"protobuf/buf.deliverable.openapi.yaml":
+		return true
+	}
+
+	return false
+}
+
+// isCargoBuildArtifact reports whether p is cargo build output (a target/ tree
+// entry), the cargo home / crate registry (.cargo/, registry/, .rustup/), a
+// compiled rust artifact (.rlib/.rmeta), or the Cargo.lock lockfile — none of
+// which belong in a Rust deliverable. The "target/" check matches a target
+// segment at any depth (rust/target/…, rust/services/user/target/…), and the
+// lockfile is matched by base name.
+//
+// DEFECT 4 defence-in-depth: mig38 persisted 8552 .cargo/registry artifacts
+// (cargo's CARGO_HOME resolved inside the agent workspace, so `cargo build`
+// downloaded every crate's source under .cargo/registry/src/…). The collector
+// fix drops these at capture time going forward; this guard ALSO drops any
+// already-persisted ones at assembly, so the deliverable ZIP for mig38 (and any
+// pre-fix Rust migration) ships only real generated source.
+func isCargoBuildArtifact(p string) bool {
+	p = strings.TrimPrefix(p, "rust/")
+	if p == "Cargo.lock" || strings.HasSuffix(p, "/Cargo.lock") {
+		return true
+	}
+	if p == "target" || strings.HasPrefix(p, "target/") || strings.Contains(p, "/target/") {
+		return true
+	}
+	if strings.HasSuffix(p, ".rlib") || strings.HasSuffix(p, ".rmeta") ||
+		strings.HasSuffix(p, ".rs.bk") {
+		return true
+	}
+	// Cargo home / rustup home at any depth: match by path SEGMENT. The whole
+	// crate registry lives UNDER .cargo (.cargo/registry/{index,src,cache}/…), so
+	// the .cargo segment alone covers it. A bare "registry" segment is NOT matched
+	// here on purpose: a legitimate generated service could be named "registry"
+	// (rust/services/registry/…), and dropping it would corrupt the deliverable.
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case ".cargo", ".rustup", ".fingerprint",
+			".package-cache", ".package-cache-mutate", "CACHEDIR.TAG":
+			return true
+		}
+	}
+	return false
+}
+
+// ── Rust (Tonic) profile skeleton filters ────────────────────────────────────
+
+// skipDirRust returns true for directories that should be skipped entirely when
+// assembling a Rust deliverable. The monorepo has NO rust/ skeleton tree: a Rust
+// deliverable is built entirely from generated artifacts (the agent writes a
+// complete Cargo workspace under rust/) plus the neutral buf configs at
+// protobuf/ root. So this prunes the whole Go monorepo (core/, pkg/,
+// api-gateway/), the whole Python tree (python/), all proto source trees, and
+// repo-wide noise.
+func skipDirRust(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a Rust deliverable.
+		"core", "pkg", "api-gateway",
+		// Entire Python tree — never in a Rust deliverable.
+		"python",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFileRust.
+		"protobuf/proto",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any cargo build output / cache dir at any depth (defensive).
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "target", "node_modules":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFileRust returns true when the file at rel belongs in the Rust
+// deliverable skeleton. It admits ONLY the neutral buf configs at protobuf/
+// root — there is no rust/ source skeleton in the monorepo. No Go, Python or
+// Node file can pass this filter: every admitted path is an explicit non-code
+// buf config. All Rust source, Cargo.toml, build.rs, and protos arrive via the
+// generated artifacts list, never from the repo skeleton.
+func isSkeletonFileRust(rel string) bool {
+	// Hard exclude: never emit Go, Python or Node files in a Rust deliverable.
+	if strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, ".py") ||
+		strings.HasSuffix(rel, ".pyc") || strings.HasSuffix(rel, ".ts") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// ── Neutral buf config files (Go gen config buf.go.gen.yaml is excluded) ──
+	switch rel {
+	case "protobuf/buf.yaml", "protobuf/buf.docs.gen.yaml",
+		"protobuf/buf.deliverable.openapi.yaml":
+		return true
 	}
 
 	return false

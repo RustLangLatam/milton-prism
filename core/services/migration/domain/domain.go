@@ -78,6 +78,7 @@ const (
 	TargetDatabaseMongoDB            = migrationv1.TargetDatabase_TARGET_DATABASE_MONGODB
 	TransportUnspecified             = migrationv1.Transport_TRANSPORT_UNSPECIFIED
 	TransportGRPC                    = migrationv1.Transport_TRANSPORT_GRPC
+	TransportHTTP                    = migrationv1.Transport_TRANSPORT_HTTP
 	OutputTargetUnspecified          = migrationv1.OutputTarget_OUTPUT_TARGET_UNSPECIFIED
 	OutputTargetNewBranch            = migrationv1.OutputTarget_OUTPUT_TARGET_NEW_BRANCH
 	OutputTargetNewRepository        = migrationv1.OutputTarget_OUTPUT_TARGET_NEW_REPOSITORY
@@ -90,16 +91,65 @@ const (
 // generator profile (profile doc + generator prompt + reference monorepo). It is
 // the single source of truth for the CreateMigration guard and must stay in
 // lockstep with outputProfileLabel/generatorPromptRef in the application layer.
-// Node and Rust are intentionally excluded — their enum values exist but their
-// generators are holes, so a migration targeting them must be rejected rather
-// than silently emit Go.
+// Node (TypeScript + gRPC) and Rust (Tonic + gRPC) are filled profiles: profile
+// doc + generator prompt + assembler skeleton/rename, each certified by a real
+// containerised run. Any future enum value without a real generator profile must
+// be left out of this map so a migration targeting it is rejected rather than
+// silently emitting Go.
 var generableTargetLanguages = map[TargetLanguage]struct{}{
 	TargetLanguageGo:     {},
 	TargetLanguagePython: {},
+	TargetLanguageNode:   {},
+	TargetLanguageRust:   {},
 }
 
 // IsGenerableLanguage reports whether lang has a code generator profile today.
 func IsGenerableLanguage(lang TargetLanguage) bool {
 	_, ok := generableTargetLanguages[lang]
+	return ok
+}
+
+// supportedProtocolByLanguage is the single source of truth for the (language,
+// transport) generation matrix — the PROTOCOL axis, orthogonal to language and
+// topology. A cell present here means the generator can emit that language over
+// that transport (profile doc + generator prompt + assembler behaviour exist and
+// are certified). It MUST stay in lockstep with generatorPromptRef /
+// promptProfileBindings in the application + worker layers (each transport that
+// is enabled here needs a prompt selected by (profile, transport)).
+//
+// State: every generable language supports BOTH gRPC and HTTP — the HTTP matrix
+// is complete (Go + HTTP, Python + HTTP FastAPI-native, Node + HTTP Fastify-native
+// and Rust + HTTP axum-native), each a certified cell (profile doc + generator
+// prompt + assembler behaviour + real containerised run). Any new cell must be
+// added here AND given a prompt + assembler handling in lockstep.
+var supportedProtocolByLanguage = map[TargetLanguage]map[Transport]struct{}{
+	TargetLanguageGo: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguagePython: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguageNode: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguageRust: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+}
+
+// IsGenerableProtocol reports whether the generator can emit lang over transport
+// today. The caller is expected to canonicalise TRANSPORT_UNSPECIFIED to
+// TRANSPORT_GRPC before calling (mirror of how topology is canonicalised). A
+// non-generable language always returns false regardless of transport.
+func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
+	transports, ok := supportedProtocolByLanguage[lang]
+	if !ok {
+		return false
+	}
+	_, ok = transports[transport]
 	return ok
 }

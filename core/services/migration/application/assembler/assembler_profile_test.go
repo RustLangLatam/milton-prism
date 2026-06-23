@@ -1,0 +1,1007 @@
+package assembler
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// writeFixture writes content to root/rel, creating parent dirs. It is used to
+// build a tiny on-disk monorepo skeleton mirroring both the Go and Python trees.
+func writeFixture(t *testing.T, root, rel, content string) {
+	t.Helper()
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", rel, err)
+	}
+	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+// buildSkeletonFixture lays down a representative slice of the real monorepo:
+// Go scaffolding (go.mod, core/shared, pkg/gateway), buf configs, and the
+// Python tree (shared, scripts, top-level files) plus Python cache junk.
+func buildSkeletonFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+
+	// ── Go scaffolding ──
+	writeFixture(t, root, "go.mod", "module milton_prism\n")
+	writeFixture(t, root, "go.sum", "h1:abc\n")
+	writeFixture(t, root, "Makefile", "all:\n\techo go\n")
+	writeFixture(t, root, "core/shared/auth_token/token.go", "package auth_token\n")
+	writeFixture(t, root, "core/internal/foo/foo.go", "package foo\n")
+	writeFixture(t, root, "pkg/gateway/server.go", "package gateway\n")
+	writeFixture(t, root, "pkg/gateway/common/error/user_errors.go", "package error\n")
+	// Platform-only subtree that must be skipped in Go profile.
+	writeFixture(t, root, "core/services/user/wire.go", "package user\n")
+
+	// ── buf configs ──
+	writeFixture(t, root, "protobuf/buf.yaml", "version: v1\n")
+	writeFixture(t, root, "protobuf/buf.go.gen.yaml", "version: v1\n")
+	writeFixture(t, root, "protobuf/buf.docs.gen.yaml", "version: v1\n")
+
+	// ── Python tree ──
+	writeFixture(t, root, "python/__init__.py", "")
+	writeFixture(t, root, "python/conftest.py", "import pytest\n")
+	writeFixture(t, root, "python/pyproject.toml", "[tool.poetry]\n")
+	writeFixture(t, root, "python/poetry.lock", "# lock\n")
+	writeFixture(t, root, "python/.importlinter", "[importlinter]\n")
+	writeFixture(t, root, "python/shared/__init__.py", "")
+	writeFixture(t, root, "python/shared/config/config.py", "class Config: ...\n")
+	writeFixture(t, root, "python/shared/auth/token.py", "def verify(): ...\n")
+	writeFixture(t, root, "python/scripts/gen_proto.py", "def main(): ...\n")
+	writeFixture(t, root, "python/scripts/__init__.py", "")
+	// Python cache / junk + generated subtrees that must NOT appear.
+	writeFixture(t, root, "python/.coverage", "binary")
+	writeFixture(t, root, "python/__pycache__/x.pyc", "binary")
+	writeFixture(t, root, "python/shared/__pycache__/config.pyc", "binary")
+	writeFixture(t, root, "python/.ruff_cache/cache", "junk")
+	writeFixture(t, root, "python/.mypy_cache/cache", "junk")
+	writeFixture(t, root, "python/services/user/domain.py", "class User: ...\n")
+	writeFixture(t, root, "python/gen/foo_pb2.py", "# generated\n")
+
+	// ── Repo noise that must be skipped in both profiles ──
+	writeFixture(t, root, ".git/config", "[core]\n")
+	writeFixture(t, root, "infra/build.sh", "#!/bin/sh\n")
+	writeFixture(t, root, "docs/readme.md", "# docs\n")
+
+	return root
+}
+
+// pathSet returns the set of paths in the assembled output for easy membership
+// assertions.
+func pathSet(files []File) map[string]bool {
+	m := make(map[string]bool, len(files))
+	for _, f := range files {
+		m[f.Path] = true
+	}
+	return m
+}
+
+// TestAssemble_GoProfile_UnchangedBehavior proves the Go profile (and the empty
+// default) still bundles go.mod and core/shared Go files, and never leaks the
+// python/ tree or its junk — i.e. the certified Go deliverable does not regress.
+func TestAssemble_GoProfile_UnchangedBehavior(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	for _, profile := range []string{"go", ""} {
+		a := New(root, false, profile, "grpc")
+		files, err := a.Assemble(nil)
+		if err != nil {
+			t.Fatalf("profile %q: Assemble: %v", profile, err)
+		}
+		set := pathSet(files)
+
+		// MUST contain the Go skeleton.
+		for _, want := range []string{
+			"go.mod", "go.sum", "Makefile",
+			"core/shared/auth_token/token.go",
+			"core/internal/foo/foo.go",
+			"pkg/gateway/server.go",
+			"pkg/gateway/common/error/user_errors.go",
+			"protobuf/buf.yaml",
+			"protobuf/buf.go.gen.yaml",
+		} {
+			if !set[want] {
+				t.Errorf("profile %q: missing expected Go file %q", profile, want)
+			}
+		}
+
+		// MUST NOT contain any python/ path or its junk.
+		for p := range set {
+			if strings.HasPrefix(p, "python/") {
+				t.Errorf("profile %q: Go deliverable leaked python path %q", profile, p)
+			}
+		}
+		// core/services is platform-only; skipped in Go profile.
+		if set["core/services/user/wire.go"] {
+			t.Errorf("profile %q: leaked platform core/services file", profile)
+		}
+	}
+}
+
+// TestAssemble_GoHTTP_ExcludesGatewayExceptCommonError proves the Go HTTP-native
+// deliverable drops the pkg/gateway/ subtree (an HTTP service is its own entry
+// point and never wires the gRPC gateway) BUT keeps pkg/gateway/common/error/
+// (pure error maps the REST handlers reuse). The rest of the Go skeleton is
+// unchanged versus the gRPC deliverable.
+func TestAssemble_GoHTTP_ExcludesGatewayExceptCommonError(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "go", "http")
+	files, err := a.Assemble(nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// pkg/gateway/ runtime code MUST be excluded.
+	if set["pkg/gateway/server.go"] {
+		t.Errorf("Go HTTP deliverable leaked gateway runtime file pkg/gateway/server.go")
+	}
+	// pkg/gateway/common/error/ MUST be kept (reused by REST handlers).
+	if !set["pkg/gateway/common/error/user_errors.go"] {
+		t.Errorf("Go HTTP deliverable dropped pkg/gateway/common/error (must be kept)")
+	}
+	// The rest of the Go skeleton is unchanged.
+	for _, want := range []string{
+		"go.mod", "go.sum", "Makefile",
+		"core/shared/auth_token/token.go",
+		"core/internal/foo/foo.go",
+		"protobuf/buf.yaml",
+	} {
+		if !set[want] {
+			t.Errorf("Go HTTP deliverable missing expected file %q", want)
+		}
+	}
+	// Defence-in-depth: no other pkg/gateway/ path besides common/error survived.
+	for p := range set {
+		if strings.HasPrefix(p, "pkg/gateway/") && !strings.HasPrefix(p, "pkg/gateway/common/error/") {
+			t.Errorf("Go HTTP deliverable leaked gateway path %q", p)
+		}
+	}
+}
+
+// TestAssemble_GoProfile_ByteIdenticalToBaseline proves the new dispatch layer
+// produces a byte-identical output to a direct call through the original
+// package-level Go filters — no behavioral drift was introduced.
+func TestAssemble_GoProfile_ByteIdentical(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "go", "grpc")
+	got, err := a.Assemble(nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	// Recompute the expected skeleton walking the SAME root with the original
+	// package-level skipDir/isSkeletonFile predicates directly (the pre-change
+	// code path), then run the identical merge+post-steps via a fresh assembler.
+	want := make(map[string][]byte)
+	if err := filepath.WalkDir(root, func(abs string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, abs)
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if skipDir(rel) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isSkeletonFile(rel) {
+			return nil
+		}
+		c, rerr := os.ReadFile(abs)
+		if rerr != nil {
+			return rerr
+		}
+		want[rel] = c
+		return nil
+	}); err != nil {
+		t.Fatalf("baseline walk: %v", err)
+	}
+	// Apply the same Go post-steps over a copy.
+	if err := generateConfigExamples(want); err != nil {
+		t.Fatalf("baseline config examples: %v", err)
+	}
+	if err := generateServiceMakefiles(want); err != nil {
+		t.Fatalf("baseline makefiles: %v", err)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("file count drift: got %d want %d", len(got), len(want))
+	}
+	for _, f := range got {
+		wc, ok := want[f.Path]
+		if !ok {
+			t.Errorf("unexpected path in new output: %q", f.Path)
+			continue
+		}
+		if string(f.Content) != string(wc) {
+			t.Errorf("content drift for %q", f.Path)
+		}
+	}
+}
+
+// TestAssemble_PythonProfile proves the Python profile bundles ONLY Python
+// shared scaffolding + protos and contains zero Go / go.mod / Makefile / core
+// / pkg files and no Python junk. Generated artifacts (python/services, protos)
+// merge on top and survive.
+func TestAssemble_PythonProfile(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true /* useApiGateway ignored for python */, "python", "grpc")
+
+	artifacts := []InputFile{
+		{Path: "python/services/user/domain/user.py", Content: "class User: ...\n"},
+		{Path: "python/gen/milton_prism/user_pb2.py", Content: "# generated proto\n"},
+		{Path: "protobuf/proto/user/v1/user.proto", Content: "syntax = \"proto3\";\n"},
+		// The __pipeline__ aggregator emits a Go gateway error map even for Python
+		// migrations; it must be filtered out of a Python deliverable (the "no .go"
+		// assertion below proves the artifact-level guard drops it).
+		{Path: "pkg/gateway/common/error/message_error.go", Content: "package message_error\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// MUST contain the shared Python scaffolding + neutral buf config. The source
+	// root dir is renamed python/ → core/ to homologate with the Go layout, so the
+	// Python files land under core/ (imports are top-level and unaffected). Protos
+	// stay under protobuf/.
+	for _, want := range []string{
+		"core/__init__.py",
+		"core/conftest.py",
+		"core/pyproject.toml",
+		"core/poetry.lock",
+		"core/.importlinter",
+		"core/shared/__init__.py",
+		"core/shared/config/config.py",
+		"core/shared/auth/token.py",
+		"core/scripts/gen_proto.py",
+		"protobuf/buf.yaml",
+		// Generated artifacts merge on top and survive (also rewritten to core/).
+		"core/services/user/domain/user.py",
+		"core/gen/milton_prism/user_pb2.py",
+		"protobuf/proto/user/v1/user.proto",
+	} {
+		if !set[want] {
+			t.Errorf("python deliverable missing expected file %q", want)
+		}
+	}
+	// No path may remain under python/ after the rename.
+	for p := range set {
+		if p == "python" || strings.HasPrefix(p, "python/") {
+			t.Errorf("python deliverable still has un-renamed python/ path %q", p)
+		}
+	}
+
+	// MUST NOT contain any Go file, go.mod/go.sum/Makefile, or Go service/gateway trees.
+	for p := range set {
+		if strings.HasSuffix(p, ".go") {
+			t.Errorf("python deliverable leaked Go file %q", p)
+		}
+		switch p {
+		case "go.mod", "go.sum", "Makefile":
+			t.Errorf("python deliverable leaked %q", p)
+		}
+		// core/ is now the Python source root (valid); pkg/ and api-gateway/ are Go-only.
+		if strings.HasPrefix(p, "pkg/") || strings.HasPrefix(p, "api-gateway/") {
+			t.Errorf("python deliverable leaked Go-tree path %q", p)
+		}
+		// Go-only buf gen config must be excluded.
+		if p == "protobuf/buf.go.gen.yaml" {
+			t.Errorf("python deliverable leaked Go-only buf config %q", p)
+		}
+		// No Python junk/cache.
+		if strings.Contains(p, "__pycache__") || strings.HasSuffix(p, ".pyc") ||
+			strings.Contains(p, ".ruff_cache") || strings.Contains(p, ".mypy_cache") ||
+			strings.HasSuffix(p, "/.coverage") || p == "python/.coverage" {
+			t.Errorf("python deliverable leaked cache/junk %q", p)
+		}
+	}
+}
+
+// TestAssemble_PythonHTTP_ExcludesGRPCBootstrap proves the Python HTTP-native
+// (FastAPI) deliverable drops the gRPC server bootstrap (__main__ that calls
+// grpc.aio.server / add_*Servicer_to_server) and the runtime gRPC proto stubs
+// (*_pb2_grpc.py), while keeping the FastAPI app, its uvicorn __main__, the
+// pydantic models, the pure message stubs (*_pb2.py), the shared scaffolding and
+// the protos. It is the Python homologue of the Go-HTTP gateway-exclusion test.
+func TestAssemble_PythonHTTP_ExcludesGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "python", "http")
+
+	artifacts := []InputFile{
+		// FastAPI app + uvicorn entrypoint — MUST survive.
+		{Path: "python/services/user/main.py", Content: "from fastapi import FastAPI\napp = FastAPI()\n"},
+		{Path: "python/services/user/__main__.py", Content: "import uvicorn\nuvicorn.run(\"services.user.main:app\")\n"},
+		{Path: "python/services/user/infrastructure/http/router.py", Content: "from fastapi import APIRouter\nrouter = APIRouter()\n"},
+		{Path: "python/services/user/domain/user.py", Content: "from pydantic import BaseModel\nclass User(BaseModel): ...\n"},
+		// Pure message stub — kept (only *_pb2_grpc.py is dropped).
+		{Path: "python/gen/milton_prism/user_pb2.py", Content: "# generated proto messages\n"},
+		// gRPC-specific artifacts — MUST be dropped.
+		{Path: "python/gen/milton_prism/user_pb2_grpc.py", Content: "# generated grpc stub\n"},
+		{Path: "python/services/legacy/__main__.py", Content: "import grpc\nserver = grpc.aio.server()\nadd_UserServicer_to_server(svc, server)\n"},
+		{Path: "protobuf/proto/milton_prism/services/user/v1/user_service.proto", Content: "syntax = \"proto3\";\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// FastAPI app, uvicorn __main__, router, pydantic model, pure message stub and
+	// proto survive (python/ → core/ rename applies to the source tree).
+	for _, want := range []string{
+		"core/services/user/main.py",
+		"core/services/user/__main__.py",
+		"core/services/user/infrastructure/http/router.py",
+		"core/services/user/domain/user.py",
+		"core/gen/milton_prism/user_pb2.py",
+		"protobuf/proto/milton_prism/services/user/v1/user_service.proto",
+	} {
+		if !set[want] {
+			t.Errorf("python-http deliverable missing expected file %q", want)
+		}
+	}
+
+	// The gRPC stub and the gRPC server bootstrap must be absent.
+	for _, gone := range []string{
+		"core/gen/milton_prism/user_pb2_grpc.py",
+		"core/services/legacy/__main__.py",
+	} {
+		if set[gone] {
+			t.Errorf("python-http deliverable leaked gRPC artifact %q", gone)
+		}
+	}
+
+	// Defence: no *_pb2_grpc.py at any path, and no surviving .py carrying a gRPC
+	// server bootstrap.
+	for p := range set {
+		if strings.HasSuffix(p, "_pb2_grpc.py") {
+			t.Errorf("python-http deliverable leaked grpc stub %q", p)
+		}
+	}
+}
+
+// TestAssemble_PythonGRPC_KeepsGRPCBootstrap proves the gRPC exclusion is scoped to
+// the HTTP cell: a Python + gRPC deliverable keeps its __main__ gRPC server and
+// *_pb2_grpc.py stubs (no regression to the certified Python gRPC cell).
+func TestAssemble_PythonGRPC_KeepsGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "python", "grpc")
+	artifacts := []InputFile{
+		{Path: "python/services/user/__main__.py", Content: "import grpc\nserver = grpc.aio.server()\nadd_UserServicer_to_server(svc, server)\n"},
+		{Path: "python/gen/milton_prism/user_pb2_grpc.py", Content: "# generated grpc stub\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+	for _, want := range []string{
+		"core/services/user/__main__.py",
+		"core/gen/milton_prism/user_pb2_grpc.py",
+	} {
+		if !set[want] {
+			t.Errorf("python-grpc deliverable dropped %q (HTTP exclusion leaked into gRPC cell)", want)
+		}
+	}
+}
+
+// TestAssemble_NodeHTTP_ExcludesGRPCBootstrap proves the Node HTTP-native
+// (Fastify) deliverable drops the gRPC server bootstrap (main that calls
+// new Server() / .addService over @grpc/grpc-js) and the runtime gRPC proto stubs
+// (*_grpc_pb.{ts,js,d.ts}), while keeping the Fastify app, its listen main.ts, the
+// TS domain types, the shared scaffolding and the protos. It is the Node homologue
+// of the Python-HTTP gRPC-bootstrap-exclusion test.
+func TestAssemble_NodeHTTP_ExcludesGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "node", "http")
+
+	artifacts := []InputFile{
+		// Fastify app + listen entrypoint — MUST survive.
+		{Path: "node/services/user/infrastructure/http/app.ts", Content: "import Fastify from 'fastify'\nexport const createApp = () => Fastify()\n"},
+		{Path: "node/services/user/main.ts", Content: "import { buildApp } from './wire'\nbuildApp().listen({ port: 8080 })\n"},
+		{Path: "node/services/user/infrastructure/http/user_routes.ts", Content: "export const registerUserRoutes = (app: any) => app.get('/v1/users', () => {})\n"},
+		{Path: "node/services/user/domain/user.ts", Content: "export interface User { identifier: string }\n"},
+		// gRPC-specific artifacts — MUST be dropped.
+		{Path: "node/gen/milton_prism/user_grpc_pb.ts", Content: "// generated grpc stub\n"},
+		{Path: "node/services/legacy/main.ts", Content: "import { Server } from '@grpc/grpc-js'\nconst server = new Server()\nserver.addService(def, impl)\n"},
+		{Path: "protobuf/proto/milton_prism/services/user/v1/user_service.proto", Content: "syntax = \"proto3\";\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// Fastify app, listen main, routes, TS domain type and proto survive
+	// (node/ → core/ rename applies to the source tree).
+	for _, want := range []string{
+		"core/services/user/infrastructure/http/app.ts",
+		"core/services/user/main.ts",
+		"core/services/user/infrastructure/http/user_routes.ts",
+		"core/services/user/domain/user.ts",
+		"protobuf/proto/milton_prism/services/user/v1/user_service.proto",
+	} {
+		if !set[want] {
+			t.Errorf("node-http deliverable missing expected file %q", want)
+		}
+	}
+
+	// The gRPC stub and the gRPC server bootstrap must be absent.
+	for _, gone := range []string{
+		"core/gen/milton_prism/user_grpc_pb.ts",
+		"core/services/legacy/main.ts",
+	} {
+		if set[gone] {
+			t.Errorf("node-http deliverable leaked gRPC artifact %q", gone)
+		}
+	}
+
+	// Defence: no *_grpc_pb at any path.
+	for p := range set {
+		if strings.Contains(p, "_grpc_pb") {
+			t.Errorf("node-http deliverable leaked grpc stub %q", p)
+		}
+	}
+}
+
+// TestAssemble_NodeGRPC_KeepsGRPCBootstrap proves the gRPC exclusion is scoped to
+// the HTTP cell: a Node + gRPC deliverable keeps its main gRPC server and
+// *_grpc_pb stubs (no regression to the certified Node gRPC cell).
+func TestAssemble_NodeGRPC_KeepsGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "node", "grpc")
+	artifacts := []InputFile{
+		{Path: "node/services/user/main.ts", Content: "import { Server } from '@grpc/grpc-js'\nconst server = new Server()\nserver.addService(def, impl)\n"},
+		{Path: "node/gen/milton_prism/user_grpc_pb.ts", Content: "// generated grpc stub\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+	for _, want := range []string{
+		"core/services/user/main.ts",
+		"core/gen/milton_prism/user_grpc_pb.ts",
+	} {
+		if !set[want] {
+			t.Errorf("node-grpc deliverable dropped %q (HTTP exclusion leaked into gRPC cell)", want)
+		}
+	}
+}
+
+// TestAssemble_RustHTTP_ExcludesGRPCBootstrap proves the Rust HTTP-native (axum)
+// deliverable drops the tonic gRPC server bootstrap (a main/wire that calls
+// tonic::transport::Server / .add_service) and the tonic generated-service trait
+// impl (anything under infrastructure/grpc/), while keeping the axum app, its
+// serve main.rs, the Rust domain structs, the shared scaffolding and the protos.
+// It is the Rust homologue of the Node/Python-HTTP gRPC-bootstrap-exclusion tests.
+func TestAssemble_RustHTTP_ExcludesGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "rust", "http")
+
+	artifacts := []InputFile{
+		// axum app + serve entrypoint — MUST survive (no tonic call).
+		{Path: "rust/services/user/src/infrastructure/http/routes.rs", Content: "use axum::Router;\npub fn router() -> Router { Router::new() }\n"},
+		{Path: "rust/services/user/src/main.rs", Content: "#[tokio::main]\nasync fn main() { axum::serve(listener, app).await.unwrap(); }\n"},
+		{Path: "rust/services/user/src/domain/mod.rs", Content: "pub struct User { pub identifier: i64 }\n"},
+		{Path: "rust/Cargo.toml", Content: "[workspace]\nmembers = [\"shared\", \"services/*\"]\n"},
+		{Path: "rust/services/user/Cargo.toml", Content: "[package]\nname = \"user\"\n"},
+		// tonic-specific artifacts — MUST be dropped.
+		{Path: "rust/services/user/src/infrastructure/grpc/mod.rs", Content: "// tonic generated-service trait impl\n"},
+		{Path: "rust/services/legacy/src/main.rs", Content: "use tonic::transport::Server;\nServer::builder().add_service(svc).serve(addr).await;\n"},
+		{Path: "protobuf/proto/milton_prism/services/user/v1/user_service.proto", Content: "syntax = \"proto3\";\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// axum app, serve main, domain struct and proto survive (rust/ → core/ rename).
+	for _, want := range []string{
+		"core/services/user/src/infrastructure/http/routes.rs",
+		"core/services/user/src/main.rs",
+		"core/services/user/src/domain/mod.rs",
+		"protobuf/proto/milton_prism/services/user/v1/user_service.proto",
+	} {
+		if !set[want] {
+			t.Errorf("rust-http deliverable missing expected file %q", want)
+		}
+	}
+
+	// The tonic grpc handler dir and the tonic server bootstrap must be absent.
+	for _, gone := range []string{
+		"core/services/user/src/infrastructure/grpc/mod.rs",
+		"core/services/legacy/src/main.rs",
+	} {
+		if set[gone] {
+			t.Errorf("rust-http deliverable leaked tonic gRPC artifact %q", gone)
+		}
+	}
+
+	// Defence: no /infrastructure/grpc/ path survives.
+	for p := range set {
+		if strings.Contains(p, "/infrastructure/grpc/") {
+			t.Errorf("rust-http deliverable leaked tonic grpc dir %q", p)
+		}
+	}
+}
+
+// TestAssemble_RustGRPC_KeepsGRPCBootstrap proves the tonic exclusion is scoped to
+// the HTTP cell: a Rust + gRPC deliverable keeps its tonic server main and the
+// infrastructure/grpc/ handler (no regression to the certified Rust gRPC cell).
+func TestAssemble_RustGRPC_KeepsGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "rust", "grpc")
+	artifacts := []InputFile{
+		{Path: "rust/services/user/src/main.rs", Content: "use tonic::transport::Server;\nServer::builder().add_service(svc).serve(addr).await;\n"},
+		{Path: "rust/services/user/src/infrastructure/grpc/mod.rs", Content: "// tonic servicer impl\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+	for _, want := range []string{
+		"core/services/user/src/main.rs",
+		"core/services/user/src/infrastructure/grpc/mod.rs",
+	} {
+		if !set[want] {
+			t.Errorf("rust-grpc deliverable dropped %q (HTTP exclusion leaked into gRPC cell)", want)
+		}
+	}
+}
+
+// TestAssemble_PythonProfile_EnvExamplePerService proves the Python deliverable
+// ships a per-service .env.example (the pydantic homologue of Go's
+// config.toml.example) under core/services/<svc>/, carrying the MONGO_/GRPC_
+// placeholders that core/shared/config/loader.py reads — and that the Go
+// deliverable is unchanged (config.toml.example, never .env.example).
+func TestAssemble_PythonProfile_EnvExamplePerService(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "python", "grpc")
+	artifacts := []InputFile{
+		{Path: "python/services/user/__main__.py", Content: "cfg = 1\n"},
+		{Path: "python/services/user/domain/user.py", Content: "class User: ...\n"},
+		{Path: "python/services/order/__main__.py", Content: "cfg = 1\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// One .env.example per generated service, placed (after the python/→core/
+	// rename) alongside the service package — homologous to Go's per-service path.
+	for _, want := range []string{
+		"core/services/user/.env.example",
+		"core/services/order/.env.example",
+	} {
+		if !set[want] {
+			t.Errorf("python deliverable missing %q", want)
+		}
+	}
+	// No un-renamed python/ .env.example must survive.
+	for p := range set {
+		if strings.HasPrefix(p, "python/") {
+			t.Errorf("python deliverable still has un-renamed path %q", p)
+		}
+	}
+
+	// Each .env.example must carry the exact env var names loader.py declares,
+	// with placeholders and the copy-to-.env header. The first service gets the
+	// base port 50051; verify per-service db + port.
+	var userEnv string
+	for _, f := range files {
+		if f.Path == "core/services/user/.env.example" {
+			userEnv = string(f.Content)
+		}
+	}
+	for _, frag := range []string{
+		"copy this file to .env", // header (case-insensitive check below)
+		"MONGO_URI=",
+		"MONGO_DATABASE=user_db",
+		"GRPC_HOST=",
+		"GRPC_PORT=",
+		"GRPC_MAX_WORKERS=",
+		"JWT_SECRET=",
+	} {
+		if frag == "copy this file to .env" {
+			if !strings.Contains(strings.ToLower(userEnv), frag) {
+				t.Errorf("user .env.example missing header instruction %q; got:\n%s", frag, userEnv)
+			}
+			continue
+		}
+		if !strings.Contains(userEnv, frag) {
+			t.Errorf("user .env.example missing %q; got:\n%s", frag, userEnv)
+		}
+	}
+	// Must NOT leak real credentials (placeholders only).
+	for _, secret := range knownSecrets {
+		if strings.Contains(userEnv, secret) {
+			t.Errorf("user .env.example leaked known secret %q", secret)
+		}
+	}
+}
+
+// TestAssemble_GoProfile_NoEnvExample proves the Go deliverable still emits
+// config.toml.example per service and never a .env.example.
+func TestAssemble_GoProfile_NoEnvExample(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "go", "grpc")
+	artifacts := []InputFile{
+		{Path: "core/cmd/articles-services/main.go", Content: "package main\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	if !set["core/cmd/articles-services/config.toml.example"] {
+		t.Errorf("Go deliverable missing config.toml.example")
+	}
+	for p := range set {
+		if strings.HasSuffix(p, ".env.example") {
+			t.Errorf("Go deliverable leaked .env.example %q", p)
+		}
+	}
+}
+
+// TestAssemble_NodeProfile proves the Node profile bundles ONLY the generated
+// TypeScript artifacts (renamed node/→core/) plus the neutral buf configs and
+// protos, and contains ZERO Go (go.mod/Makefile/.go) and ZERO Python (.py) —
+// the monorepo has no node/ skeleton, so the whole Go and Python trees are
+// pruned. The __pipeline__ Go gateway error map artifact is dropped.
+func TestAssemble_NodeProfile(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true /* useApiGateway ignored for node */, "node", "grpc")
+
+	artifacts := []InputFile{
+		{Path: "node/package.json", Content: "{\"name\":\"deliverable\"}\n"},
+		{Path: "node/tsconfig.json", Content: "{\"compilerOptions\":{\"strict\":true}}\n"},
+		{Path: "node/shared/logging/index.ts", Content: "export const log = {};\n"},
+		{Path: "node/services/user/domain/domain.ts", Content: "export type User = unknown;\n"},
+		{Path: "node/services/user/index.ts", Content: "// server bootstrap\n"},
+		{Path: "node/gen/milton_prism/user.ts", Content: "// generated ts-proto\n"},
+		{Path: "protobuf/proto/user/v1/user.proto", Content: "syntax = \"proto3\";\n"},
+		// The __pipeline__ aggregator emits a Go gateway error map even for non-Go
+		// migrations; it must be dropped from a Node deliverable.
+		{Path: "pkg/gateway/common/error/message_error.go", Content: "package message_error\n"},
+		// A stray Python artifact must also never leak into a Node deliverable.
+		{Path: "node/services/user/legacy.py", Content: "x = 1\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// MUST contain the generated TS workspace, renamed node/→core/, plus protos
+	// and the neutral buf config.
+	for _, want := range []string{
+		"core/package.json",
+		"core/tsconfig.json",
+		"core/shared/logging/index.ts",
+		"core/services/user/domain/domain.ts",
+		"core/services/user/index.ts",
+		"core/gen/milton_prism/user.ts",
+		"protobuf/proto/user/v1/user.proto",
+		"protobuf/buf.yaml",
+	} {
+		if !set[want] {
+			t.Errorf("node deliverable missing expected file %q", want)
+		}
+	}
+	// No path may remain under node/ after the rename.
+	for p := range set {
+		if p == "node" || strings.HasPrefix(p, "node/") {
+			t.Errorf("node deliverable still has un-renamed node/ path %q", p)
+		}
+	}
+	// MUST NOT contain any Go or Python file, go.mod/go.sum/Makefile, or the
+	// Go/Python source trees, or the Go-only buf gen config.
+	for p := range set {
+		if strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".py") {
+			t.Errorf("node deliverable leaked non-TS source file %q", p)
+		}
+		switch p {
+		case "go.mod", "go.sum", "Makefile":
+			t.Errorf("node deliverable leaked %q", p)
+		}
+		if strings.HasPrefix(p, "pkg/") || strings.HasPrefix(p, "api-gateway/") {
+			t.Errorf("node deliverable leaked Go-tree path %q", p)
+		}
+		if p == "protobuf/buf.go.gen.yaml" {
+			t.Errorf("node deliverable leaked Go-only buf config %q", p)
+		}
+	}
+}
+
+// TestAssemble_NodeProfile_EnvExamplePerService proves the Node deliverable ships
+// a per-service .env.example (the TS homologue of Go's config.toml.example) under
+// core/services/<svc>/, carrying the MONGO_/GRPC_/JWT_SECRET placeholders.
+func TestAssemble_NodeProfile_EnvExamplePerService(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "node", "grpc")
+	artifacts := []InputFile{
+		{Path: "node/services/user/index.ts", Content: "// server\n"},
+		{Path: "node/services/order/index.ts", Content: "// server\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	for _, want := range []string{
+		"core/services/user/.env.example",
+		"core/services/order/.env.example",
+	} {
+		if !set[want] {
+			t.Errorf("node deliverable missing %q", want)
+		}
+	}
+	for p := range set {
+		if strings.HasPrefix(p, "node/") {
+			t.Errorf("node deliverable still has un-renamed path %q", p)
+		}
+	}
+
+	var userEnv string
+	for _, f := range files {
+		if f.Path == "core/services/user/.env.example" {
+			userEnv = string(f.Content)
+		}
+	}
+	for _, frag := range []string{
+		"MONGO_URI=",
+		"MONGO_DATABASE=user_db",
+		"GRPC_HOST=",
+		"GRPC_PORT=",
+		"JWT_SECRET=",
+	} {
+		if !strings.Contains(userEnv, frag) {
+			t.Errorf("user .env.example missing %q; got:\n%s", frag, userEnv)
+		}
+	}
+	if !strings.Contains(strings.ToLower(userEnv), "copy this file to .env") {
+		t.Errorf("user .env.example missing copy-to-.env header; got:\n%s", userEnv)
+	}
+	for _, secret := range knownSecrets {
+		if strings.Contains(userEnv, secret) {
+			t.Errorf("user .env.example leaked known secret %q", secret)
+		}
+	}
+}
+
+// TestAssemble_DocsOpenAPISurvives proves the pipeline-emitted docs/openapi.yaml
+// generated artifact lands in the deliverable for the Go, Python and Node
+// profiles, unchanged. For non-Go profiles this also guards that (a) the artifact
+// filter does NOT drop a docs/*.yaml file, and (b) the source-root rename leaves
+// docs/ alone.
+func TestAssemble_DocsOpenAPISurvives(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	const openapiBody = "openapi: 3.0.3\ninfo:\n  title: Deliverable\n"
+	artifacts := []InputFile{
+		{Path: "docs/openapi.yaml", Content: openapiBody},
+	}
+
+	for _, profile := range []string{"go", "", "python", "node", "rust"} {
+		a := New(root, false, profile, "grpc")
+		files, err := a.Assemble(artifacts)
+		if err != nil {
+			t.Fatalf("profile %q: Assemble: %v", profile, err)
+		}
+		var got string
+		var found bool
+		for _, f := range files {
+			if f.Path == "docs/openapi.yaml" {
+				found = true
+				got = string(f.Content)
+			}
+		}
+		if !found {
+			t.Fatalf("profile %q: docs/openapi.yaml missing from deliverable", profile)
+		}
+		if got != openapiBody {
+			t.Errorf("profile %q: docs/openapi.yaml content drift: got %q want %q", profile, got, openapiBody)
+		}
+		// The artifact path must never be rewritten to core/ by the Python rename.
+		set := pathSet(files)
+		if set["core/openapi.yaml"] {
+			t.Errorf("profile %q: docs/openapi.yaml was wrongly rewritten under core/", profile)
+		}
+	}
+}
+
+// TestAssemble_RustProfile proves the Rust profile bundles ONLY the generated
+// Rust artifacts (renamed rust/→core/) plus the neutral buf configs and protos,
+// and contains ZERO Go (go.mod/Makefile/.go), ZERO Python (.py) and ZERO Node
+// (.ts/package.json) — the monorepo has no rust/ skeleton, so the whole Go and
+// Python trees are pruned. The __pipeline__ Go gateway error map artifact and any
+// cargo target/ output are dropped.
+func TestAssemble_RustProfile(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true /* useApiGateway ignored for rust */, "rust", "grpc")
+
+	artifacts := []InputFile{
+		{Path: "rust/Cargo.toml", Content: "[workspace]\nmembers = [\"shared\", \"services/*\"]\n"},
+		{Path: "rust/shared/src/logging.rs", Content: "// logger\n"},
+		{Path: "rust/services/user/Cargo.toml", Content: "[package]\nname = \"user\"\n"},
+		{Path: "rust/services/user/build.rs", Content: "fn main() {}\n"},
+		{Path: "rust/services/user/src/main.rs", Content: "fn main() {}\n"},
+		{Path: "rust/services/user/src/domain/mod.rs", Content: "// domain\n"},
+		{Path: "protobuf/proto/user/v1/user.proto", Content: "syntax = \"proto3\";\n"},
+		// The __pipeline__ aggregator emits a Go gateway error map even for non-Go
+		// migrations; it must be dropped from a Rust deliverable.
+		{Path: "pkg/gateway/common/error/message_error.go", Content: "package message_error\n"},
+		// Stray Python/Node artifacts must never leak into a Rust deliverable.
+		{Path: "rust/services/user/legacy.py", Content: "x = 1\n"},
+		{Path: "rust/services/user/legacy.ts", Content: "export const x = 1;\n"},
+		{Path: "rust/package.json", Content: "{}\n"},
+		// Cargo build output must never be captured/carried.
+		{Path: "rust/target/debug/user", Content: "BINARY\n"},
+		// DEFECT 4: a pre-fix Rust migration persisted the whole cargo home /
+		// crate registry (CARGO_HOME resolved inside the workspace). Any such
+		// already-persisted .cargo/registry/.rustup artifact must be dropped at
+		// assembly so the deliverable ZIP carries only real generated source.
+		{Path: ".cargo/registry/src/index.crates.io-abc/tokio-1.40.0/src/lib.rs", Content: "// tokio\n"},
+		{Path: ".cargo/registry/index/index.crates.io-abc/.cache/3/h/hex", Content: "idx\n"},
+		{Path: ".cargo/.package-cache", Content: "lock\n"},
+		{Path: "rust/.cargo/config.toml", Content: "[registry]\n"},
+		{Path: ".rustup/toolchains/stable/lib/x.rs", Content: "// rustup\n"},
+		{Path: "rust/services/user/target/debug/deps/user.rlib", Content: "RLIB\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// MUST contain the generated Cargo workspace, renamed rust/→core/, plus protos
+	// and the neutral buf config.
+	for _, want := range []string{
+		"core/Cargo.toml",
+		"core/shared/src/logging.rs",
+		"core/services/user/Cargo.toml",
+		"core/services/user/build.rs",
+		"core/services/user/src/main.rs",
+		"core/services/user/src/domain/mod.rs",
+		"protobuf/proto/user/v1/user.proto",
+		"protobuf/buf.yaml",
+	} {
+		if !set[want] {
+			t.Errorf("rust deliverable missing expected file %q", want)
+		}
+	}
+	// No path may remain under rust/ after the rename.
+	for p := range set {
+		if p == "rust" || strings.HasPrefix(p, "rust/") {
+			t.Errorf("rust deliverable still has un-renamed rust/ path %q", p)
+		}
+	}
+	// MUST NOT contain any Go/Python/Node file, go.mod/go.sum/Makefile/package.json,
+	// the Go/Python source trees, the Go-only buf gen config, or cargo target/.
+	for p := range set {
+		if strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".py") || strings.HasSuffix(p, ".ts") {
+			t.Errorf("rust deliverable leaked non-Rust source file %q", p)
+		}
+		switch p {
+		case "go.mod", "go.sum", "Makefile", "package.json", "core/package.json":
+			t.Errorf("rust deliverable leaked %q", p)
+		}
+		if strings.HasPrefix(p, "pkg/") || strings.HasPrefix(p, "api-gateway/") {
+			t.Errorf("rust deliverable leaked Go-tree path %q", p)
+		}
+		if p == "protobuf/buf.go.gen.yaml" {
+			t.Errorf("rust deliverable leaked Go-only buf config %q", p)
+		}
+		if strings.Contains(p, "/target/") || strings.HasPrefix(p, "core/target/") {
+			t.Errorf("rust deliverable leaked cargo target/ path %q", p)
+		}
+		// DEFECT 4: no cargo home / crate registry / rustup / compiled rust output
+		// may survive into the deliverable (the rust/→core/ rename keeps the
+		// leading .cargo/.rustup segment intact, so check both forms).
+		for _, seg := range strings.Split(p, "/") {
+			switch seg {
+			case ".cargo", ".rustup", ".fingerprint":
+				t.Errorf("rust deliverable leaked cargo-home/registry path %q", p)
+			}
+		}
+		if strings.HasSuffix(p, ".rlib") || strings.HasSuffix(p, ".rmeta") {
+			t.Errorf("rust deliverable leaked compiled rust artifact %q", p)
+		}
+	}
+}
+
+// TestAssemble_RustProfile_EnvExamplePerService proves the Rust deliverable ships
+// a per-service .env.example (the Tonic homologue of Go's config.toml.example)
+// under core/services/<svc>/, carrying the MONGO_/GRPC_/JWT_SECRET placeholders.
+func TestAssemble_RustProfile_EnvExamplePerService(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "rust", "grpc")
+	artifacts := []InputFile{
+		{Path: "rust/services/user/src/main.rs", Content: "fn main() {}\n"},
+		{Path: "rust/services/order/src/main.rs", Content: "fn main() {}\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	for _, want := range []string{
+		"core/services/user/.env.example",
+		"core/services/order/.env.example",
+	} {
+		if !set[want] {
+			t.Errorf("rust deliverable missing %q", want)
+		}
+	}
+	for p := range set {
+		if strings.HasPrefix(p, "rust/") {
+			t.Errorf("rust deliverable still has un-renamed path %q", p)
+		}
+	}
+
+	var userEnv string
+	for _, f := range files {
+		if f.Path == "core/services/user/.env.example" {
+			userEnv = string(f.Content)
+		}
+	}
+	for _, frag := range []string{
+		"MONGO_URI=",
+		"MONGO_DATABASE=user_db",
+		"GRPC_HOST=",
+		"GRPC_PORT=",
+		"JWT_SECRET=",
+	} {
+		if !strings.Contains(userEnv, frag) {
+			t.Errorf("user .env.example missing %q; got:\n%s", frag, userEnv)
+		}
+	}
+	if !strings.Contains(strings.ToLower(userEnv), "copy this file to .env") {
+		t.Errorf("user .env.example missing copy-to-.env header; got:\n%s", userEnv)
+	}
+	for _, secret := range knownSecrets {
+		if strings.Contains(userEnv, secret) {
+			t.Errorf("user .env.example leaked known secret %q", secret)
+		}
+	}
+}

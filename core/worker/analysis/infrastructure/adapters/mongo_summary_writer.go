@@ -166,6 +166,13 @@ func (w *MongoSummaryWriter) Write(ctx context.Context, summary *analysisdomain.
 		}
 		setDoc["security_findings_bytes"] = sfBytes
 	}
+	if asd := summary.GetAuthSchemeDetection(); asd != nil {
+		asdBytes, err := proto.Marshal(&analysisdomain.AnalysisSummary{AuthSchemeDetection: asd})
+		if err != nil {
+			return err
+		}
+		setDoc["auth_scheme_detection_bytes"] = asdBytes
+	}
 
 	res, err := w.analysisColl.UpdateOne(
 		ctx,
@@ -189,19 +196,69 @@ func (w *MongoSummaryWriter) Write(ctx context.Context, summary *analysisdomain.
 		return nil
 	}
 
-	// Advance migration ANALYZING → DESIGNING. Filtering by current state makes
-	// this safe to re-run: if already DESIGNING the filter matches nothing.
-	_, err = w.migrationColl.UpdateOne(
+	return w.advanceMigration(ctx, summary.GetMigrationId(), summary.GetIdentifier(), summary.GetCommitSha(), now)
+}
+
+// advanceMigration links a completed analysis to its migration: it stamps the
+// migration's commit_sha (resolved during the analysis clone → resolveHEAD) and
+// advances ANALYZING → DESIGNING. Filtering by current state makes this safe to
+// re-run (if already DESIGNING the filter matches nothing).
+//
+// MIG223 enforcement (commit-resolution / decision point D2): a migration must
+// not re-run an unchanged branch. If another migration already exists for the
+// same (repository_id, source_branch, commit_sha) — guarded by the
+// uniq_repo_branch_commit partial unique index — this migration is moved to
+// FAILED with the MIG223 reason instead of advancing. The partial unique index
+// is the hard DB net: a duplicate-key error on the commit_sha write is mapped to
+// the same FAILED transition so a race cannot slip a second migration through.
+func (w *MongoSummaryWriter) advanceMigration(ctx context.Context, migrationID, summaryID uint64, commitSHA string, now primitive.DateTime) error {
+	set := bson.M{
+		"state":               int32(migrationdomain.MigrationStateDesigning),
+		"analysis_summary_id": summaryID,
+		"update_time":         now,
+	}
+	if commitSHA != "" {
+		set["commit_sha"] = commitSHA
+	}
+
+	_, err := w.migrationColl.UpdateOne(
 		ctx,
 		bson.M{
-			"identifier":  summary.GetMigrationId(),
+			"identifier":  migrationID,
+			"state":       int32(migrationdomain.MigrationStateAnalyzing),
+			"delete_time": nil,
+		},
+		bson.M{"$set": set},
+	)
+	if err != nil {
+		// Partial-unique-index collision: another migration already covers this
+		// (repo, branch, commit). Mark THIS migration FAILED with MIG223 and stop —
+		// never leave it half-run in ANALYZING.
+		if mongo.IsDuplicateKeyError(err) {
+			applog.Infof("analysis-worker: migration_id=%d branch unchanged (same commit=%s) — failing with MIG223",
+				migrationID, commitSHA)
+			return w.failBranchUnchanged(ctx, migrationID, now)
+		}
+		return err
+	}
+	return nil
+}
+
+// failBranchUnchanged transitions a migration ANALYZING → FAILED with the
+// MIG223 reason. Used when the branch's commit is unchanged since a prior
+// migration (no new commits). Guarded on ANALYZING for idempotency.
+func (w *MongoSummaryWriter) failBranchUnchanged(ctx context.Context, migrationID uint64, now primitive.DateTime) error {
+	_, err := w.migrationColl.UpdateOne(
+		ctx,
+		bson.M{
+			"identifier":  migrationID,
 			"state":       int32(migrationdomain.MigrationStateAnalyzing),
 			"delete_time": nil,
 		},
 		bson.M{"$set": bson.M{
-			"state":               int32(migrationdomain.MigrationStateDesigning),
-			"analysis_summary_id": summary.GetIdentifier(),
-			"update_time":         now,
+			"state":          int32(migrationdomain.MigrationStateFailed),
+			"failure_reason": migrationdomain.ErrBranchUnchanged.Message + ": a migration already exists for this branch at the same commit; no new commits since the last migration",
+			"update_time":    now,
 		}},
 	)
 	return err
@@ -292,20 +349,45 @@ func (w *MongoSummaryWriter) FindCompletedForBranch(ctx context.Context, reposit
 // that already carry a migration_id retain their original ownership.
 func (w *MongoSummaryWriter) WriteReuse(ctx context.Context, existingSummaryID, migrationID uint64) error {
 	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+
+	// Resolve the reused summary's commit_sha so the migration carries the commit
+	// it was actually analysed at — the same field set on the normal path. This
+	// also lets the uniq_repo_branch_commit partial index enforce MIG223 for
+	// reuse-path migrations (two migrations on the same repo+branch+commit collide).
+	var commitSHA string
+	var sumDoc struct {
+		CommitSHA string `bson:"commit_sha,omitempty"`
+	}
+	if findErr := w.analysisColl.FindOne(ctx,
+		bson.M{"identifier": existingSummaryID},
+		mongoOptions.FindOne().SetProjection(bson.M{"commit_sha": 1}),
+	).Decode(&sumDoc); findErr == nil {
+		commitSHA = sumDoc.CommitSHA
+	}
+
+	set := bson.M{
+		"state":               int32(migrationdomain.MigrationStateDesigning),
+		"analysis_summary_id": existingSummaryID,
+		"analysis_reused":     true,
+		"update_time":         now,
+	}
+	if commitSHA != "" {
+		set["commit_sha"] = commitSHA
+	}
 	res, err := w.migrationColl.UpdateOne(ctx,
 		bson.M{
 			"identifier":  migrationID,
 			"state":       int32(migrationdomain.MigrationStateAnalyzing),
 			"delete_time": nil,
 		},
-		bson.M{"$set": bson.M{
-			"state":               int32(migrationdomain.MigrationStateDesigning),
-			"analysis_summary_id": existingSummaryID,
-			"analysis_reused":     true,
-			"update_time":         now,
-		}},
+		bson.M{"$set": set},
 	)
 	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			applog.Infof("analysis-worker: WriteReuse migration_id=%d branch unchanged (same commit=%s) — failing with MIG223",
+				migrationID, commitSHA)
+			return w.failBranchUnchanged(ctx, migrationID, now)
+		}
 		return err
 	}
 	if res.MatchedCount == 0 {

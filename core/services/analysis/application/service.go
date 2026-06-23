@@ -18,11 +18,12 @@ import (
 
 // Service orchestrates analysis use cases.
 type Service struct {
-	repo     ports.AnalysisSummaryRepository
-	repoSvc  ports.RepositoryClient
-	enqueuer ports.JobEnqueuer
-	assessor ports.AnalysisMigrabilityAssessor
-	plans    ports.PlanProvider
+	repo       ports.AnalysisSummaryRepository
+	repoSvc    ports.RepositoryClient
+	enqueuer   ports.JobEnqueuer
+	assessor   ports.AnalysisMigrabilityAssessor
+	plans      ports.PlanProvider
+	migrations ports.MigrationClient
 }
 
 // NewService wires port implementations into the application service.
@@ -46,6 +47,15 @@ func (s *Service) WithMigrabilityAssessor(a ports.AnalysisMigrabilityAssessor) *
 // no-op) so the service degrades open if billing is unavailable.
 func (s *Service) WithPlanProvider(p ports.PlanProvider) *Service {
 	s.plans = p
+	return s
+}
+
+// WithMigrationClient wires the cross-service migration client used by
+// DeleteAnalysisSummary to count active migrations referencing an analysis.
+// When nil, the live-migration guard degrades CLOSED (delete is refused with
+// ErrInternal) so a misconfigured deployment never silently orphans a migration.
+func (s *Service) WithMigrationClient(m ports.MigrationClient) *Service {
+	s.migrations = m
 	return s
 }
 
@@ -90,7 +100,9 @@ type RunAnalysisResult struct {
 // COMPLETED analyses (standalone runs only), creates an AnalysisSummary in
 // RUNNING state, enqueues the analysis job, and returns immediately.
 //
-// sourceBranch overrides the repository's default_branch when non-empty.
+// sourceBranch is mandatory: an empty branch is rejected with ErrMissingSourceBranch.
+// Analyses are unique per (repository_id, source_branch) — there is no
+// default-branch fallback.
 // rootSubdirectory optionally scopes the analysis to a repository-relative
 // subdirectory (monorepo support); empty means the whole repository root. It is
 // validated here (no traversal) before being snapshotted on the summary and
@@ -102,6 +114,12 @@ type RunAnalysisResult struct {
 func (s *Service) RunAnalysis(ctx context.Context, repositoryID, migrationID, ownerUserID uint64, sourceBranch, rootSubdirectory string, force bool) (*RunAnalysisResult, error) {
 	if repositoryID == 0 {
 		return nil, domain.ErrMissingRepositoryID
+	}
+	// source_branch is mandatory: analyses are unique per (repository_id,
+	// source_branch). There is no longer a default-branch fallback — the caller
+	// must declare the branch explicitly.
+	if sourceBranch == "" {
+		return nil, domain.ErrMissingSourceBranch
 	}
 
 	// Validate and canonicalise the monorepo root subdirectory up front so an
@@ -120,18 +138,16 @@ func (s *Service) RunAnalysis(ctx context.Context, repositoryID, migrationID, ow
 		}
 	}
 
-	var remoteURL, branch string
+	// source_branch is mandatory (validated above), so the analysed branch is
+	// always the caller-supplied branch — never the repository default.
+	branch := sourceBranch
+	var remoteURL string
 	if s.repoSvc != nil {
-		url, defaultBranch, err := s.repoSvc.GetRemoteURL(ctx, repositoryID)
+		url, _, err := s.repoSvc.GetRemoteURL(ctx, repositoryID)
 		if err != nil {
 			return nil, err
 		}
 		remoteURL = url
-		if sourceBranch != "" {
-			branch = sourceBranch
-		} else {
-			branch = defaultBranch
-		}
 	}
 
 	// Standalone dedup: before creating a new summary, check whether the branch
@@ -257,6 +273,84 @@ func (s *Service) SelectRoot(ctx context.Context, identifier uint64, rootDirecto
 		}
 	}
 	return updated, nil
+}
+
+// CancelAnalysis transitions a non-terminal analysis to CANCELLED.
+//
+// It is a soft-cancel: an in-flight worker computation may still finish but its
+// result is discarded (the worker only persists a final state while the analysis
+// is still RUNNING). A cancel on an already-terminal analysis (COMPLETED, FAILED,
+// CANCELLED) is rejected with ErrInvalidStateTransition. Ownership is enforced by
+// the handler before this call. Returns the updated summary.
+func (s *Service) CancelAnalysis(ctx context.Context, identifier uint64) (*domain.AnalysisSummary, error) {
+	if identifier == 0 {
+		return nil, domain.ErrMissingIdentifier
+	}
+	current, err := s.repo.GetByID(ctx, identifier, false)
+	if err != nil {
+		return nil, err
+	}
+	if isTerminalAnalysisState(current.GetState()) {
+		return nil, domain.ErrInvalidStateTransition
+	}
+	if err := s.repo.UpdateState(ctx, identifier, domain.AnalysisStateCancelled); err != nil {
+		return nil, err
+	}
+	return s.repo.GetByID(ctx, identifier, false)
+}
+
+// DeleteAnalysisSummary soft-deletes an analysis summary.
+//
+// Two guards, both fail-closed:
+//   - the analysis must be in a terminal state (COMPLETED, FAILED, CANCELLED);
+//     deleting a running/awaiting analysis is rejected with ErrInvalidStateTransition.
+//   - no active (non-terminal) migration may still reference the analysis;
+//     otherwise the delete is rejected with ErrAnalysisHasLiveMigrations so a
+//     running migration never loses its analysis. The count comes from the
+//     migration service via the MigrationClient port (forwarding the caller's
+//     token). When no migration client is wired the guard degrades CLOSED.
+//
+// Ownership is enforced by the handler before this call.
+func (s *Service) DeleteAnalysisSummary(ctx context.Context, identifier uint64) error {
+	if identifier == 0 {
+		return domain.ErrMissingIdentifier
+	}
+	current, err := s.repo.GetByID(ctx, identifier, false)
+	if err != nil {
+		return err
+	}
+	if !isTerminalAnalysisState(current.GetState()) {
+		return domain.ErrInvalidStateTransition
+	}
+	if s.migrations == nil {
+		// Degrade closed: without the migration service we cannot prove no live
+		// migration depends on this analysis, so refuse rather than risk an orphan.
+		applog.Warningf("analysis: DeleteAnalysisSummary refused id=%d — migration client not wired", identifier)
+		return domain.ErrInternal
+	}
+	live, err := s.migrations.CountLiveMigrationsByAnalysis(ctx, identifier)
+	if err != nil {
+		applog.Warningf("analysis: live-migration count failed id=%d: %v", identifier, err)
+		return domain.ErrInternal
+	}
+	if live > 0 {
+		return domain.ErrAnalysisHasLiveMigrations
+	}
+	return s.repo.SoftDelete(ctx, identifier)
+}
+
+// isTerminalAnalysisState reports whether state is a terminal node in the
+// analysis lifecycle: COMPLETED, FAILED, or CANCELLED. RUNNING and
+// AWAITING_ROOT_SELECTION are non-terminal.
+func isTerminalAnalysisState(state domain.AnalysisState) bool {
+	switch state {
+	case domain.AnalysisStateCompleted,
+		domain.AnalysisStateFailed,
+		domain.AnalysisStateCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 // enforceAnalysisQuota resolves the owner's plan and rejects the operation when

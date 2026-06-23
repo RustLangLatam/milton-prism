@@ -27,17 +27,18 @@ const usageRecordsCollName = "usage_records"
 var _ ports.UsageRepository = (*MongoUsageRepository)(nil)
 
 type mongoUsageDoc struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty"`
-	Identifier  uint64             `bson:"identifier"`
-	UserID      uint64             `bson:"user_id"`
-	AnalysisID  uint64             `bson:"analysis_id,omitempty"`
-	MigrationID uint64             `bson:"migration_id,omitempty"`
-	Operation   int32             `bson:"operation"`
-	TokensIn    int64              `bson:"tokens_in"`
-	TokensOut   int64              `bson:"tokens_out"`
-	CostUSD     float64            `bson:"cost_usd"`
-	Model       string             `bson:"model,omitempty"`
-	CreateTime  primitive.DateTime `bson:"create_time"`
+	ID            primitive.ObjectID `bson:"_id,omitempty"`
+	Identifier    uint64             `bson:"identifier"`
+	UserID        uint64             `bson:"user_id"`
+	AnalysisID    uint64             `bson:"analysis_id,omitempty"`
+	MigrationID   uint64             `bson:"migration_id,omitempty"`
+	Operation     int32              `bson:"operation"`
+	TokensIn      int64              `bson:"tokens_in"`
+	TokensOut     int64              `bson:"tokens_out"`
+	CostUSD       float64            `bson:"cost_usd"`
+	Model         string             `bson:"model,omitempty"`
+	CostEstimated bool               `bson:"cost_estimated,omitempty"`
+	CreateTime    primitive.DateTime `bson:"create_time"`
 }
 
 // MongoUsageRepository persists usage records in MongoDB.
@@ -68,16 +69,17 @@ func (r *MongoUsageRepository) Record(ctx context.Context, rec *domain.UsageReco
 	}
 	now := time.Now().UTC()
 	doc := mongoUsageDoc{
-		Identifier:  id,
-		UserID:      rec.GetUserId(),
-		AnalysisID:  rec.GetAnalysisId(),
-		MigrationID: rec.GetMigrationId(),
-		Operation:   int32(rec.GetOperation()),
-		TokensIn:    rec.GetTokensIn(),
-		TokensOut:   rec.GetTokensOut(),
-		CostUSD:     rec.GetCostUsd(),
-		Model:       rec.GetModel(),
-		CreateTime:  primitive.NewDateTimeFromTime(now),
+		Identifier:    id,
+		UserID:        rec.GetUserId(),
+		AnalysisID:    rec.GetAnalysisId(),
+		MigrationID:   rec.GetMigrationId(),
+		Operation:     int32(rec.GetOperation()),
+		TokensIn:      rec.GetTokensIn(),
+		TokensOut:     rec.GetTokensOut(),
+		CostUSD:       rec.GetCostUsd(),
+		Model:         rec.GetModel(),
+		CostEstimated: rec.GetCostEstimated(),
+		CreateTime:    primitive.NewDateTimeFromTime(now),
 	}
 	if _, err := r.coll.InsertOne(ctx, doc); err != nil {
 		return nil, fmt.Errorf("usage: insert failed: %w", err)
@@ -187,15 +189,16 @@ func usageDocToDomain(d *mongoUsageDoc) *domain.UsageRecord {
 		return nil
 	}
 	out := &billingv1.UsageRecord{
-		Identifier:  d.Identifier,
-		UserId:      d.UserID,
-		AnalysisId:  d.AnalysisID,
-		MigrationId: d.MigrationID,
-		Operation:   billingv1.UsageOperation(d.Operation),
-		TokensIn:    d.TokensIn,
-		TokensOut:   d.TokensOut,
-		CostUsd:     d.CostUSD,
-		Model:       d.Model,
+		Identifier:    d.Identifier,
+		UserId:        d.UserID,
+		AnalysisId:    d.AnalysisID,
+		MigrationId:   d.MigrationID,
+		Operation:     billingv1.UsageOperation(d.Operation),
+		TokensIn:      d.TokensIn,
+		TokensOut:     d.TokensOut,
+		CostUsd:       d.CostUSD,
+		Model:         d.Model,
+		CostEstimated: d.CostEstimated,
 	}
 	if d.CreateTime != 0 {
 		out.CreateTime = timestamppb.New(d.CreateTime.Time())

@@ -215,3 +215,26 @@ type DatabaseDetector interface {
 type SecurityScanner interface {
 	Scan(ctx context.Context, workspacePath string) ([]*analysisdomain.SecurityFinding, error)
 }
+
+// AuthSchemeDetector deterministically identifies the request-authentication
+// scheme the analysed backend uses (JWT, OAuth2, session cookie, API key, Basic,
+// or an honest "none"). It draws on four signal sources, in order of authority:
+//
+//   - auth packages from the parsed manifests (firebase/php-jwt, PyJWT,
+//     jsonwebtoken, jjwt, authlib, spring-oauth2-resource-server, …);
+//   - config files in the workspace (.env JWT_SECRET / JWT_PUBLIC_KEY / JWT_ALGO);
+//   - the Authorization: Bearer header convention observed in source;
+//   - a framework default (last resort, clearly labelled).
+//
+// It never guesses: when no signal exists the result has scheme=NONE and
+// Unknown=true. For JWT it surfaces the signature-algorithm variant (HS*/RS*/…)
+// so the generation engine can emit the correct token-validation middleware.
+// NEVER uses an LLM and NEVER executes the source.
+type AuthSchemeDetector interface {
+	Detect(
+		ctx context.Context,
+		workspacePath string,
+		deps []workerdomain.Dependency,
+		technologies []*analysisdomain.Technology,
+	) (*analysisdomain.AuthSchemeDetection, error)
+}

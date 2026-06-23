@@ -13,6 +13,7 @@ import (
 	workerdomain "milton_prism/core/worker/decomposition/domain"
 	workeradapters "milton_prism/core/worker/decomposition/infrastructure/adapters"
 	workerports "milton_prism/core/worker/decomposition/ports"
+	billingv1 "milton_prism/pkg/pb/gen/milton_prism/types/billing/v1"
 	commonv1 "milton_prism/pkg/pb/gen/milton_prism/types/common/v1"
 	"milton_prism/pkg/utils/pointers"
 
@@ -31,12 +32,17 @@ type MigrabilityAssessorAdapter struct {
 	detector    workerports.InfraDetector
 	clusterer   *workeradapters.LouvainClusterer
 	assessor    *workerapp.Assessor
+	// recorder accounts LLM token spend in billing (best-effort). May be nil when
+	// billing is not wired — recording is then skipped.
+	recorder ports.UsageRecorder
 }
 
 // NewMigrabilityAssessorAdapter constructs the adapter.
 // analysisDB must be the analysis database (milton_prism_analysis).
+// recorder accounts LLM token spend in billing best-effort; pass nil to disable
+// recording (e.g. billing not configured).
 // Returns an error only when ANTHROPIC_API_KEY is absent from the environment.
-func NewMigrabilityAssessorAdapter(analysisDB *mongo.Database) (*MigrabilityAssessorAdapter, error) {
+func NewMigrabilityAssessorAdapter(analysisDB *mongo.Database, recorder ports.UsageRecorder) (*MigrabilityAssessorAdapter, error) {
 	modelClient, err := analysisadapters.NewAnthropicModelClient(nil)
 	if err != nil {
 		return nil, fmt.Errorf("migrability assessor: model client: %w", err)
@@ -46,12 +52,13 @@ func NewMigrabilityAssessorAdapter(analysisDB *mongo.Database) (*MigrabilityAsse
 		detector:    workeradapters.NewPHPAwareInfraDetector(),
 		clusterer:   workeradapters.NewLouvainClusterer(),
 		assessor:    workerapp.NewAssessor(modelClient),
+		recorder:    recorder,
 	}, nil
 }
 
 // Assess loads the analysis summary, distills the structural digest (M1), calls
 // the LLM assessor (M2), and returns the verdict as a MigrabilityAssessment proto.
-func (a *MigrabilityAssessorAdapter) Assess(ctx context.Context, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error) {
+func (a *MigrabilityAssessorAdapter) Assess(ctx context.Context, userID, migrationID, analysisSummaryID uint64, language string) (*domain.MigrabilityAssessment, error) {
 	// Honest-degrade gate. Read the EXPLICIT deep-analysis-availability signal the
 	// analysis pipeline set (not derived from an empty graph / DomainEmpty here).
 	// When deep analysis was unavailable there is nothing to reason over, so
@@ -116,6 +123,19 @@ func (a *MigrabilityAssessorAdapter) Assess(ctx context.Context, analysisSummary
 	if err != nil {
 		return nil, fmt.Errorf("migrability assessor: llm: %w", err)
 	}
+
+	// Record LLM token spend in billing (best-effort). A failure is logged and
+	// swallowed — it must never break the assessment. Mirrors the analysis-side
+	// assessor: operation = ASSESSMENT. The early honest-degrade return above
+	// spends no tokens and is intentionally not recorded.
+	recordMigrationSpend(ctx, a.recorder, ports.UsageSpend{
+		UserID:      userID,
+		MigrationID: migrationID,
+		Operation:   billingv1.UsageOperation_USAGE_OPERATION_ASSESSMENT,
+		TokensIn:    int64(result.InputTokens),
+		TokensOut:   int64(result.OutputTokens),
+		CostUSD:     result.CostUSD,
+	})
 
 	protoScore := analysisconverters.ToProtoMigrabilityScore(scoreResult)
 

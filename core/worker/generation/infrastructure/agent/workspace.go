@@ -290,29 +290,210 @@ func copyFile(src, dst string) error {
 // of the target language, and it derives everything from the profile string so
 // adding a language is a profile-doc + mapping change, not a worker rewrite.
 //
-// Go is the only certified profile. Python has a real profile doc and generator
-// prompt but is not yet end-to-end certified. Unknown profiles fall back to Go.
-func promptProfileBindings(outputProfile string) (langLabel, profileDoc, buildSteps string) {
+// Go, Python and Node are certified profiles. Rust (Tonic + gRPC) has a real
+// profile doc and generator prompt and is certified by a real containerised run.
+// Unknown profiles fall back to Go.
+//
+// protocol selects the transport variant of a profile. "http" is supported for
+// Go, Python, Node and Rust (HTTP-native service: router/Fastify/axum + REST
+// handlers, no gRPC server, no gateway); every other (profile, protocol) cell uses the gRPC
+// build steps. Empty protocol is treated as "grpc". MUST stay in lockstep with
+// the migration service's generatorPromptRef and the worker's
+// profileAndPromptForLanguage.
+func promptProfileBindings(outputProfile, protocol string) (langLabel, profileDoc, buildSteps string) {
 	switch outputProfile {
 	case "python":
+		if protocol == "http" {
+			return "Python (FastAPI HTTP-native)",
+				"docs/prism/milton-prism-python-profile.md",
+				"write the authoritative .proto WITH google.api.http annotations on every RPC (the OpenAPI is derived from it), write service code exposing a FastAPI app (APIRouter + REST handlers) as the ONLY entrypoint with uvicorn (NO grpc.server, NO add_*Servicer_to_server), run python -m compileall (the build gate) and import the FastAPI app, run pytest."
+		}
 		return "Python",
 			"docs/prism/milton-prism-python-profile.md",
 			"write protos, run buf generate, write service code, run ruff/mypy, run pytest."
+	case "node":
+		if protocol == "http" {
+			return "TypeScript (Fastify HTTP-native)",
+				"docs/prism/milton-prism-node-profile.md",
+				"write the authoritative .proto WITH google.api.http annotations on every RPC (the OpenAPI is derived from it), write service code exposing a Fastify app (registered routes + REST handlers) as the ONLY entrypoint (NO @grpc/grpc-js Server, NO new Server()/addService), run npm install, run tsc --noEmit (the build gate) and import the app, run npm test."
+		}
+		return "TypeScript (Node)",
+			"docs/prism/milton-prism-node-profile.md",
+			"write protos, generate TS proto stubs, write service code, run npm install, run tsc (the build gate), run npm test."
+	case "rust":
+		if protocol == "http" {
+			return "Rust (axum HTTP-native)",
+				"docs/prism/milton-prism-rust-profile.md",
+				"write the authoritative .proto WITH google.api.http annotations on every RPC (the OpenAPI is derived from it), write service code exposing an axum app (Router + REST handlers) on tokio as the ONLY entrypoint (NO tonic::transport::Server, NO add_service, NO build.rs tonic-build server codegen), run cargo build (the build gate), run cargo test."
+		}
+		return "Rust (Tonic)",
+			"docs/prism/milton-prism-rust-profile.md",
+			"write protos, write the service code and build.rs (tonic-build codegen), run cargo build (the build gate), run cargo test."
 	default:
+		if protocol == "http" {
+			return "Go (HTTP-native)",
+				"docs/prism/milton-prism-go-profile.md",
+				"write the authoritative .proto WITH google.api.http annotations on every RPC (the OpenAPI is derived from it), write service code exposing an HTTP-native router + REST/AIP handlers as the ONLY entrypoint (NO gRPC server, NO gateway registration), run go build, run go test."
+		}
 		return "Go",
 			"docs/prism/milton-prism-go-profile.md",
 			"write protos, run buf generate, write service code, run go build, run go test."
 	}
 }
 
+// transportSection returns the prose block injected into the combined prompt that
+// pins the wire protocol the generated service must speak. For HTTP it makes the
+// HTTP-native contract explicit (router + handlers, no gRPC server, no gateway,
+// google.api.http on every RPC); for gRPC it returns the empty string so the gRPC
+// prompts (the established behaviour) are unchanged. The block is profile-aware:
+// the Python profile gets the FastAPI/uvicorn homologue, the Node profile gets
+// the Fastify/tsc homologue and the Rust profile gets the axum/cargo homologue
+// (no gRPC server, the language build as the gate) instead of the Go net/http prose.
+func transportSection(outputProfile, protocol string) string {
+	if protocol != "http" {
+		return ""
+	}
+	if outputProfile == "python" {
+		return "## Transport: HTTP (native, FastAPI)\n\n" +
+			"This service speaks HTTP, not gRPC. Mandatory constraints:\n" +
+			"- The ONLY entrypoint is a FastAPI app (an `app = FastAPI()` plus `APIRouter`) served by uvicorn. Do NOT create a gRPC server, do NOT call `grpc.server(...)` or any `add_*Servicer_to_server`, and do NOT emit any gRPC server bootstrap (`__main__` with `grpc.aio.server()`).\n" +
+			"- You MUST still write the authoritative `.proto` at the canonical path `protobuf/proto/milton_prism/services/<svc>/v1/...` with a `google.api.http` annotation on EVERY RPC. The platform derives `docs/openapi.yaml` from those annotations — without them the OpenAPI is empty.\n" +
+			"- Model the request/response messages as pydantic models equivalent to the proto messages; you do NOT need `*_pb2.py`/`*_pb2_grpc.py` at runtime when using pydantic.\n" +
+			"- Implement REST handlers (path operations) that map 1:1 to the proto RPCs and honour the `google.api.http` routes. Map domain errors to HTTP status codes via the service's error module.\n" +
+			"- The build gate is `python -m compileall <source_root>/` + importing the FastAPI `app` + `pytest`. There is NO expectation of a gRPC server, `grpc.server(...)`, or `add_*Servicer_to_server`.\n\n"
+	}
+	if outputProfile == "node" {
+		return "## Transport: HTTP (native, Fastify)\n\n" +
+			"This service speaks HTTP, not gRPC. Mandatory constraints:\n" +
+			"- The ONLY entrypoint is a Fastify app (a `Fastify()` instance with registered routes) that `listen`s on host:port. Do NOT create a gRPC server, do NOT call `new Server()` (`@grpc/grpc-js`) / `server.addService(...)`, do NOT emit a `*_grpc_pb` server stub, and do NOT register any API gateway.\n" +
+			"- You MUST still write the authoritative `.proto` at the canonical path `protobuf/proto/milton_prism/services/<svc>/v1/...` with a `google.api.http` annotation on EVERY RPC. The platform derives `docs/openapi.yaml` from those annotations — without them the OpenAPI is empty.\n" +
+			"- Model the request/response messages as TypeScript interfaces/types (derived from the proto or equivalent); you do NOT need the `@grpc/proto-loader` runtime stub or a `*_grpc_pb` server stub when the transport is Fastify.\n" +
+			"- Implement Fastify route handlers that map 1:1 to the proto RPCs and honour the `google.api.http` routes (method + path). Map domain errors to HTTP status codes via the service's error module/mapper.\n" +
+			"- The build gate is `npm install` + `tsc --noEmit` (strict) + importing the app. There is NO expectation of a gRPC server, `new Server()`, or `addService(...)`.\n\n"
+	}
+	if outputProfile == "rust" {
+		return "## Transport: HTTP (native, axum)\n\n" +
+			"This service speaks HTTP, not gRPC. Mandatory constraints:\n" +
+			"- The ONLY entrypoint is an axum app (an `axum::Router` with registered routes) served by tokio (`axum::serve` / a `TcpListener`). Do NOT create a tonic gRPC server, do NOT call `tonic::transport::Server::builder()` / `.add_service(...)`, do NOT run tonic-build SERVER codegen in `build.rs`, and do NOT register any API gateway.\n" +
+			"- You MUST still write the authoritative `.proto` at the canonical path `protobuf/proto/milton_prism/services/<svc>/v1/...` with a `google.api.http` annotation on EVERY RPC. The platform derives `docs/openapi.yaml` from those annotations — without them the OpenAPI is empty.\n" +
+			"- Model the request/response messages as Rust structs (serde `Serialize`/`Deserialize`) equivalent to the proto messages; you do NOT need the tonic-generated server trait at runtime when the transport is axum.\n" +
+			"- Implement axum handlers that map 1:1 to the proto RPCs and honour the `google.api.http` routes (method + path). Map domain errors to HTTP status codes via the service's error module (`shared::errors` / a `mapError`-style `IntoResponse`).\n" +
+			"- The build gate is `cargo build` (the whole workspace compiles) + `cargo test`. There is NO expectation of a tonic server, `transport::Server`, or `add_service`.\n\n"
+	}
+	return "## Transport: HTTP (native)\n\n" +
+		"This service speaks HTTP, not gRPC. Mandatory constraints:\n" +
+		"- The ONLY entrypoint is an HTTP-native router (idiomatic, lightweight — net/http, chi or gin) wired in a `main` that starts an `http.Server`. Do NOT create a gRPC server, do NOT call any `RegisterXxxServer`, and do NOT emit or register any API gateway.\n" +
+		"- You MUST still write the authoritative `.proto` at the canonical path `protobuf/proto/milton_prism/services/<svc>/v1/...` with a `google.api.http` annotation on EVERY RPC. The platform derives `docs/openapi.yaml` from those annotations — without them the OpenAPI is empty.\n" +
+		"- Implement REST/AIP handlers that map 1:1 to the proto RPCs and honour the `google.api.http` routes. Reuse `pkg/gateway/common/error` for error mapping.\n" +
+		"- The build gate is `go build ./...` + `go test ./...`. There is NO expectation of a gRPC health server or `RegisterXxxServer`.\n\n"
+}
+
+// authSchemeSection returns the prose block injected into the combined prompt that
+// pins the request-authentication scheme the generated service must implement. It is
+// the auth homologue of transportSection: profile- and protocol-aware.
+//
+// v1 GENERATES only JWT and none:
+//   - "none"/""  → no auth code; an explicit note that the source authenticated
+//     nothing, so endpoints are intentionally unauthenticated.
+//   - "jwt"      → idiomatic JWT validation per stack (golang-jwt / PyJWT /
+//     jose|jsonwebtoken / jsonwebtoken crate). Common rules: validate the bearer
+//     token; read the secret/public key/issuer/audience/expected claims from `.env`
+//     (NEVER hardcode a secret/key); fail with a TYPED error mapped to 401; wire it
+//     as a gRPC interceptor (gRPC transport) or an HTTP middleware/guard (HTTP).
+//   - any other detected scheme (oauth2/session_cookie/api_key/basic) → an HONEST
+//     note that the scheme was detected but v1 does not generate it; the agent must
+//     NOT guess an implementation. It stubs the boundary and documents the gap.
+func authSchemeSection(outputProfile, protocol, authScheme, authSigAlg string) string {
+	scheme := strings.ToLower(strings.TrimSpace(authScheme))
+	if scheme == "" {
+		scheme = "none"
+	}
+	if scheme == "none" {
+		return "## Auth / Validation: none\n\n" +
+			"The analysed source performs NO request authentication (honest detection result). " +
+			"Do NOT invent an auth layer: generate the endpoints WITHOUT any token/session validation " +
+			"middleware or interceptor. (A future migration can opt into JWT via the auth-scheme override.)\n\n"
+	}
+	if scheme != "jwt" {
+		return "## Auth / Validation: " + scheme + " (detected; NOT generated in v1)\n\n" +
+			"The analysed source uses **" + scheme + "** authentication. v1 of the generator only emits " +
+			"JWT and none — it does NOT generate a " + scheme + " implementation, and you MUST NOT guess one " +
+			"(no fabricated OAuth2 flow, session store, API-key table, or Basic realm). Generate the service " +
+			"WITHOUT an auth layer and add a single TODO note at the entrypoint stating that `" + scheme + "` " +
+			"validation was detected in the source and must be wired manually (or re-run the migration with " +
+			"`target_auth_scheme = AUTH_SCHEME_JWT` to generate JWT instead). Be honest about the gap.\n\n"
+	}
+
+	// scheme == "jwt": idiomatic, .env-driven, typed-error validation per stack.
+	alg := strings.ToUpper(strings.TrimSpace(authSigAlg))
+	algLine := "- Accept the signature algorithm family the source used"
+	switch {
+	case strings.HasPrefix(alg, "HS"):
+		algLine = "- The token is signed with a SYMMETRIC secret (" + alg + "): validate with the shared secret read from `.env` (e.g. `JWT_SECRET`). Reject any token whose `alg` header is not in the expected HMAC family (no `alg=none`, no algorithm confusion)."
+	case strings.HasPrefix(alg, "RS"), strings.HasPrefix(alg, "ES"), alg == "EDDSA":
+		algLine = "- The token is signed with an ASYMMETRIC key (" + alg + "): validate with the PUBLIC key / JWKS read from `.env` (e.g. `JWT_PUBLIC_KEY` path or `JWT_JWKS_URL`). NEVER embed the private key in the service. Reject `alg=none` and any algorithm outside the expected family (no algorithm-confusion downgrade to HMAC)."
+	default:
+		algLine = "- Validate the token signature using the key material read from `.env` (symmetric `JWT_SECRET` or asymmetric `JWT_PUBLIC_KEY`/JWKS, whichever the config provides). Reject `alg=none` and unexpected algorithms."
+	}
+
+	var lib, wire, gate string
+	switch outputProfile {
+	case "python":
+		lib = "PyJWT (`jwt.decode`)"
+		if protocol == "http" {
+			wire = "a FastAPI dependency / middleware applied to every protected path operation (e.g. `Depends(verify_jwt)`)"
+		} else {
+			wire = "a gRPC `ServerInterceptor` that runs before every RPC handler"
+		}
+		gate = "`python -m compileall` + importing the app + `pytest`"
+	case "node":
+		lib = "`jsonwebtoken` (or `jose`)"
+		if protocol == "http" {
+			wire = "a Fastify `preHandler` hook / plugin registered on the protected routes"
+		} else {
+			wire = "a gRPC server interceptor invoked before every handler"
+		}
+		gate = "`npm install` + `tsc --noEmit`"
+	case "rust":
+		lib = "the `jsonwebtoken` crate"
+		if protocol == "http" {
+			wire = "an axum middleware (`tower`/`axum::middleware::from_fn`) or an extractor applied to the protected `Router`"
+		} else {
+			wire = "a tonic `Interceptor` attached to the service"
+		}
+		gate = "`cargo build` + `cargo test`"
+	default: // go
+		lib = "`github.com/golang-jwt/jwt/v5`"
+		if protocol == "http" {
+			wire = "an `http.Handler` middleware wrapping the protected routes"
+		} else {
+			wire = "a `grpc.UnaryServerInterceptor` (and stream interceptor) on the server"
+		}
+		gate = "`go build ./...` + `go test ./...`"
+	}
+
+	return "## Auth / Validation: JWT\n\n" +
+		"The analysed source authenticates requests with **JWT bearer tokens**. Generate JWT validation " +
+		"for this service using " + lib + ". Mandatory constraints:\n" +
+		"- Read the bearer token from the `Authorization: Bearer <token>` header.\n" +
+		algLine + "\n" +
+		"- Read ALL secrets/keys, the issuer (`iss`), audience (`aud`), and any required claims from `.env` / environment variables. NEVER hardcode a secret, key, issuer, or audience in source — a hardcoded credential is a generation defect.\n" +
+		"- Verify the standard claims (`exp` not expired, `nbf`/`iat` sane, and `iss`/`aud` when configured).\n" +
+		"- On any validation failure return a TYPED error from the service's error module (a dedicated `Failure_Unauthenticated`-style code) mapped to HTTP 401 / gRPC `UNAUTHENTICATED`. Do NOT leak the reason or the token.\n" +
+		"- Wire the validation as " + wire + " so every protected endpoint is covered uniformly; expose the authenticated identity (e.g. the `sub` claim) to the handlers via the request context.\n" +
+		"- Add a `.env.example` entry for every auth variable you read (e.g. `JWT_SECRET=`, `JWT_PUBLIC_KEY=`, `JWT_ISSUER=`, `JWT_AUDIENCE=`) so the service documents its own configuration.\n" +
+		"- The validation code MUST be part of the build gate (" + gate + "): it compiles and is exercised by at least one unit test (valid token passes, missing/expired/wrong-signature token is rejected).\n\n"
+}
+
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.
 // The prompt references the generator prompt file and includes boundary spec
 // and proto content inline so the agent has everything without a round-trip.
-func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, errorPrefix, outputProfile, boundarySpec, protoContent string) (string, error) {
+func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, errorPrefix, outputProfile, protocol, authScheme, authSigAlg, boundarySpec, protoContent string) (string, error) {
 	// The combined prompt is profile-parametrised: the worker carries no
 	// language-specific templates, so the per-language coupling lives only in
 	// the profile doc and the language label resolved here. Defaults to Go.
-	langLabel, profileDoc, buildSteps := promptProfileBindings(outputProfile)
+	// protocol selects the transport variant (gRPC default, HTTP for Go).
+	langLabel, profileDoc, buildSteps := promptProfileBindings(outputProfile, protocol)
 
 	var buf bytes.Buffer
 	buf.WriteString("You are a code-generation agent. Your task is to materialise a complete ")
@@ -335,7 +516,10 @@ func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, e
 	buf.WriteString(errorPrefix)
 	buf.WriteString("\nOutput Profile: ")
 	buf.WriteString(outputProfile)
-	buf.WriteString("\n\n## Boundary Spec\n\n```yaml\n")
+	buf.WriteString("\n\n")
+	buf.WriteString(transportSection(outputProfile, protocol))
+	buf.WriteString(authSchemeSection(outputProfile, protocol, authScheme, authSigAlg))
+	buf.WriteString("## Boundary Spec\n\n```yaml\n")
 	buf.WriteString(strings.TrimSpace(boundarySpec))
 	buf.WriteString("\n```\n\n## Proto Contract\n\n```proto\n")
 	buf.WriteString(strings.TrimSpace(protoContent))

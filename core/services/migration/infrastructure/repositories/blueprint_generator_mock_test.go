@@ -150,7 +150,7 @@ func TestBlueprintGeneratorAdapter_RealClusters(t *testing.T) {
 		},
 	}
 
-	blueprint, err := adapter.GenerateFromDigest(context.Background(), digest, roadmap)
+	blueprint, err := adapter.GenerateFromDigest(context.Background(), 0, 0, digest, roadmap)
 	require.NoError(t, err)
 	require.NotNil(t, blueprint)
 

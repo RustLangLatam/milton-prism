@@ -126,7 +126,7 @@ func TestRunAnalysis_Success(t *testing.T) {
 	})).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, uint64(10001), uint64(42), uint64(0), "https://github.com/org/repo.git", "main", "").Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Nil(t, out.Duplicate)
@@ -138,7 +138,7 @@ func TestRunAnalysis_Standalone_RepoAuthFailed_Rejected(t *testing.T) {
 	t.Parallel()
 	svc, _, repoClient, _ := newSvc(t)
 	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(domain.ErrRepoAuthFailed)
-	_, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
+	_, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "main", "", false)
 	assertDomainError(t, err, domain.ErrCodeRepoAuthFailed)
 }
 
@@ -146,7 +146,7 @@ func TestRunAnalysis_Standalone_RepoUnreachable_Rejected(t *testing.T) {
 	t.Parallel()
 	svc, _, repoClient, _ := newSvc(t)
 	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(domain.ErrRepoUnreachable)
-	_, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
+	_, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "main", "", false)
 	assertDomainError(t, err, domain.ErrCodeRepoUnreachable)
 }
 
@@ -159,7 +159,7 @@ func TestRunAnalysis_MigrationTriggered_SkipsProbe(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	_, err := svc.RunAnalysis(context.Background(), 42, 7, 0, "", "", false)
+	_, err := svc.RunAnalysis(context.Background(), 42, 7, 0, "main", "", false)
 	require.NoError(t, err)
 	repoClient.AssertNotCalled(t, "ProbeConnection", mock.Anything, mock.Anything)
 }
@@ -176,7 +176,7 @@ func TestRunAnalysis_SetsRepositoryURL(t *testing.T) {
 	})).Return(&domain.AnalysisSummary{Identifier: 10010, RepositoryId: 42, RepositoryUrl: repoURL, State: domain.AnalysisStateRunning}, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Equal(t, repoURL, out.Summary.GetRepositoryUrl())
@@ -192,7 +192,7 @@ func TestRunAnalysis_WithMigrationID(t *testing.T) {
 	})).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, uint64(10002), uint64(42), uint64(7), "https://github.com/org/repo.git", "main", "").Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 7, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 7, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Equal(t, uint64(7), out.Summary.GetMigrationId())
@@ -217,24 +217,19 @@ func TestRunAnalysis_SourceBranch_OverridesDefault(t *testing.T) {
 	enqueuer.AssertExpectations(t)
 }
 
-// TestRunAnalysis_PersistsDefaultBranch verifies that when no source_branch is
-// provided, the repository's default branch is captured in the AnalysisSummary.
-func TestRunAnalysis_PersistsDefaultBranch(t *testing.T) {
+// TestRunAnalysis_MissingSourceBranch_Rejected verifies that source_branch is
+// mandatory: an empty branch is rejected with ANL105 and no summary is created.
+// There is no longer a default-branch fallback (analyses are unique per repo+branch).
+func TestRunAnalysis_MissingSourceBranch_Rejected(t *testing.T) {
 	t.Parallel()
-	svc, repo, repoClient, enqueuer := newSvc(t)
-	created := &domain.AnalysisSummary{Identifier: 10006, RepositoryId: 42, State: domain.AnalysisStateRunning, SourceBranch: "main"}
-	repoClient.On("ProbeConnection", mock.Anything, uint64(42)).Return(nil)
-	repoClient.On("GetRemoteURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo.git", "main", nil)
-	repoClient.On("GetBranchSHA", mock.Anything, uint64(42), "main").Return("", nil)
-	repo.On("Create", mock.Anything, mock.MatchedBy(func(s *domain.AnalysisSummary) bool {
-		return s.GetSourceBranch() == "main"
-	})).Return(created, nil)
-	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, "main", "").Return(nil)
+	svc, repo, _, enqueuer := newSvc(t)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
-	require.NoError(t, err)
-	require.NotNil(t, out.Summary)
-	assert.Equal(t, "main", out.Summary.GetSourceBranch())
+	_, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
+	assertDomainError(t, err, domain.ErrCodeMissingSourceBranch)
+	// Rejected before any side effect: no probe, no create, no enqueue.
+	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+	enqueuer.AssertNotCalled(t, "EnqueueAnalysis",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestRunAnalysis_PersistsExplicitSourceBranch verifies that when source_branch
@@ -269,7 +264,7 @@ func TestRunAnalysis_RepositoryNotFound(t *testing.T) {
 	svc, _, repoClient, _ := newSvc(t)
 	// Probe fires before GetRemoteURL; repo not found surfaces at probe time.
 	repoClient.On("ProbeConnection", mock.Anything, uint64(99)).Return(domain.ErrRepositoryNotFound)
-	_, err := svc.RunAnalysis(context.Background(), 99, 0, 0, "", "", false)
+	_, err := svc.RunAnalysis(context.Background(), 99, 0, 0, "main", "", false)
 	assertDomainError(t, err, domain.ErrCodeRepositoryNotFound)
 }
 
@@ -284,7 +279,7 @@ func TestRunAnalysis_EnqueueFailureIsIgnored(t *testing.T) {
 	enqueuer.On("EnqueueAnalysis", mock.Anything, uint64(10003), uint64(42), uint64(0), "https://github.com/org/repo.git", "main", "").Return(domain.ErrInternal)
 
 	// enqueue failure must NOT propagate — RunAnalysis still returns the summary.
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Equal(t, uint64(10003), out.Summary.GetIdentifier())
@@ -312,7 +307,7 @@ func TestRunAnalysis_Dedup_SameCommit_ReturnsDuplicate(t *testing.T) {
 		return f.GetRepositoryId() == repID && f.GetSourceBranch() == branch
 	}), mock.Anything).Return([]*domain.AnalysisSummary{existing}, nil, nil)
 
-	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Duplicate)
 	assert.Nil(t, out.Summary)
@@ -341,7 +336,7 @@ func TestRunAnalysis_Dedup_DifferentCommit_RunsNormally(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Nil(t, out.Duplicate)
@@ -359,7 +354,7 @@ func TestRunAnalysis_Dedup_NoExisting_RunsNormally(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Nil(t, out.Duplicate)
@@ -376,7 +371,7 @@ func TestRunAnalysis_Dedup_Force_BypassesDuplicateCheck(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "", "", true)
+	out, err := svc.RunAnalysis(context.Background(), repID, 0, 0, "main", "", true)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Nil(t, out.Duplicate)
@@ -393,7 +388,7 @@ func TestRunAnalysis_Dedup_MigrationTriggered_SkipsDedup(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), repID, 5, 0, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), repID, 5, 0, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	repoClient.AssertNotCalled(t, "GetBranchSHA", mock.Anything, mock.Anything, mock.Anything)
@@ -514,7 +509,7 @@ func TestRunAnalysis_PlanLimit_FreeAtLimit_Rejected(t *testing.T) {
 	// Free cap is 5; already at 5 this month → reject.
 	repo.On("CountByOwnerSince", mock.Anything, owner, mock.Anything).Return(int64(5), nil)
 
-	_, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "", "", false)
+	_, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "main", "", false)
 	assertDomainError(t, err, domain.ErrCodePlanLimitExceeded)
 	// No summary created when over quota.
 	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
@@ -535,7 +530,7 @@ func TestRunAnalysis_PlanLimit_FreeUnderLimit_Allowed(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	assert.Equal(t, uint64(20001), out.Summary.GetIdentifier())
@@ -553,7 +548,7 @@ func TestRunAnalysis_PlanLimit_Enterprise_NeverBlocked(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	// Unlimited plan: count is never consulted.
@@ -580,7 +575,7 @@ func TestRunAnalysis_PlanLimit_MonthBoundary_LastMonthDoesNotCount(t *testing.T)
 	repo.On("Create", mock.Anything, mock.Anything).Return(created, nil)
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	repo.AssertExpectations(t)
@@ -597,7 +592,7 @@ func TestRunAnalysis_PlanLimit_ForceReRun_NotCounted(t *testing.T) {
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// force=true → quota check skipped entirely (re-run does not consume a slot).
-	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "", "", true)
+	out, err := svc.RunAnalysis(context.Background(), 42, 0, owner, "main", "", true)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	plans.AssertNotCalled(t, "GetUserPlan", mock.Anything, mock.Anything)
@@ -614,10 +609,107 @@ func TestRunAnalysis_PlanLimit_MigrationTriggered_NotCounted(t *testing.T) {
 	enqueuer.On("EnqueueAnalysis", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// migrationID != 0 → analysis quota not enforced here (migration quota gates it).
-	out, err := svc.RunAnalysis(context.Background(), 42, 9, owner, "", "", false)
+	out, err := svc.RunAnalysis(context.Background(), 42, 9, owner, "main", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, out.Summary)
 	plans.AssertNotCalled(t, "GetUserPlan", mock.Anything, mock.Anything)
+}
+
+// ── CancelAnalysis ────────────────────────────────────────────────────────────
+
+func TestCancelAnalysis_Success(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, _ := newSvc(t)
+	running := &domain.AnalysisSummary{Identifier: 7, State: domain.AnalysisStateRunning}
+	cancelled := &domain.AnalysisSummary{Identifier: 7, State: domain.AnalysisStateCancelled}
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(running, nil).Once()
+	repo.On("UpdateState", mock.Anything, uint64(7), domain.AnalysisStateCancelled).Return(nil).Once()
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(cancelled, nil).Once()
+	out, err := svc.CancelAnalysis(context.Background(), 7)
+	require.NoError(t, err)
+	assert.Equal(t, domain.AnalysisStateCancelled, out.GetState())
+	repo.AssertExpectations(t)
+}
+
+func TestCancelAnalysis_TerminalRejected(t *testing.T) {
+	t.Parallel()
+	for _, st := range []domain.AnalysisState{domain.AnalysisStateCompleted, domain.AnalysisStateFailed, domain.AnalysisStateCancelled} {
+		svc, repo, _, _ := newSvc(t)
+		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.AnalysisSummary{Identifier: 7, State: st}, nil)
+		_, err := svc.CancelAnalysis(context.Background(), 7)
+		assertDomainError(t, err, domain.ErrCodeInvalidStateTransition)
+		repo.AssertNotCalled(t, "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+	}
+}
+
+func TestCancelAnalysis_ZeroID(t *testing.T) {
+	t.Parallel()
+	svc, _, _, _ := newSvc(t)
+	_, err := svc.CancelAnalysis(context.Background(), 0)
+	assertDomainError(t, err, domain.ErrCodeMissingIdentifier)
+}
+
+// ── DeleteAnalysisSummary ─────────────────────────────────────────────────────
+
+func TestDeleteAnalysisSummary_Success(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, _ := newSvc(t)
+	migClient := &mocks.MockMigrationClient{}
+	svc.WithMigrationClient(migClient)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.AnalysisSummary{Identifier: 7, State: domain.AnalysisStateCompleted}, nil)
+	migClient.On("CountLiveMigrationsByAnalysis", mock.Anything, uint64(7)).Return(int64(0), nil)
+	repo.On("SoftDelete", mock.Anything, uint64(7)).Return(nil)
+	err := svc.DeleteAnalysisSummary(context.Background(), 7)
+	require.NoError(t, err)
+	repo.AssertExpectations(t)
+	migClient.AssertExpectations(t)
+}
+
+func TestDeleteAnalysisSummary_LiveMigrationsRejected(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, _ := newSvc(t)
+	migClient := &mocks.MockMigrationClient{}
+	svc.WithMigrationClient(migClient)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.AnalysisSummary{Identifier: 7, State: domain.AnalysisStateCompleted}, nil)
+	migClient.On("CountLiveMigrationsByAnalysis", mock.Anything, uint64(7)).Return(int64(2), nil)
+	err := svc.DeleteAnalysisSummary(context.Background(), 7)
+	assertDomainError(t, err, domain.ErrCodeAnalysisHasLiveMigrations)
+	repo.AssertNotCalled(t, "SoftDelete", mock.Anything, mock.Anything)
+}
+
+func TestDeleteAnalysisSummary_NonTerminalRejected(t *testing.T) {
+	t.Parallel()
+	for _, st := range []domain.AnalysisState{domain.AnalysisStateRunning, domain.AnalysisStateAwaitingRootSelection} {
+		svc, repo, _, _ := newSvc(t)
+		migClient := &mocks.MockMigrationClient{}
+		svc.WithMigrationClient(migClient)
+		repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.AnalysisSummary{Identifier: 7, State: st}, nil)
+		err := svc.DeleteAnalysisSummary(context.Background(), 7)
+		assertDomainError(t, err, domain.ErrCodeInvalidStateTransition)
+		migClient.AssertNotCalled(t, "CountLiveMigrationsByAnalysis", mock.Anything, mock.Anything)
+		repo.AssertNotCalled(t, "SoftDelete", mock.Anything, mock.Anything)
+	}
+}
+
+func TestDeleteAnalysisSummary_NoMigrationClientDegradesClosed(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, _ := newSvc(t)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.AnalysisSummary{Identifier: 7, State: domain.AnalysisStateCompleted}, nil)
+	err := svc.DeleteAnalysisSummary(context.Background(), 7)
+	assertDomainError(t, err, domain.ErrCodeInternal)
+	repo.AssertNotCalled(t, "SoftDelete", mock.Anything, mock.Anything)
+}
+
+func TestDeleteAnalysisSummary_CountErrorDegradesClosed(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, _ := newSvc(t)
+	migClient := &mocks.MockMigrationClient{}
+	svc.WithMigrationClient(migClient)
+	repo.On("GetByID", mock.Anything, uint64(7), false).Return(&domain.AnalysisSummary{Identifier: 7, State: domain.AnalysisStateFailed}, nil)
+	migClient.On("CountLiveMigrationsByAnalysis", mock.Anything, uint64(7)).Return(int64(0), context.DeadlineExceeded)
+	err := svc.DeleteAnalysisSummary(context.Background(), 7)
+	assertDomainError(t, err, domain.ErrCodeInternal)
+	repo.AssertNotCalled(t, "SoftDelete", mock.Anything, mock.Anything)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

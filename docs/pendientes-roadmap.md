@@ -424,6 +424,47 @@ dispara ya.
   -d` de ambos (el deliverable se ensambla en `migration-services`, el colector vive en
   `generation-worker`).
 
+### DEFECT 5 (E10) — `.proto` bajo `core/services/` en el deliverable Rust gRPC — ARREGLADO (2026-06-23)
+- **Síntoma:** mig23 (Rust+gRPC) shippeaba **16** `.proto` bajo
+  `core/services/user/proto_include/google/…` (WKT de `google.protobuf` + anotaciones
+  `google.api`). `core/services/` es código fuente; NINGÚN `.proto` debe vivir ahí — los
+  protos sólo viven en `protobuf/proto/`. El árbol canónico
+  `protobuf/proto/milton_prism/…` ya estaba correcto; el bug era el vendoring per-servicio.
+- **Causa raíz:** el `protoc` del agent image (`/usr/bin/protoc`, libprotoc 31.1) **no trae
+  includes** (`/usr/include/google/protobuf` y `/usr/local/include` vacíos), así que el
+  agente vendoriza los protos google que `tonic-build` necesita para resolver `import`s en
+  `rust/services/<svc>/proto_include/google/…` y añade ese dir como segundo include de
+  `compile_protos`. El rename `rust/`→`core/` del assembler lo convierte en
+  `core/services/<svc>/proto_include/…`. La opción "usar el include estándar de protoc"
+  NO es viable con este image (protoc no trae nada).
+- **Arreglo (assembler, sin regen):**
+  `core/services/migration/application/assembler/assembler.go` — nuevo guardrail
+  `relocateRustVendoredProtos` (invocado en el branch `isRust()` de `Assemble`, antes del
+  rename): reubica todo `rust/services/<svc>/proto_include/<import-path>` a la ruta canónica
+  top-level `protobuf/proto/<import-path>` (el sufijo tras `proto_include/` ES el string de
+  `import` de protoc, p.ej. `google/protobuf/timestamp.proto`), dedup entre servicios, borra
+  las copias per-servicio, y `stripProtoIncludeFromBuildRs` reescribe cada `build.rs`
+  (quita el binding `let vendored_includes = "proto_include";` y colapsa el slice de includes
+  a `&[proto_root]`). Las deps google ahora resuelven vía el include root `protobuf/proto`
+  que `build.rs` ya pasaba. Test nuevo: `TestAssemble_RustGRPC_RelocatesVendoredProtos`
+  (0 `.proto` bajo core/services/, reubicación + dedup multi-servicio, build.rs reescrito).
+- **Cobertura:** el guardrail es Rust-only; Go/Python/Node ya no metían `.proto` bajo
+  `core/services/` (verificado mig24/mig28/mig38). Rust HTTP (axum) usa serde structs sin
+  tonic-build, no vendoriza, pero el guardrail lo cubriría igual.
+- Redeploy: `infra/build.sh migration-services` → `compose up --build -d --force-recreate`
+  (el deliverable se ensambla en `migration-services`; no requiere regen — cert por
+  re-descarga).
+- **Certificación (gateway :8083, dev@prism.local 10004; EdDSA bearer):**
+  - **R1** mig23 re-descarga (`GET :downloadDeliverable`): **0** `.proto` bajo
+    `core/services/`; los 16 google + 2 milton_prism viven sólo en `protobuf/proto/`;
+    `build.rs` reescrito a `&[proto_root]`.
+  - **R2** `cargo build` del ZIP extraído (`docker run … milton-prism-generation-agent:latest
+    cargo build` en `core/services/user`): **exit 0** (compila build.rs/tonic-build + crate
+    `user-service` + `shared`).
+  - **R3** mig38 (Rust HTTP) re-descarga: **0** `.proto` bajo `core/services/`. Go (mig24) y
+    mig28 sin regresión (0 cada uno).
+  - **R4** `go build ./...` + `go test ./core/services/migration/...` verdes.
+
 ### Inventario final de celdas (verificado 2026-06-23)
 Migraciones ACTIVAS (`GET /v1/migrations` → `[19,21,23,24,28,34,38]`), todas READY:
 | mig | lenguaje | protocolo | topología | celda |

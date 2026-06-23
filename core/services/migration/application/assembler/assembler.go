@@ -298,6 +298,22 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		merged[f.Path] = []byte(f.Content)
 	}
 
+	// 2a. Rust guardrail: a generated Rust gRPC service must never ship `.proto`
+	// files under its source tree (which becomes core/services/<svc>/ after the
+	// rename in step 3b). The agent image's protoc carries no well-known-type or
+	// google.api includes, so the agent tends to vendor those third-party protos
+	// into rust/services/<svc>/proto_include/google/… and add that dir as a second
+	// tonic-build include path. That violates the invariant that `core/services/`
+	// is source code only and that every `.proto` lives under the canonical
+	// `protobuf/proto/` tree. Relocate any such vendored proto to the top-level
+	// protobuf/proto/<import-path> (the path under proto_include/ IS the protoc
+	// import string), dedup, drop the per-service copies, and rewrite each rust
+	// build.rs to stop referencing proto_include — the google deps now resolve via
+	// the canonical protobuf/proto include root that build.rs already passes.
+	if a.isRust() {
+		relocateRustVendoredProtos(merged)
+	}
+
 	// 3. Append config.toml.example files (per-service, always), per-service
 	// Makefiles, and the API gateway entrypoint (conditional on useApiGateway).
 	// Neither ever contains real credentials.
@@ -816,6 +832,102 @@ func isSkeletonFileRust(rel string) bool {
 	}
 
 	return false
+}
+
+// relocateRustVendoredProtos enforces the invariant "no `.proto` under the Rust
+// service source tree" on the merged file map (keys still carry the rust/ source
+// root prefix — the rust/→core/ rename runs later in step 3b). The agent image's
+// protoc carries no bundled includes, so the agent vendors the well-known-type
+// and google.api protos into rust/services/<svc>/proto_include/<import-path> and
+// adds proto_include as a second tonic-build include. This relocates every such
+// vendored proto to the canonical top-level protobuf/proto/<import-path> (the
+// suffix after proto_include/ IS the protoc import string, e.g.
+// google/protobuf/timestamp.proto → protobuf/proto/google/protobuf/timestamp.proto),
+// dedups across services, drops the per-service proto_include copies, and rewrites
+// every rust/services/<svc>/build.rs to remove the proto_include include path so
+// tonic-build resolves the google deps via the protobuf/proto include root it
+// already passes. The result: 0 `.proto` under core/services/ and a build.rs that
+// still compiles.
+func relocateRustVendoredProtos(merged map[string][]byte) {
+	const marker = "/proto_include/"
+	for p, content := range merged {
+		// Only act on generated Rust service trees (rust/services/<svc>/…).
+		if !strings.HasPrefix(p, "rust/services/") {
+			continue
+		}
+		if !strings.HasSuffix(p, ".proto") {
+			continue
+		}
+		idx := strings.Index(p, marker)
+		if idx < 0 {
+			continue
+		}
+		// importPath is the protoc import string (e.g. google/api/http.proto).
+		importPath := p[idx+len(marker):]
+		canonical := "protobuf/proto/" + importPath
+		// Move to canonical location (first writer wins; the vendored copies are
+		// byte-identical google sources, so dedup is safe).
+		if _, exists := merged[canonical]; !exists {
+			merged[canonical] = content
+		}
+		delete(merged, p)
+	}
+
+	// Rewrite each rust build.rs to drop the proto_include include path now that
+	// the google deps resolve via protobuf/proto.
+	for p, content := range merged {
+		if !strings.HasPrefix(p, "rust/services/") || !strings.HasSuffix(p, "/build.rs") {
+			continue
+		}
+		if rewritten, changed := stripProtoIncludeFromBuildRs(string(content)); changed {
+			merged[p] = []byte(rewritten)
+		}
+	}
+}
+
+// stripProtoIncludeFromBuildRs removes any reference to a per-service
+// `proto_include` include directory from a Rust build.rs body, so tonic-build
+// resolves proto imports solely through the canonical `protobuf/proto` include
+// root. It handles the two shapes the agent emits: a separate `let … =
+// "proto_include";` binding fed into the include slice, and an inline
+// "proto_include" literal inside the &[…] include slice passed to
+// compile_protos. Returns the rewritten body and whether any change was made.
+func stripProtoIncludeFromBuildRs(body string) (string, bool) {
+	if !strings.Contains(body, "proto_include") {
+		return body, false
+	}
+	changed := false
+	var keep []string
+	for _, line := range strings.Split(body, "\n") {
+		// Drop a `let <name> = "proto_include";` (or "./proto_include") binding line.
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "let ") &&
+			strings.Contains(trimmed, "=") &&
+			(strings.Contains(trimmed, `"proto_include"`) || strings.Contains(trimmed, `"./proto_include"`)) {
+			changed = true
+			continue
+		}
+		keep = append(keep, line)
+	}
+	body = strings.Join(keep, "\n")
+
+	// Remove any leftover inline include-slice entries referencing proto_include
+	// (the literal itself, or a binding identifier we just deleted). Strip common
+	// `&[proto_root, vendored_includes]` / `&[proto_root, "proto_include"]` shapes
+	// down to `&[proto_root]` by deleting the trailing include arg.
+	replacements := []string{
+		`, vendored_includes`, `,vendored_includes`,
+		`, "proto_include"`, `,"proto_include"`,
+		`, "./proto_include"`, `,"./proto_include"`,
+		`, &vendored_includes`,
+	}
+	for _, r := range replacements {
+		if strings.Contains(body, r) {
+			body = strings.ReplaceAll(body, r, "")
+			changed = true
+		}
+	}
+	return body, changed
 }
 
 // sortFiles sorts a File slice by path for deterministic output.

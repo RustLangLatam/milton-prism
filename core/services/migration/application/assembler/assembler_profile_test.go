@@ -574,6 +574,76 @@ func TestAssemble_RustGRPC_KeepsGRPCBootstrap(t *testing.T) {
 	}
 }
 
+// TestAssemble_RustGRPC_RelocatesVendoredProtos proves the Rust gRPC guardrail:
+// the agent's vendored well-known/google.api protos (written under
+// rust/services/<svc>/proto_include/google/…) are relocated to the canonical
+// protobuf/proto/google/… tree, NO .proto survives under core/services/, and the
+// per-service build.rs is rewritten to drop the proto_include include path.
+func TestAssemble_RustGRPC_RelocatesVendoredProtos(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "rust", "grpc")
+	buildRs := `fn main() {
+    let service_proto = "../../../protobuf/proto/milton_prism/services/user/v1/user_service.proto";
+    let proto_root = "../../../protobuf/proto";
+    let vendored_includes = "proto_include";
+    tonic_build::configure()
+        .compile_protos(&[service_proto], &[proto_root, vendored_includes])
+        .expect("Failure_Proto_Codegen");
+}
+`
+	artifacts := []InputFile{
+		{Path: "rust/services/user/build.rs", Content: buildRs},
+		{Path: "rust/services/user/proto_include/google/protobuf/timestamp.proto", Content: "syntax = \"proto3\";\npackage google.protobuf;\n"},
+		{Path: "rust/services/user/proto_include/google/api/annotations.proto", Content: "syntax = \"proto3\";\npackage google.api;\n"},
+		// A second service vendoring the SAME proto — must dedup, not collide.
+		{Path: "rust/services/order/proto_include/google/protobuf/timestamp.proto", Content: "syntax = \"proto3\";\npackage google.protobuf;\n"},
+		{Path: "rust/services/user/src/main.rs", Content: "fn main() {}\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// R1 invariant: zero .proto under core/services/.
+	for _, f := range files {
+		if strings.HasPrefix(f.Path, "core/services/") && strings.HasSuffix(f.Path, ".proto") {
+			t.Errorf("proto leaked under core/services/: %q", f.Path)
+		}
+		if strings.Contains(f.Path, "/proto_include/") {
+			t.Errorf("proto_include dir survived: %q", f.Path)
+		}
+	}
+
+	// Relocated to canonical protobuf/proto/ (untouched by the rust/→core/ rename).
+	for _, want := range []string{
+		"protobuf/proto/google/protobuf/timestamp.proto",
+		"protobuf/proto/google/api/annotations.proto",
+	} {
+		if !set[want] {
+			t.Errorf("vendored proto not relocated to canonical path: %q missing", want)
+		}
+	}
+
+	// build.rs rewritten: no proto_include reference, proto_root retained.
+	var gotBuildRs string
+	for _, f := range files {
+		if f.Path == "core/services/user/build.rs" {
+			gotBuildRs = string(f.Content)
+		}
+	}
+	if gotBuildRs == "" {
+		t.Fatal("core/services/user/build.rs missing")
+	}
+	if strings.Contains(gotBuildRs, "proto_include") || strings.Contains(gotBuildRs, "vendored_includes") {
+		t.Errorf("build.rs still references proto_include:\n%s", gotBuildRs)
+	}
+	if !strings.Contains(gotBuildRs, "&[proto_root]") {
+		t.Errorf("build.rs include slice not collapsed to &[proto_root]:\n%s", gotBuildRs)
+	}
+}
+
 // TestAssemble_PythonProfile_EnvExamplePerService proves the Python deliverable
 // ships a per-service .env.example (the pydantic homologue of Go's
 // config.toml.example) under core/services/<svc>/, carrying the MONGO_/GRPC_

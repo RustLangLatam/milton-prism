@@ -38,6 +38,14 @@ type InvokeRequest struct {
 	// or "RS256"/"ES256"/"EdDSA" (asymmetric public key). Empty for non-JWT or
 	// undetermined — the prompt then accepts the idiomatic default for the stack.
 	AuthSignatureAlg string
+	// Store is the persistence engine the generated service must target
+	// ("mongodb" | "postgres" | "mysql"), resolved by the reader (override ??
+	// detected). Orthogonal to OutputProfile/Protocol. Drives the store section
+	// injected into the prompt: "mongodb" injects nothing (the original Mongo path,
+	// unchanged); "postgres" instructs raw-SQL pgx/database-sql repos + a
+	// postgres_client pool + golang-migrate migrations (no ORM). Empty is treated as
+	// "mongodb".
+	Store string
 	// APIKey is ANTHROPIC_API_KEY for production use (sk-ant-api03-…).
 	// Passed to the container as an env var with --bare mode.
 	// Callers MUST NOT log this field — it carries a runtime secret (A.7).

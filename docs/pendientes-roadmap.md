@@ -1,5 +1,59 @@
 # Pendientes / Roadmap — backend
 
+## Eje BASE DE DATOS — v1 Go + PostgreSQL (HECHO, 2026-06-23)
+
+**Objetivo:** generar capa de persistencia **PostgreSQL** para **Go** (antes la
+generación era solo MongoDB). Alcance v1 = **Go + PostgreSQL + gRPC +
+microservicios**. Sin cambio de proto/gateway: el enum `TargetDatabase`
+(`MONGODB=1, POSTGRES=2, MARIADB=3`) y `target.database` ya viajaban en el
+contrato — solo wiring Go. DDL/esquema lo emite el LLM en generación desde
+`owned_resources` + `cross_service_fks` (no se persiste schema). Raw SQL + pgx/v5
+(o `database/sql`) + golang-migrate, **sin ORM**; IDs por sequence/identity; tx por
+`WithTransaction`; placeholders `$1`; upsert `ON CONFLICT`.
+
+**Cambios (1 línea c/u):**
+- `core/services/migration/domain/domain.go` — `generableDatabaseByLanguage`
+  (Go→{MONGODB,POSTGRES}; Python/Node/Rust→{MONGODB}) + `IsGenerableDatabase`;
+  consts `TargetDatabasePostgres/MariaDB`.
+- `core/services/migration/domain/errors.go` — `MIG111`
+  `ErrUnsupportedDatabase` (`Failure_Unsupported_Database`).
+- `core/services/migration/application/service.go` — guarda de DB en
+  `CreateMigration` (UNSPECIFIED→MONGODB→`IsGenerableDatabase`); `storeLabel(tc)`.
+- `core/services/migration/infrastructure/grpc_handlers/migration_handler.go` +
+  `pkg/gateway/common/error/migration_errors.go` — MIG111 → InvalidArgument/400.
+- `core/worker/generation/ports/*` — `Store` en `ServiceSpec`/`GenerationPackage`/
+  `InvokeRequest`.
+- `core/worker/generation/infrastructure/adapters/mongo_generation_package_reader.go`
+  — `resolveDatabase(override, summaryID)` (Auto→`database_detection`:
+  POSTGRESQL→postgres, MYSQL→mysql, else mongodb) + `detectedEngineStore` +
+  `databaseStoreToken`; propaga `Store`.
+- `core/worker/generation/application/pipeline.go` — pasa `spec.Store`→`req.Store`,
+  log `store=`.
+- `core/worker/generation/infrastructure/agent/workspace.go` — `storeSection(profile,
+  store)` (mongodb→nada; go+postgres→repos `postgres_*_repository.go`,
+  `postgres_client/builder.go`, tx SQL, `migrations/*.sql`, IDs sequence,
+  `.env DATABASE_URL/DB_*`), inyectado en `writeCombinedPrompt`.
+- `core/worker/decomposition/{domain,ports,application,infrastructure}` —
+  boundary spec emite `store: <db>`; `LoadStore`/`resolveStore` (espejo de topology).
+- `core/services/migration/application/assembler/{assembler.go,assembler_config.go}`
+  — Go+Postgres emite `.env.example` con `DATABASE_URL`/`DB_*` (0 `MONGO_*`) en vez
+  del `config.toml.example` Mongo.
+- Docs: `docs/prism/milton-prism-go-profile.md` (§7P PostgreSQL + §15) y
+  `...-service-generator-prompt.md` (§1/§2/§3/§4/§7 ramifican por `store`).
+
+**GATES:** G1 Go+Postgres→200, Python+Postgres/Go+MySQL→400 (MIG111); G2 worker
+`store=postgres`→READY; G3 deliverable con `postgres_*_repository.go` +
+`migrations/*.sql` + `.env DATABASE_URL/DB_*` y `go build ./...`=0; G4 Mongo sin
+regresión; G5 `go build`+`go test` verdes (tests nuevos: `IsGenerableDatabase`,
+`detectedEngineStore`/`databaseStoreToken`, `storeSection`, `storeLabel`, axis G1).
+
+**PASO SIGUIENTE:** (1) **frontend tile PostgreSQL** en el panel React (follow-up,
+fuera del backend); (2) **extender a MySQL/MariaDB** (slot 3, hole v1 — falta
+storeSection + assembler + celda certificada); (3) **SQL para Python/Node/Rust**
+(hoy MongoDB-only). El modo **Auto** (`database == UNSPECIFIED`) ya está cableado en
+el worker contra `database_detection`, pero `CreateMigration` aún rechaza
+UNSPECIFIED (MIG105); relajar esa guarda es prerequisito para exponer Auto.
+
 ## Plantillas buf INTERNAS fuera del deliverable (HECHO, 2026-06-23)
 
 **Bug:** el entregable traía dos plantillas buf que son tooling INTERNO de la

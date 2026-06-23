@@ -147,6 +147,23 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 	if !domain.IsGenerableProtocol(m.GetTarget().GetLanguage(), m.GetTarget().GetInterServiceTransport()) {
 		return nil, domain.ErrUnsupportedProtocol
 	}
+	// Reject (language, database) cells the generator cannot emit. The DATABASE axis
+	// is orthogonal to language/protocol/topology. v1 supports Go + {MongoDB,
+	// PostgreSQL} and every other language + MongoDB only (MySQL/MariaDB and SQL for
+	// non-Go languages are holes). TARGET_DATABASE_UNSPECIFIED is "Auto": the real
+	// engine is resolved at generation time from the analysis database_detection;
+	// at creation it canonicalises to MONGODB (always generable for every language)
+	// so an Auto request is never wrongly rejected. The concrete engine still gets
+	// validated in the worker before generation. A non-UNSPECIFIED database is
+	// validated as-is so e.g. Go + MySQL or Python + PostgreSQL is rejected up front.
+	requestedDB := m.GetTarget().GetDatabase()
+	effectiveDB := requestedDB
+	if effectiveDB == domain.TargetDatabaseUnspecified {
+		effectiveDB = domain.TargetDatabaseMongoDB
+	}
+	if !domain.IsGenerableDatabase(m.GetTarget().GetLanguage(), effectiveDB) {
+		return nil, domain.ErrUnsupportedDatabase
+	}
 	if s.identity != nil {
 		if err := s.identity.ValidateUserExists(ctx, m.GetOwnerUserId()); err != nil {
 			return nil, err
@@ -1056,6 +1073,26 @@ func protocolLabel(tc *migrationv1.TargetConfig) string {
 		return "http"
 	}
 	return "grpc"
+}
+
+// storeLabel maps the migration's target database to the short store label used by
+// the assembler and worker ("mongodb" | "postgres" | "mysql"). A nil TargetConfig
+// or TARGET_DATABASE_UNSPECIFIED canonicalises to "mongodb" (the original path,
+// always generable), mirroring CreateMigration's database canonicalisation. The
+// worker resolves Auto (UNSPECIFIED) against the analysis database_detection
+// before generation; this label is the deliverable-side default for the assembler.
+func storeLabel(tc *migrationv1.TargetConfig) string {
+	if tc == nil {
+		return "mongodb"
+	}
+	switch tc.GetDatabase() {
+	case migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES:
+		return "postgres"
+	case migrationv1.TargetDatabase_TARGET_DATABASE_MARIADB:
+		return "mysql"
+	default:
+		return "mongodb"
+	}
 }
 
 // generatorPromptRef returns the path to the generator prompt document for the

@@ -9,4 +9,5 @@ var (
 	IsRootLevelBinary     = isRootLevelBinary
 	WriteCombinedPrompt   = writeCombinedPrompt
 	PromptProfileBindings = promptProfileBindings
+	StoreSection          = storeSection
 )

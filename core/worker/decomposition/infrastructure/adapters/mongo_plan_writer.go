@@ -117,10 +117,16 @@ func writeBoundarySpecs(
 	}
 
 	for _, svc := range plan.GetServices() {
+		// The store label is not threaded into the PlanWriter port (it carries no
+		// TargetConfig); these workspace-side specs are a debug artifact and not the
+		// copy generation consumes (that is the design_artifacts persisted from the
+		// pipeline's buildArtifacts, which DOES stamp the resolved store). Default to
+		// "mongodb" here so the workspace spec stays well-formed.
 		content := workerdomain.BuildBoundarySpecYAML(
 			svc, ownership.SharedDatabase,
 			fksByOwner[svc.GetName()],
 			opByService[svc.GetName()],
+			"mongodb",
 		)
 		path := filepath.Join(dir, svc.GetName()+".yaml")
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

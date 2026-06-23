@@ -137,6 +137,7 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 		req.Protocol,
 		req.AuthScheme,
 		req.AuthSignatureAlg,
+		req.Store,
 		req.BoundarySpec,
 		req.ProtoContent,
 	); err != nil {

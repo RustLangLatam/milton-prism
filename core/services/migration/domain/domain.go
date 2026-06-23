@@ -76,6 +76,8 @@ const (
 	TargetLanguageNode               = migrationv1.TargetLanguage_TARGET_LANGUAGE_NODE
 	TargetDatabaseUnspecified        = migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED
 	TargetDatabaseMongoDB            = migrationv1.TargetDatabase_TARGET_DATABASE_MONGODB
+	TargetDatabasePostgres           = migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES
+	TargetDatabaseMariaDB            = migrationv1.TargetDatabase_TARGET_DATABASE_MARIADB
 	TransportUnspecified             = migrationv1.Transport_TRANSPORT_UNSPECIFIED
 	TransportGRPC                    = migrationv1.Transport_TRANSPORT_GRPC
 	TransportHTTP                    = migrationv1.Transport_TRANSPORT_HTTP
@@ -151,5 +153,48 @@ func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
 		return false
 	}
 	_, ok = transports[transport]
+	return ok
+}
+
+// generableDatabaseByLanguage is the single source of truth for the (language,
+// database) persistence matrix — the DATABASE axis, orthogonal to protocol and
+// topology. A cell present here means the generator can emit that language's
+// persistence layer against that database engine (profile doc + generator prompt
+// + worker storeSection + assembler config behaviour exist and are certified).
+//
+// v1 state: Go is the only language with a real SQL persistence profile, and the
+// only certified SQL engine is PostgreSQL (raw SQL + pgx/database-sql +
+// golang-migrate, no ORM). Every generable language keeps MongoDB (the original
+// path, unchanged). MariaDB (= MySQL family, slot 3) is a documented hole in v1
+// and is NOT enabled for any language; Python/Node/Rust + SQL are holes too.
+// Any new cell (a new SQL engine for Go, or SQL for another language) must be
+// added here AND given a storeSection prompt + assembler config + a certified run.
+var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}{
+	TargetLanguageGo: {
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {},
+	},
+	TargetLanguagePython: {
+		TargetDatabaseMongoDB: {},
+	},
+	TargetLanguageNode: {
+		TargetDatabaseMongoDB: {},
+	},
+	TargetLanguageRust: {
+		TargetDatabaseMongoDB: {},
+	},
+}
+
+// IsGenerableDatabase reports whether the generator can emit lang's persistence
+// layer for the database engine db today. The caller is expected to canonicalise
+// TARGET_DATABASE_UNSPECIFIED to a concrete engine (Auto → database_detection,
+// else MONGODB) before calling, mirroring how topology/transport are
+// canonicalised. A non-generable language always returns false regardless of db.
+func IsGenerableDatabase(lang TargetLanguage, db TargetDatabase) bool {
+	databases, ok := generableDatabaseByLanguage[lang]
+	if !ok {
+		return false
+	}
+	_, ok = databases[db]
 	return ok
 }

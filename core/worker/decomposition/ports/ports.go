@@ -18,6 +18,13 @@ type TargetTopologyLoader interface {
 	// map an absent/unspecified value to TARGET_TOPOLOGY_MICROSERVICES so the
 	// default flow is never broken.
 	LoadTopology(ctx context.Context, migrationID uint64) (workerdomain.TargetTopology, error)
+	// LoadStore returns the migration's target persistence engine as the short
+	// store label ("mongodb"|"postgres"|"mysql") written to the boundary spec's
+	// `store:` field. Implementations must map an absent/unspecified value (Auto)
+	// to "mongodb" — the resolved engine for Auto is determined later by the
+	// generation worker against the analysis database_detection; the boundary spec
+	// only needs the explicit override or the safe default.
+	LoadStore(ctx context.Context, migrationID uint64) (string, error)
 }
 
 // GraphLoader reads the weighted dependency graph from a persisted

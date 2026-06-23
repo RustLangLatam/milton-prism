@@ -485,10 +485,54 @@ func authSchemeSection(outputProfile, protocol, authScheme, authSigAlg string) s
 		"- The validation code MUST be part of the build gate (" + gate + "): it compiles and is exercised by at least one unit test (valid token passes, missing/expired/wrong-signature token is rejected).\n\n"
 }
 
+// storeSection returns the prose block injected into the combined prompt that
+// pins the persistence engine the generated service must target. It is the store
+// homologue of transportSection / authSchemeSection: profile- and store-aware.
+//
+// v1 GENERATES SQL persistence only for Go + PostgreSQL; "mongodb" (the original
+// path) injects nothing so the established Mongo behaviour is unchanged:
+//   - "mongodb"/"" → no block; the profile doc's MongoDB persistence is used as-is.
+//   - (go, "postgres") → raw-SQL PostgreSQL layer, NO ORM: pgx/v5 (or database/sql)
+//     repos implementing the SAME ports, a postgres_client pool builder, an SQL
+//     transaction manager, golang-migrate migrations/*.sql emitted from the
+//     owned_resources, IDs by sequence/identity, .env with DATABASE_URL/DB_*.
+//   - any other (profile, store) SQL cell → an HONEST note that SQL for that cell
+//     is a v1 hole and must not be guessed (this path is unreachable while the
+//     IsGenerableDatabase guard rejects those cells at creation, but kept so the
+//     prompt is self-consistent if the guard is ever relaxed).
+func storeSection(outputProfile, store string) string {
+	s := strings.ToLower(strings.TrimSpace(store))
+	if s == "" || s == "mongodb" {
+		return ""
+	}
+	// Only Go + PostgreSQL is generated in v1. Every other SQL cell is a hole.
+	if outputProfile != "go" || s != "postgres" {
+		return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
+			"The target database for this migration is **" + s + "** on the **" + outputProfile +
+			"** profile, which v1 of the generator does NOT emit (v1 generates SQL persistence " +
+			"only for Go + PostgreSQL; every other language uses MongoDB). Do NOT guess a " +
+			s + " implementation. Generate the MongoDB persistence layer as the profile doc " +
+			"describes and add a single TODO note stating that `" + s + "` was requested but is a " +
+			"v1 generation hole and must be wired manually. Be honest about the gap.\n\n"
+	}
+
+	return "## Persistence: PostgreSQL (raw SQL, no ORM)\n\n" +
+		"This service persists to **PostgreSQL**, NOT MongoDB. Replace the MongoDB persistence " +
+		"layer the profile doc describes with an idiomatic raw-SQL PostgreSQL layer. Mandatory constraints:\n" +
+		"- Use **pgx/v5** (`github.com/jackc/pgx/v5` with `pgxpool`) — or `database/sql` with the pgx stdlib driver. Do NOT use an ORM (no GORM/ent/sqlboiler): the canon is that domain types are aliases of the proto messages, never ORM entities.\n" +
+		"- For EACH owned resource (a proto message in `owned_resources`) write a repository `core/services/<svc>/infrastructure/repositories/postgres_<resource>_repository.go` that implements the SAME repository ports the service already defines (same interface methods/signatures the gRPC/HTTP handlers depend on) — only the implementation changes from Mongo to SQL.\n" +
+		"- Add a shared client `core/shared/postgres_client/builder.go` that builds a `*pgxpool.Pool` from config and pings it on startup (the Mongo-client homologue). Wire it where the Mongo client was wired.\n" +
+		"- Add an SQL transaction manager behind a `WithTransaction(ctx, fn)` API (over `pgx.Tx` / `*sql.Tx`) mirroring the existing Mongo transaction abstraction, so service-layer transaction boundaries are unchanged.\n" +
+		"- Write the DDL as **golang-migrate** migrations under `migrations/NNNN_<name>.up.sql` (+ matching `.down.sql`), deriving the schema from the `owned_resources` (one table per domain message, columns from the message fields, snake_case) and the `cross_service_fks` in the boundary spec (FK columns / indexes, never a hard cross-service FK constraint). Allocate IDs with a sequence / `GENERATED ALWAYS AS IDENTITY` (`BIGINT`/`BIGSERIAL`) — do NOT emulate a `system_counters` collection.\n" +
+		"- Map struct↔row explicitly (snake_case columns), use `$1` placeholders, and implement upserts with `INSERT ... ON CONFLICT (...) DO UPDATE`.\n" +
+		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `postgres://user:password@host:5432/<svc>_db?sslmode=disable`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
+		"- The persistence code MUST be part of the build gate (`go build ./...` + `go test ./...`): the repos compile and at least one repository round-trip is exercised (an in-memory/`sqlmock` or container-backed test is acceptable).\n\n"
+}
+
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.
 // The prompt references the generator prompt file and includes boundary spec
 // and proto content inline so the agent has everything without a round-trip.
-func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, errorPrefix, outputProfile, protocol, authScheme, authSigAlg, boundarySpec, protoContent string) (string, error) {
+func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, errorPrefix, outputProfile, protocol, authScheme, authSigAlg, store, boundarySpec, protoContent string) (string, error) {
 	// The combined prompt is profile-parametrised: the worker carries no
 	// language-specific templates, so the per-language coupling lives only in
 	// the profile doc and the language label resolved here. Defaults to Go.
@@ -519,6 +563,7 @@ func writeCombinedPrompt(workspaceDir string, generatorPromptRef, serviceName, e
 	buf.WriteString("\n\n")
 	buf.WriteString(transportSection(outputProfile, protocol))
 	buf.WriteString(authSchemeSection(outputProfile, protocol, authScheme, authSigAlg))
+	buf.WriteString(storeSection(outputProfile, store))
 	buf.WriteString("## Boundary Spec\n\n```yaml\n")
 	buf.WriteString(strings.TrimSpace(boundarySpec))
 	buf.WriteString("\n```\n\n## Proto Contract\n\n```proto\n")

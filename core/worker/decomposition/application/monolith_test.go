@@ -116,7 +116,7 @@ func TestBuildMonolithArtifacts_Merges(t *testing.T) {
 		{ServiceName: "articles", ProtoContent: "message Article {}"},
 		{ServiceName: "user", ProtoContent: "message User {}", Incomplete: true, IncompleteReason: "non-CRUD route"},
 	}
-	arts := buildArtifacts(plan, contracts, workerdomain.DataOwnership{SharedDatabase: true}, candidates, true)
+	arts := buildArtifacts(plan, contracts, workerdomain.DataOwnership{SharedDatabase: true}, candidates, true, "mongodb")
 	if len(arts) != 1 {
 		t.Fatalf("monolith artifacts: expected 1, got %d", len(arts))
 	}

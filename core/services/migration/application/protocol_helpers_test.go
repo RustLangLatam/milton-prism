@@ -63,3 +63,30 @@ func TestProtocolLabel(t *testing.T) {
 		})
 	}
 }
+
+// TestStoreLabel proves the deliverable-side store label derivation feeding the
+// assembler: TARGET_DATABASE_POSTGRES→"postgres", MARIADB→"mysql", and everything
+// else (MONGODB, UNSPECIFIED, nil target)→"mongodb" — the established default.
+func TestStoreLabel(t *testing.T) {
+	if got := storeLabel(nil); got != "mongodb" {
+		t.Errorf("storeLabel(nil) = %q, want mongodb", got)
+	}
+	cases := []struct {
+		name string
+		db   migrationv1.TargetDatabase
+		want string
+	}{
+		{"postgres", migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES, "postgres"},
+		{"mariadb_mysql", migrationv1.TargetDatabase_TARGET_DATABASE_MARIADB, "mysql"},
+		{"mongodb", migrationv1.TargetDatabase_TARGET_DATABASE_MONGODB, "mongodb"},
+		{"unspecified", migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED, "mongodb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc2 := &migrationv1.TargetConfig{Database: tc.db}
+			if got := storeLabel(tc2); got != tc.want {
+				t.Errorf("storeLabel(%v) = %q, want %q", tc.db, got, tc.want)
+			}
+		})
+	}
+}

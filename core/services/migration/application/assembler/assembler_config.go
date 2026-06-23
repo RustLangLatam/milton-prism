@@ -44,6 +44,70 @@ func generateConfigExamples(assembled map[string][]byte) error {
 	return nil
 }
 
+// generatePostgresConfigExamples appends a `.env.example` file to each generated
+// Go service cmd directory for a Go + PostgreSQL deliverable. It is the SQL
+// homologue of generateConfigExamples (the Mongo config.toml.example): a Go +
+// PostgreSQL service persists with raw SQL over pgx/database-sql, so its config
+// is a DATABASE_URL / DB_* .env rather than a Mongo `[mongo]` TOML section.
+//
+// The file is emitted per service at core/cmd/<svc>-services/.env.example,
+// mirroring the Mongo config.toml.example placement. Zero MONGO_* variables ever
+// appear. Every value is a placeholder — never a real credential (assertNoSecrets
+// guards each file).
+func generatePostgresConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
+		port := 50051 + i
+		content := postgresServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("core/cmd/%s-services/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// postgresServiceEnvExample returns the content of a .env.example for one
+// generated Go + PostgreSQL microservice. It documents BOTH the single
+// DATABASE_URL DSN and the discrete DB_* parts (the generator may read either),
+// the gRPC server bind, and the auth secret. Every value is a placeholder; no
+// MONGO_* variable is present.
+func postgresServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service (PostgreSQL persistence)
+# Copy this file to .env (in the directory the service is launched from) and fill
+# in the placeholder values, or export them into the environment before starting
+# the service: ./%s-services
+#
+# This service persists to PostgreSQL via raw SQL (pgx / database/sql, no ORM).
+# Schema is applied from migrations/*.sql (golang-migrate). Set EITHER the single
+# DATABASE_URL DSN OR the discrete DB_* parts (DATABASE_URL wins when both are set).
+
+# ── PostgreSQL ──────────────────────────────────────────────────────────────
+# DATABASE_URL: full libpq/pgx DSN, e.g.
+#   postgres://user:password@host:5432/%s?sslmode=disable
+DATABASE_URL=<your-postgres-dsn>
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=<your-db-user>
+DB_PASSWORD=<your-db-password>
+DB_NAME=%s
+DB_SSLMODE=disable
+
+# ── gRPC server ─────────────────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, name, db, db, port)
+}
+
 // generatePythonConfigExamples appends a `.env.example` file to each generated
 // Python service directory in the assembled map. It is the pydantic homologue of
 // the Go config.toml.example: the Go deliverable emits

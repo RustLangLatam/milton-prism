@@ -63,3 +63,37 @@ func (l *MongoTopologyLoader) LoadTopology(ctx context.Context, migrationID uint
 	}
 	return tc.GetTopology(), nil
 }
+
+// LoadStore reads target_bytes for the migration, unmarshals the TargetConfig, and
+// returns its persistence engine as the boundary-spec store label
+// ("mongodb"|"postgres"|"mysql"). A missing migration, absent target, or
+// UNSPECIFIED (Auto) database all resolve to "mongodb" — the boundary spec only
+// carries the explicit override or the safe default; the generation worker
+// resolves Auto against the analysis database_detection. The default never errors.
+func (l *MongoTopologyLoader) LoadStore(ctx context.Context, migrationID uint64) (string, error) {
+	var doc topologyDoc
+	err := l.coll.FindOne(ctx,
+		bson.M{"identifier": migrationID, "delete_time": nil},
+	).Decode(&doc)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return "mongodb", nil
+		}
+		return "mongodb", fmt.Errorf("topology-loader: find migration %d for store: %w", migrationID, err)
+	}
+	if len(doc.TargetBytes) == 0 {
+		return "mongodb", nil
+	}
+	tc := &migrationv1.TargetConfig{}
+	if err := proto.Unmarshal(doc.TargetBytes, tc); err != nil {
+		return "mongodb", fmt.Errorf("topology-loader: unmarshal target for migration %d store: %w", migrationID, err)
+	}
+	switch tc.GetDatabase() {
+	case migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES:
+		return "postgres", nil
+	case migrationv1.TargetDatabase_TARGET_DATABASE_MARIADB:
+		return "mysql", nil
+	default:
+		return "mongodb", nil
+	}
+}

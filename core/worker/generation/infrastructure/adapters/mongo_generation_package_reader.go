@@ -52,6 +52,13 @@ type analysisSummaryAuthDoc struct {
 	AuthSchemeDetectionBytes []byte `bson:"auth_scheme_detection_bytes,omitempty"`
 }
 
+// analysisSummaryDatabaseDoc reads only the database-detection blob from an
+// analysis summary. Used to resolve Auto (TARGET_DATABASE_UNSPECIFIED) generation
+// against the engine the source actually used.
+type analysisSummaryDatabaseDoc struct {
+	DatabaseDetectionBytes []byte `bson:"database_detection_bytes,omitempty"`
+}
+
 type artifactDocMinimal struct {
 	ServiceName      string `bson:"service_name"`
 	ProtoContent     string `bson:"proto_content"`
@@ -86,16 +93,27 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 	lang := migrationv1.TargetLanguage_TARGET_LANGUAGE_UNSPECIFIED
 	transport := migrationv1.Transport_TRANSPORT_UNSPECIFIED
 	authOverride := analysisv1.AuthScheme_AUTH_SCHEME_UNSPECIFIED
+	dbOverride := migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED
 	if len(migDoc.TargetBytes) > 0 {
 		var tc migrationv1.TargetConfig
 		if err := proto.Unmarshal(migDoc.TargetBytes, &tc); err == nil {
 			lang = tc.GetLanguage()
 			transport = tc.GetInterServiceTransport()
 			authOverride = tc.GetTargetAuthScheme()
+			dbOverride = tc.GetDatabase()
 		}
 	}
 	protocol := protocolLabel(transport)
 	profile, promptRef := profileAndPromptForLanguage(lang, transport)
+
+	// Resolve the effective persistence engine the generated services must target:
+	// the per-migration override (TargetConfig.database) wins; otherwise — for Auto
+	// (UNSPECIFIED) — the engine detected in the linked analysis summary, mapped
+	// twin to resolveAuthScheme (POSTGRESQL→postgres, MYSQL→mysql, else mongodb).
+	// Best-effort: a missing link or cross-DB read failure degrades to "mongodb"
+	// (the original path) — generation never fails for lack of a database signal.
+	store := r.resolveDatabase(ctx, dbOverride, migDoc.AnalysisSummaryID)
+	applog.Infof("generation-worker: generation package store migration_id=%d store=%s", migrationID, store)
 
 	// Resolve the effective authentication scheme the generated service must
 	// implement: the per-migration override (TargetConfig.target_auth_scheme) wins;
@@ -133,6 +151,7 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 			Protocol:           protocol,
 			AuthScheme:         authScheme,
 			AuthSignatureAlg:   authSigAlg,
+			Store:              store,
 		}
 	}
 
@@ -140,6 +159,7 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 		MigrationID:   migrationID,
 		OutputProfile: profile,
 		Protocol:      protocol,
+		Store:         store,
 		Services:      services,
 	}, nil
 }
@@ -178,6 +198,80 @@ func (r *MongoGenerationPackageReader) resolveAuthScheme(ctx context.Context, ov
 		return "none", ""
 	}
 	return authSchemeToken(asd.GetScheme()), asd.GetSignatureAlg()
+}
+
+// resolveDatabase returns the effective persistence engine label
+// ("mongodb"|"postgres"|"mysql") the generated services must target. It is the
+// store twin of resolveAuthScheme: the per-migration override wins; otherwise —
+// for Auto (TARGET_DATABASE_UNSPECIFIED) — the engine detected in the linked
+// analysis summary (read cross-DB, read-only). Degrades to "mongodb" on any miss
+// (the original path) so generation never fails for lack of a database signal.
+// The mapping mirrors the blueprint: POSTGRESQL→postgres, MYSQL→mysql,
+// MONGODB/non-generable→mongodb.
+func (r *MongoGenerationPackageReader) resolveDatabase(ctx context.Context, override migrationv1.TargetDatabase, summaryID uint64) string {
+	if override != migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED {
+		return databaseStoreToken(override)
+	}
+	if summaryID == 0 {
+		return "mongodb"
+	}
+	analysisDB := r.migrations.Database().Client().Database(analysisSummariesDBName)
+	var doc analysisSummaryDatabaseDoc
+	err := analysisDB.Collection("analysis_summaries").
+		FindOne(ctx, bson.M{"identifier": summaryID}).Decode(&doc)
+	if err != nil {
+		if !errors.Is(err, mongo.ErrNoDocuments) {
+			applog.Warningf("generation-worker: database-detection summary read failed summary_id=%d: %v", summaryID, err)
+		}
+		return "mongodb"
+	}
+	if len(doc.DatabaseDetectionBytes) == 0 {
+		return "mongodb"
+	}
+	var wrapper analysisv1.AnalysisSummary
+	if err := proto.Unmarshal(doc.DatabaseDetectionBytes, &wrapper); err != nil {
+		applog.Warningf("generation-worker: database-detection unmarshal failed summary_id=%d: %v", summaryID, err)
+		return "mongodb"
+	}
+	dd := wrapper.GetDatabaseDetection()
+	if dd == nil || dd.GetUnknown() {
+		return "mongodb"
+	}
+	// The first deterministically detected engine is the primary store. Map it to a
+	// generation target; auxiliary engines (e.g. Redis) are ignored for the store.
+	return detectedEngineStore(dd.GetEngines())
+}
+
+// detectedEngineStore maps the detected primary engine to a generation store
+// label. Mirrors the blueprint Auto mapping: PostgreSQL→postgres, MySQL→mysql,
+// everything else (MongoDB, SQLite, SQLServer, Oracle, Redis, none)→mongodb (the
+// original, always-generable path). The first SQL/Mongo engine in the list wins;
+// Redis-only or empty degrades to mongodb.
+func detectedEngineStore(engines []analysisv1.DatabaseEngine) string {
+	for _, e := range engines {
+		switch e {
+		case analysisv1.DatabaseEngine_DATABASE_ENGINE_POSTGRESQL:
+			return "postgres"
+		case analysisv1.DatabaseEngine_DATABASE_ENGINE_MYSQL:
+			return "mysql"
+		case analysisv1.DatabaseEngine_DATABASE_ENGINE_MONGODB:
+			return "mongodb"
+		}
+	}
+	return "mongodb"
+}
+
+// databaseStoreToken maps a TargetDatabase override to its lowercase store label.
+// Mirrors migration.Service.storeLabel; UNSPECIFIED canonicalises to "mongodb".
+func databaseStoreToken(d migrationv1.TargetDatabase) string {
+	switch d {
+	case migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES:
+		return "postgres"
+	case migrationv1.TargetDatabase_TARGET_DATABASE_MARIADB:
+		return "mysql"
+	default:
+		return "mongodb"
+	}
 }
 
 // authSchemeToken maps an AuthScheme enum to its lowercase canonical token. Mirrors

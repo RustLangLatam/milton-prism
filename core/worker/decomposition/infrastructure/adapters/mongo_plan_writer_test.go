@@ -24,7 +24,7 @@ func TestBuildBoundarySpecYAML_Articles(t *testing.T) {
 		{FromService: "articles", ToService: "user", FromModule: "conduit.articles.views"},
 	}
 
-	yaml := workerdomain.BuildBoundarySpecYAML(svc, true, crossFKs, opCouplings)
+	yaml := workerdomain.BuildBoundarySpecYAML(svc, true, crossFKs, opCouplings, "mongodb")
 	t.Logf("\n--- articles boundary spec ---\n%s--- end ---", yaml)
 
 	checks := []struct{ want, desc string }{
@@ -61,7 +61,7 @@ func TestBuildBoundarySpecYAML_User(t *testing.T) {
 		InterServiceDeps: nil,
 	}
 
-	yaml := workerdomain.BuildBoundarySpecYAML(svc, true, nil, nil)
+	yaml := workerdomain.BuildBoundarySpecYAML(svc, true, nil, nil, "mongodb")
 
 	if !strings.Contains(yaml, "name: user") {
 		t.Error("missing name: user")

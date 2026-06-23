@@ -139,6 +139,27 @@ func (p *Pipeline) resolveTopology(ctx context.Context, migrationID uint64) work
 	return t
 }
 
+// resolveStore reads the migration's target persistence engine as the boundary-
+// spec store label ("mongodb"|"postgres"|"mysql"), defaulting to "mongodb" when
+// the loader is absent or errors. The default is never an error: a missing store
+// must not break the flow. The label is stamped into every service's boundary
+// spec so the generation worker's storeSection branches the prompt accordingly.
+func (p *Pipeline) resolveStore(ctx context.Context, migrationID uint64) string {
+	if p.topologyLoader == nil {
+		return "mongodb"
+	}
+	s, err := p.topologyLoader.LoadStore(ctx, migrationID)
+	if err != nil {
+		applog.Warningf("decomposition-worker: store load failed migration_id=%d, defaulting to mongodb: %v",
+			migrationID, err)
+		return "mongodb"
+	}
+	if s == "" {
+		return "mongodb"
+	}
+	return s
+}
+
 // WithSummaryLoader wires the SummaryLoader used by the M1 digest distiller.
 // When set, the digest is computed after stage 3 and logged. Returns p for chaining.
 func (p *Pipeline) WithSummaryLoader(sl ports.SummaryLoader) *Pipeline {
@@ -322,6 +343,8 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// microservices path (default) is left untouched.
 	topology := p.resolveTopology(ctx, job.MigrationID)
 	monolith := topology == workerdomain.TopologyMonolith
+	store := p.resolveStore(ctx, job.MigrationID)
+	applog.Infof("decomposition-worker: target store migration_id=%d store=%s", job.MigrationID, store)
 	if monolith && len(candidates) > 0 {
 		prefix := candidates[0].ErrorPrefix
 		if p.allocator != nil {
@@ -460,7 +483,7 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// call UpsertArtifacts here (before return) to ensure artifacts are read
 	// from the in-memory contracts — not from the filesystem.
 	if p.artifactStore != nil {
-		artifacts := buildArtifacts(plan, contracts, ownership, candidates, monolith)
+		artifacts := buildArtifacts(plan, contracts, ownership, candidates, monolith, store)
 		if err := p.artifactStore.UpsertArtifacts(ctx, job.MigrationID, artifacts); err != nil {
 			// Non-fatal: log but do not block the AWAITING_APPROVAL transition.
 			applog.Warningf("decomposition-worker: artifact persistence skipped migration_id=%d: %v",
@@ -1024,6 +1047,7 @@ func buildArtifacts(
 	ownership workerdomain.DataOwnership,
 	candidates []workerdomain.ServiceCandidate,
 	monolith bool,
+	store string,
 ) []workerdomain.ServiceArtifact {
 	// MONOLITH: the plan has exactly one service. Merge every per-cluster derived
 	// contract's proto text under that single service so all domain messages land
@@ -1031,7 +1055,7 @@ func buildArtifacts(
 	// documented sub-pending (see camino-b-monolith-hole.md): the boundary spec
 	// marks topology=monolith so the generator knows not to expect a gateway.
 	if monolith && len(plan.GetServices()) == 1 {
-		return buildMonolithArtifacts(plan.GetServices()[0], contracts, ownership)
+		return buildMonolithArtifacts(plan.GetServices()[0], contracts, ownership, store)
 	}
 
 	byName := make(map[string]workerdomain.DerivedContract, len(contracts))
@@ -1056,6 +1080,7 @@ func buildArtifacts(
 			svc, ownership.SharedDatabase,
 			fksByOwner[svc.GetName()],
 			opByService[svc.GetName()],
+			store,
 		)
 		contract, ok := byName[svc.GetName()]
 		incomplete, reason := contract.Incomplete, contract.IncompleteReason
@@ -1083,6 +1108,7 @@ func buildMonolithArtifacts(
 	svc *workerdomain.ProposedService,
 	contracts []workerdomain.DerivedContract,
 	_ workerdomain.DataOwnership,
+	store string,
 ) []workerdomain.ServiceArtifact {
 	// Concatenate the derived proto text from every cluster, ordered by service
 	// name for determinism, each preceded by a header comment so the origin is
@@ -1111,7 +1137,7 @@ func buildMonolithArtifacts(
 	return []workerdomain.ServiceArtifact{{
 		ServiceName:      svc.GetName(),
 		ProtoContent:     proto.String(),
-		BoundarySpec:     workerdomain.BuildMonolithBoundarySpecYAML(svc),
+		BoundarySpec:     workerdomain.BuildMonolithBoundarySpecYAML(svc, store),
 		Incomplete:       incomplete,
 		IncompleteReason: strings.Join(reasons, "; "),
 	}}

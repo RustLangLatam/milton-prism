@@ -127,7 +127,11 @@ func (p *Pipeline) Run(ctx context.Context, payload workerdomain.JobPayload) err
 	if protocol == "" {
 		protocol = "grpc"
 	}
-	applog.Infof("generation-worker: package loaded services=%d profile=%s protocol=%s", len(pkg.Services), pkg.OutputProfile, protocol)
+	store := pkg.Store
+	if store == "" {
+		store = "mongodb"
+	}
+	applog.Infof("generation-worker: package loaded services=%d profile=%s protocol=%s store=%s", len(pkg.Services), pkg.OutputProfile, protocol, store)
 
 	// Apply optional service filter: when provided, only the named services run.
 	// Services not in the filter are silently skipped — they are neither marked
@@ -271,6 +275,7 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 		Protocol:              spec.Protocol,
 		AuthScheme:            spec.AuthScheme,
 		AuthSignatureAlg:      spec.AuthSignatureAlg,
+		Store:                 spec.Store,
 		APIKey:                p.apiKey,
 		SessionCredentialsDir: p.credDir,
 	}

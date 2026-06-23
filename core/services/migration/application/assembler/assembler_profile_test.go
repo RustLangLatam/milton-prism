@@ -92,7 +92,7 @@ func TestAssemble_GoProfile_UnchangedBehavior(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
 	for _, profile := range []string{"go", ""} {
-		a := New(root, false, profile, "grpc")
+		a := New(root, false, profile, "grpc", "")
 		files, err := a.Assemble(nil)
 		if err != nil {
 			t.Fatalf("profile %q: Assemble: %v", profile, err)
@@ -144,7 +144,7 @@ func TestAssemble_GoProfile_UnchangedBehavior(t *testing.T) {
 func TestAssemble_GoHTTP_ExcludesGatewayExceptCommonError(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, false, "go", "http")
+	a := New(root, false, "go", "http", "")
 	files, err := a.Assemble(nil)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
@@ -184,7 +184,7 @@ func TestAssemble_GoHTTP_ExcludesGatewayExceptCommonError(t *testing.T) {
 func TestAssemble_GoProfile_ByteIdentical(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, false, "go", "grpc")
+	a := New(root, false, "go", "grpc", "")
 	got, err := a.Assemble(nil)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
@@ -248,7 +248,7 @@ func TestAssemble_GoProfile_ByteIdentical(t *testing.T) {
 func TestAssemble_PythonProfile(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true /* useApiGateway ignored for python */, "python", "grpc")
+	a := New(root, true /* useApiGateway ignored for python */, "python", "grpc", "")
 
 	artifacts := []InputFile{
 		{Path: "python/services/user/domain/user.py", Content: "class User: ...\n"},
@@ -335,7 +335,7 @@ func TestAssemble_PythonProfile(t *testing.T) {
 func TestAssemble_PythonHTTP_ExcludesGRPCBootstrap(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, false, "python", "http")
+	a := New(root, false, "python", "http", "")
 
 	artifacts := []InputFile{
 		// FastAPI app + uvicorn entrypoint — MUST survive.
@@ -397,7 +397,7 @@ func TestAssemble_PythonHTTP_ExcludesGRPCBootstrap(t *testing.T) {
 func TestAssemble_PythonGRPC_KeepsGRPCBootstrap(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "python", "grpc")
+	a := New(root, true, "python", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "python/services/user/__main__.py", Content: "import grpc\nserver = grpc.aio.server()\nadd_UserServicer_to_server(svc, server)\n"},
 		{Path: "python/gen/milton_prism/user_pb2_grpc.py", Content: "# generated grpc stub\n"},
@@ -426,7 +426,7 @@ func TestAssemble_PythonGRPC_KeepsGRPCBootstrap(t *testing.T) {
 func TestAssemble_NodeHTTP_ExcludesGRPCBootstrap(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, false, "node", "http")
+	a := New(root, false, "node", "http", "")
 
 	artifacts := []InputFile{
 		// Fastify app + listen entrypoint — MUST survive.
@@ -484,7 +484,7 @@ func TestAssemble_NodeHTTP_ExcludesGRPCBootstrap(t *testing.T) {
 func TestAssemble_NodeGRPC_KeepsGRPCBootstrap(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "node", "grpc")
+	a := New(root, true, "node", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "node/services/user/main.ts", Content: "import { Server } from '@grpc/grpc-js'\nconst server = new Server()\nserver.addService(def, impl)\n"},
 		{Path: "node/gen/milton_prism/user_grpc_pb.ts", Content: "// generated grpc stub\n"},
@@ -513,7 +513,7 @@ func TestAssemble_NodeGRPC_KeepsGRPCBootstrap(t *testing.T) {
 func TestAssemble_RustHTTP_ExcludesGRPCBootstrap(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, false, "rust", "http")
+	a := New(root, false, "rust", "http", "")
 
 	artifacts := []InputFile{
 		// axum app + serve entrypoint — MUST survive (no tonic call).
@@ -570,7 +570,7 @@ func TestAssemble_RustHTTP_ExcludesGRPCBootstrap(t *testing.T) {
 func TestAssemble_RustGRPC_KeepsGRPCBootstrap(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "rust", "grpc")
+	a := New(root, true, "rust", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "rust/services/user/src/main.rs", Content: "use tonic::transport::Server;\nServer::builder().add_service(svc).serve(addr).await;\n"},
 		{Path: "rust/services/user/src/infrastructure/grpc/mod.rs", Content: "// tonic servicer impl\n"},
@@ -598,7 +598,7 @@ func TestAssemble_RustGRPC_KeepsGRPCBootstrap(t *testing.T) {
 func TestAssemble_RustGRPC_RelocatesVendoredProtos(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "rust", "grpc")
+	a := New(root, true, "rust", "grpc", "")
 	buildRs := `fn main() {
     let service_proto = "../../../protobuf/proto/milton_prism/services/user/v1/user_service.proto";
     let proto_root = "../../../protobuf/proto";
@@ -668,7 +668,7 @@ func TestAssemble_RustGRPC_RelocatesVendoredProtos(t *testing.T) {
 func TestAssemble_PythonProfile_EnvExamplePerService(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "python", "grpc")
+	a := New(root, true, "python", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "python/services/user/__main__.py", Content: "cfg = 1\n"},
 		{Path: "python/services/user/domain/user.py", Content: "class User: ...\n"},
@@ -739,7 +739,7 @@ func TestAssemble_PythonProfile_EnvExamplePerService(t *testing.T) {
 func TestAssemble_GoProfile_NoEnvExample(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, false, "go", "grpc")
+	a := New(root, false, "go", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "core/cmd/articles-services/main.go", Content: "package main\n"},
 	}
@@ -759,6 +759,58 @@ func TestAssemble_GoProfile_NoEnvExample(t *testing.T) {
 	}
 }
 
+// TestAssemble_GoPostgres_EnvExample proves the Go + PostgreSQL deliverable emits a
+// per-service PostgreSQL .env.example (DATABASE_URL / DB_*) INSTEAD of the Mongo
+// config.toml.example, with ZERO MONGO_* variables — the SQL persistence-config
+// variant. The Makefile and (no) gateway behaviour is unchanged from the Go path.
+func TestAssemble_GoPostgres_EnvExample(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "go", "grpc", "postgres")
+	artifacts := []InputFile{
+		{Path: "core/cmd/user-services/main.go", Content: "package main\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// Postgres .env.example present; Mongo config.toml.example absent.
+	envPath := "core/cmd/user-services/.env.example"
+	if !set[envPath] {
+		t.Fatalf("Go+Postgres deliverable missing %s", envPath)
+	}
+	if set["core/cmd/user-services/config.toml.example"] {
+		t.Errorf("Go+Postgres deliverable must NOT emit the Mongo config.toml.example")
+	}
+
+	// Content: DATABASE_URL + discrete DB_* present, zero MONGO_* prescribed.
+	var env string
+	for _, f := range files {
+		if f.Path == envPath {
+			env = string(f.Content)
+		}
+	}
+	for _, want := range []string{"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "user_db"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("Postgres .env.example missing %q", want)
+		}
+	}
+	if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
+		t.Errorf("Postgres .env.example must not prescribe MONGO_* vars")
+	}
+	for _, secret := range knownSecrets {
+		if strings.Contains(env, secret) {
+			t.Errorf("Postgres .env.example leaked known secret %q", secret)
+		}
+	}
+	// The Makefile still ships (Go scaffolding unchanged).
+	if !set["core/cmd/user-services/Makefile"] {
+		t.Errorf("Go+Postgres deliverable missing per-service Makefile")
+	}
+}
+
 // TestAssemble_NodeProfile proves the Node profile bundles ONLY the generated
 // TypeScript artifacts (renamed node/→core/) plus the neutral buf configs and
 // protos, and contains ZERO Go (go.mod/Makefile/.go) and ZERO Python (.py) —
@@ -767,7 +819,7 @@ func TestAssemble_GoProfile_NoEnvExample(t *testing.T) {
 func TestAssemble_NodeProfile(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true /* useApiGateway ignored for node */, "node", "grpc")
+	a := New(root, true /* useApiGateway ignored for node */, "node", "grpc", "")
 
 	artifacts := []InputFile{
 		{Path: "node/package.json", Content: "{\"name\":\"deliverable\"}\n"},
@@ -840,7 +892,7 @@ func TestAssemble_NodeProfile(t *testing.T) {
 func TestAssemble_NodeProfile_EnvExamplePerService(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "node", "grpc")
+	a := New(root, true, "node", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "node/services/user/index.ts", Content: "// server\n"},
 		{Path: "node/services/order/index.ts", Content: "// server\n"},
@@ -911,7 +963,7 @@ func TestAssemble_DocsOpenAPISurvives(t *testing.T) {
 	}
 
 	for _, profile := range []string{"go", "", "python", "node", "rust"} {
-		a := New(root, false, profile, "grpc")
+		a := New(root, false, profile, "grpc", "")
 		files, err := a.Assemble(artifacts)
 		if err != nil {
 			t.Fatalf("profile %q: Assemble: %v", profile, err)
@@ -956,7 +1008,7 @@ func TestAssemble_DocsOpenAPISurvives(t *testing.T) {
 func TestAssemble_RustProfile(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true /* useApiGateway ignored for rust */, "rust", "grpc")
+	a := New(root, true /* useApiGateway ignored for rust */, "rust", "grpc", "")
 
 	artifacts := []InputFile{
 		{Path: "rust/Cargo.toml", Content: "[workspace]\nmembers = [\"shared\", \"services/*\"]\n"},
@@ -1058,7 +1110,7 @@ func TestAssemble_RustProfile(t *testing.T) {
 func TestAssemble_RustProfile_EnvExamplePerService(t *testing.T) {
 	root := buildSkeletonFixture(t)
 
-	a := New(root, true, "rust", "grpc")
+	a := New(root, true, "rust", "grpc", "")
 	artifacts := []InputFile{
 		{Path: "rust/services/user/src/main.rs", Content: "fn main() {}\n"},
 		{Path: "rust/services/order/src/main.rs", Content: "fn main() {}\n"},

@@ -60,8 +60,13 @@ func (s *Service) DownloadDeliverable(ctx context.Context, migrationID uint64) (
 	// Select the transport variant: Go + HTTP excludes the pkg/gateway/ subtree
 	// (except common/error) because an HTTP-native service is its own entrypoint.
 	protocol := protocolLabel(m.GetTarget())
+	// Select the persistence-config variant: Go + PostgreSQL emits a DATABASE_URL/
+	// DB_* .env.example instead of the Mongo config.toml.example. UNSPECIFIED (Auto)
+	// canonicalises to "mongodb" here; the worker resolved the real engine at
+	// generation time and the SQL repos already carry their own .env via the agent.
+	store := storeLabel(m.GetTarget())
 
-	files, err := assembler.New(s.monorepoPath, useApiGateway, profile, protocol).Assemble(inputs)
+	files, err := assembler.New(s.monorepoPath, useApiGateway, profile, protocol, store).Assemble(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("download-deliverable: assemble migration_id=%d: %w", migrationID, err)
 	}

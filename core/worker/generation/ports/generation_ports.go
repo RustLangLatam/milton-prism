@@ -28,6 +28,14 @@ type ServiceSpec struct {
 	// validation accepts when AuthScheme is "jwt" (HS256/RS256/ES256/EdDSA). Empty
 	// for non-JWT or undetermined.
 	AuthSignatureAlg string
+	// Store is the persistence engine the generated service must target
+	// ("mongodb" | "postgres" | "mysql"), resolved as the migration's
+	// TargetConfig.database override, or — for Auto (UNSPECIFIED) — the engine
+	// detected in the linked analysis summary. Orthogonal to OutputProfile and
+	// Protocol. Selects the store section injected into the prompt (Mongo client +
+	// repos vs Postgres pool + SQL repos + migrations). Empty is treated as "mongodb"
+	// (the original path, unchanged).
+	Store string
 }
 
 // GenerationPackage is the worker-internal view of the assembled generation specs.
@@ -38,6 +46,11 @@ type GenerationPackage struct {
 	// ("grpc" | "http"). Read from the migration's TargetConfig
 	// inter_service_transport. Empty is treated as "grpc".
 	Protocol string
+	// Store is the persistence engine every service in this package targets
+	// ("mongodb" | "postgres" | "mysql"), resolved by the reader as the
+	// TargetConfig.database override or — for Auto (UNSPECIFIED) — the engine
+	// detected in the linked analysis summary. Empty is treated as "mongodb".
+	Store    string
 	Services []ServiceSpec
 }
 

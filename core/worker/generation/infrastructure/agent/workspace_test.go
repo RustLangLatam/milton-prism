@@ -138,7 +138,7 @@ func TestWriteCombinedPrompt_GoProfile(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt.md",
-		"articles", "ART", "go", "grpc", "none", "", "spec", "proto")
+		"articles", "ART", "go", "grpc", "none", "", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
@@ -159,7 +159,7 @@ func TestWriteCombinedPrompt_PythonProfile(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt-python.md",
-		"articles", "ART", "python", "grpc", "none", "", "spec", "proto")
+		"articles", "ART", "python", "grpc", "none", "", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestWriteCombinedPrompt_AuthJWT(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt-python.md",
-		"articles", "ART", "python", "http", "jwt", "HS256", "spec", "proto")
+		"articles", "ART", "python", "http", "jwt", "HS256", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestWriteCombinedPrompt_AuthNone(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt.md",
-		"articles", "ART", "go", "grpc", "none", "", "spec", "proto")
+		"articles", "ART", "go", "grpc", "none", "", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestWriteCombinedPrompt_AuthDetectedNotGenerated(t *testing.T) {
 	dir := t.TempDir()
 	p, err := agent.WriteCombinedPrompt(dir,
 		"docs/prism/milton-prism-service-generator-prompt.md",
-		"articles", "ART", "go", "grpc", "oauth2", "", "spec", "proto")
+		"articles", "ART", "go", "grpc", "oauth2", "", "", "spec", "proto")
 	require.NoError(t, err)
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)

@@ -462,13 +462,12 @@ func (a *Assembler) isSkeletonFile(rel string) bool {
 		!strings.HasPrefix(rel, "pkg/gateway/common/error/") {
 		return false
 	}
-	// Go HTTP-native: drop two gRPC-only skeleton files whose imports are not
+	// Go HTTP-native: drop the gRPC-only skeleton file whose imports are not
 	// shipped in this cell — build_server_group.go wires the gRPC server + the
-	// excluded pkg/gateway runtime, and grpc_billing_client.go imports the
-	// platform billing service stub (services/billing/v1). Neither is referenced
-	// by the HTTP-native entry point, so excluding them keeps go build green.
-	if a.isGoHTTP() && (rel == "core/internal/svc/build_server_group.go" ||
-		rel == "core/shared/grpc_client_sdk/grpc_billing_client.go") {
+	// excluded pkg/gateway runtime. It is not referenced by the HTTP-native entry
+	// point, so excluding it keeps go build green. (The platform grpc_*_client.go
+	// files are already dropped for every Go cell by isSkeletonFile.)
+	if a.isGoHTTP() && rel == "core/internal/svc/build_server_group.go" {
 		return false
 	}
 	return isSkeletonFile(rel)
@@ -540,13 +539,20 @@ func isSkeletonFile(rel string) bool {
 	}
 
 	// ── grpc_client_sdk exclusions ───────────────────────────────────────────
-	// builder.go is generic; the 3 platform-specific clients import platform
-	// service stubs that are not present in the deliverable. Generated services
-	// never call these clients directly, so they are safe to drop.
+	// builder.go is generic; the platform-specific clients import platform
+	// service stubs (pkg/pb/gen/.../services/{analysis,identity,repository,
+	// billing,migration}/v1) that skipDir prunes from EVERY deliverable
+	// (pkg/pb/gen/milton_prism/services). Generated services never call these
+	// clients directly (they use only builder.go's generic helpers), nor does
+	// the shipped gateway/internal code, so they are safe to drop — and MUST be,
+	// or `go build` fails with "package … not in std". This applies to all Go
+	// cells, including gRPC+monolith (which ships the in-process gateway).
 	switch rel {
 	case "core/shared/grpc_client_sdk/grpc_analysis_client.go",
 		"core/shared/grpc_client_sdk/grpc_identity_client.go",
-		"core/shared/grpc_client_sdk/grpc_repository_client.go":
+		"core/shared/grpc_client_sdk/grpc_repository_client.go",
+		"core/shared/grpc_client_sdk/grpc_billing_client.go",
+		"core/shared/grpc_client_sdk/grpc_migration_client.go":
 		return false
 	}
 

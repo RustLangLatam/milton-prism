@@ -465,8 +465,60 @@ dispara ya.
     mig28 sin regresión (0 cada uno).
   - **R4** `go build ./...` + `go test ./core/services/migration/...` verdes.
 
+### Go + gRPC + monolito — CERTIFICADO con mig45 (2026-06-23)
+Celda **Go + gRPC + monolito** (1 servicio `app`), READY. Deliverable verificado por
+**build real**: `GET /v1/migrations/45:downloadDeliverable` → 200 ZIP; extraído y
+`go build ./...` → **exit 0**. Estructura coherente: top-level
+`core/ docs/ go.mod go.sum Makefile pkg/ protobuf/`; **0** `.proto` bajo `core/services/`;
+protos sólo en `protobuf/proto/`; servicio `app` hexagonal con server gRPC;
+`docs/openapi.yaml` scopeado (plataforma=0); `:generationArtifacts` 200.
+
+**DECISIÓN del gateway — OPCIÓN A (gateway EMBEBIDO intencional).** Un monolito gRPC
+expone REST vía un grpc-gateway **in-process en el MISMO binario**: `pkg/gateway/`
+(`gateway_with_service.go`, `rest.go`, `handlers/`, `common/error/`) es la librería del
+gateway, y `core/internal/svc/build_server_group.go` la cablea llamando
+`gateway.StartGatewayWithService(...)`. Es un solo deployable sirviendo gRPC + REST → el
+subtree `pkg/gateway/` es CORRECTO en esta celda y NO se excluye. La regla
+`useApiGateway = (topology != Monolith) && (transport == gRPC)` ⇒ `false` en monolito sólo
+suprime el **entrypoint standalone** `api-gateway/cmd/...` (el gateway separado que
+frontea N microservicios), que `download_deliverable.go` ya calcula bien: el ZIP de mig45
+NO trae `api-gateway/` (verificado), pero SÍ trae la librería embebida. No es un leak del
+gateway; es el patrón válido de un monolito gRPC con REST in-process.
+
+**Dos defectos reales de COMPILACIÓN que SÍ bloqueaban `go build` (arreglados):**
+1. **Clientes gRPC de plataforma filtrados** — el esqueleto enviaba
+   `core/shared/grpc_client_sdk/grpc_billing_client.go` y `grpc_migration_client.go`, que
+   importan stubs de plataforma (`pkg/pb/gen/.../services/{billing,migration}/v1`) que
+   `skipDir` poda de TODO deliverable ⇒ `package … not in std`. La lista de exclusión de
+   `isSkeletonFile` ya dropeaba los 3 análogos (`analysis/identity/repository`) pero
+   faltaban billing y migration. **Fix:** añadidos a la exclusión base en
+   `assembler.go::isSkeletonFile` (aplica a TODAS las celdas Go; se simplificó el bloque
+   `isGoHTTP` que duplicaba la exclusión de billing). Ninguno es referenciado por código
+   generado ni por el gateway/internal que sí se envía.
+2. **`message_error.go` generado con shape obsoleto** — el agregador `__pipeline__`
+   (`error_aggregator.go::buildMessageErrorGo`) emitía un `ErrorMessage` SIN el campo
+   `Code` ni `looksLikeErrorCode`, pero el esqueleto actual
+   `pkg/gateway/handlers/error.go` referencia `errorMessage.Code` (feature de gateway
+   error-codes, commit 29e02f4) ⇒ `unknown field Code`. **Fix:** `buildMessageErrorGo`
+   actualizado para emitir el body canónico (campo `Code`, bloque `emittedCode` y
+   función `looksLikeErrorCode`), en lockstep con
+   `pkg/gateway/common/error/message_error.go`. Afecta a TODA celda gRPC que envíe el
+   gateway. El artefacto YA persistido de mig45 (Mongo `generation_file_artifacts`) se
+   regeneró in-place con el shape corregido (no requirió re-correr el agente).
+
+**Evidencia (C1–C3):**
+- **C1:** ZIP re-descargado tras el fix → `go build ./...` **exit 0** (sin errores).
+  `grpc_client_sdk/` sólo tiene `builder.go`; `message_error.go` con campo `Code`;
+  `pkg/gateway/` presente (embebido); sin `api-gateway/`; 0 `.proto` en `core/services/`.
+- **C2:** decisión = **Opción A** (documentada arriba); el deliverable compila con el
+  gateway embebido coherente.
+- **C3:** repo `go build ./...` exit 0; `go test ./core/services/migration/...
+  ./core/worker/generation/application/...` verdes; mig24 (Go+HTTP+mono) re-descargada y
+  `go build ./...` exit 0 (sin regresión; su `pkg/gateway` sigue trimmed a `common/error`).
+- **Deploy:** `infra/build.sh migration-services` + `compose up --build migration-services`.
+
 ### Inventario final de celdas (verificado 2026-06-23)
-Migraciones ACTIVAS (`GET /v1/migrations` → `[19,21,23,24,28,34,38]`), todas READY:
+Migraciones ACTIVAS (`GET /v1/migrations` → `[19,21,23,24,28,34,38,45]`), todas READY:
 | mig | lenguaje | protocolo | topología | celda |
 |-----|----------|-----------|-----------|-------|
 | 19  | Python   | gRPC      | micro     | Py-gRPC |
@@ -476,15 +528,23 @@ Migraciones ACTIVAS (`GET /v1/migrations` → `[19,21,23,24,28,34,38]`), todas R
 | 28  | Python   | HTTP      | monolito  | Py-HTTP |
 | 34  | Node     | HTTP      | micro     | Node-HTTP |
 | 38  | Rust     | HTTP      | monolito  | **Rust-HTTP** (cierre por contenido) |
+| 45  | Go       | gRPC      | monolito  | **Go-gRPC-monolito** (compila, `go build` exit 0) |
 
 - **Limpieza:** mig35 (Rust+HTTP, CANCELLED) y mig36 (Rust+HTTP, FAILED) ya estaban
   soft-deleted (`delete_time` poblado) — excluidos del listado activo. DELETE explícito
   → 404 (ya tombstoned). Cleanup confirmado.
-- **Go-gRPC:** NO hay una celda Go-gRPC viva en este DB. Las únicas migraciones Go-gRPC
-  (mig25, mig26) están CANCELLED; el registro de la primera celda Go-gRPC certificada no
-  está preservado aquí (mig24 es la celda Go viva, pero es HTTP). NOTADO: la matriz gRPC
-  conserva Py/Node/Rust gRPC vivas (19/21/23); la Go-gRPC histórica no tiene registro
-  vivo asociado.
+- **Go-gRPC:** **CUBIERTO por mig45 (2026-06-23)** — celda Go+gRPC+monolito viva y READY,
+  deliverable que **COMPILA** (`go build ./...` exit 0); ver sección dedicada abajo. Las
+  únicas migraciones Go-gRPC previas (mig25, mig26) están CANCELLED. La matriz gRPC ahora
+  conserva las cuatro lenguajes con celda gRPC viva: Go (45), Py (19), Node (21), Rust (23).
+
+### Las 4 combinaciones protocolo × topología tienen ≥1 cert (2026-06-23)
+Con mig45 (Go-gRPC-monolito) la matriz `{gRPC,HTTP} × {monolito,micro}` queda con al
+menos una celda certificada en cada cuadrante:
+| | monolito | micro |
+|--|----------|-------|
+| **gRPC** | **mig45 (Go)** | mig19/21/23 (Py/Node/Rust) |
+| **HTTP** | mig24/28/38 (Go/Py/Rust) | mig34 (Node) |
 
 ### Saneo del mensaje de error de generación — HECHO (2026-06-23)
 - El `reason` de un fallo de gates ya NO expone el blob crudo de Claude Code

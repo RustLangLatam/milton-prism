@@ -39,9 +39,13 @@ func buildSkeletonFixture(t *testing.T) string {
 	writeFixture(t, root, "core/services/user/wire.go", "package user\n")
 
 	// ── buf configs ──
+	// buf.yaml + buf.go.gen.yaml are user-facing (ship). buf.docs.gen.yaml (panel
+	// symlink) and buf.deliverable.openapi.yaml (platform pipeline) are INTERNAL
+	// templates that must never ship in any deliverable.
 	writeFixture(t, root, "protobuf/buf.yaml", "version: v1\n")
 	writeFixture(t, root, "protobuf/buf.go.gen.yaml", "version: v1\n")
 	writeFixture(t, root, "protobuf/buf.docs.gen.yaml", "version: v1\n")
+	writeFixture(t, root, "protobuf/buf.deliverable.openapi.yaml", "version: v1\n")
 
 	// ── Python tree ──
 	writeFixture(t, root, "python/__init__.py", "")
@@ -119,6 +123,15 @@ func TestAssemble_GoProfile_UnchangedBehavior(t *testing.T) {
 		// core/services is platform-only; skipped in Go profile.
 		if set["core/services/user/wire.go"] {
 			t.Errorf("profile %q: leaked platform core/services file", profile)
+		}
+		// MUST NOT contain the platform-internal buf templates.
+		for _, internal := range []string{
+			"protobuf/buf.docs.gen.yaml",
+			"protobuf/buf.deliverable.openapi.yaml",
+		} {
+			if set[internal] {
+				t.Errorf("profile %q: Go deliverable leaked internal buf template %q", profile, internal)
+			}
 		}
 	}
 }
@@ -297,9 +310,12 @@ func TestAssemble_PythonProfile(t *testing.T) {
 		if strings.HasPrefix(p, "pkg/") || strings.HasPrefix(p, "api-gateway/") {
 			t.Errorf("python deliverable leaked Go-tree path %q", p)
 		}
-		// Go-only buf gen config must be excluded.
+		// Go-only buf gen config and the platform-internal templates must be excluded.
 		if p == "protobuf/buf.go.gen.yaml" {
 			t.Errorf("python deliverable leaked Go-only buf config %q", p)
+		}
+		if p == "protobuf/buf.docs.gen.yaml" || p == "protobuf/buf.deliverable.openapi.yaml" {
+			t.Errorf("python deliverable leaked internal buf template %q", p)
 		}
 		// No Python junk/cache.
 		if strings.Contains(p, "__pycache__") || strings.HasSuffix(p, ".pyc") ||
@@ -812,6 +828,9 @@ func TestAssemble_NodeProfile(t *testing.T) {
 		if p == "protobuf/buf.go.gen.yaml" {
 			t.Errorf("node deliverable leaked Go-only buf config %q", p)
 		}
+		if p == "protobuf/buf.docs.gen.yaml" || p == "protobuf/buf.deliverable.openapi.yaml" {
+			t.Errorf("node deliverable leaked internal buf template %q", p)
+		}
 	}
 }
 
@@ -885,6 +904,10 @@ func TestAssemble_DocsOpenAPISurvives(t *testing.T) {
 	const openapiBody = "openapi: 3.0.3\ninfo:\n  title: Deliverable\n"
 	artifacts := []InputFile{
 		{Path: "docs/openapi.yaml", Content: openapiBody},
+		// Defence-in-depth: even if the generation agent persists the internal
+		// templates as artifacts, they must be dropped (not just skeleton-filtered).
+		{Path: "protobuf/buf.deliverable.openapi.yaml", Content: "version: v2\n"},
+		{Path: "protobuf/buf.docs.gen.yaml", Content: "version: v2\n"},
 	}
 
 	for _, profile := range []string{"go", "", "python", "node", "rust"} {
@@ -911,6 +934,15 @@ func TestAssemble_DocsOpenAPISurvives(t *testing.T) {
 		set := pathSet(files)
 		if set["core/openapi.yaml"] {
 			t.Errorf("profile %q: docs/openapi.yaml was wrongly rewritten under core/", profile)
+		}
+		// The internal buf templates must be dropped even when supplied as artifacts.
+		for _, internal := range []string{
+			"protobuf/buf.deliverable.openapi.yaml",
+			"protobuf/buf.docs.gen.yaml",
+		} {
+			if set[internal] {
+				t.Errorf("profile %q: internal buf template %q leaked from artifacts", profile, internal)
+			}
 		}
 	}
 }
@@ -998,6 +1030,9 @@ func TestAssemble_RustProfile(t *testing.T) {
 		}
 		if p == "protobuf/buf.go.gen.yaml" {
 			t.Errorf("rust deliverable leaked Go-only buf config %q", p)
+		}
+		if p == "protobuf/buf.docs.gen.yaml" || p == "protobuf/buf.deliverable.openapi.yaml" {
+			t.Errorf("rust deliverable leaked internal buf template %q", p)
 		}
 		if strings.Contains(p, "/target/") || strings.HasPrefix(p, "core/target/") {
 			t.Errorf("rust deliverable leaked cargo target/ path %q", p)

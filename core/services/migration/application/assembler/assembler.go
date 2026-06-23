@@ -188,6 +188,24 @@ func isRustGRPCArtifact(path, content string) bool {
 	return false
 }
 
+// isInternalBufTemplate reports whether path is a platform-INTERNAL buf template
+// that must never ship in a user deliverable, no matter the profile or source:
+//   - protobuf/buf.docs.gen.yaml         — generates the PLATFORM panel openapi via
+//                                           the `../milton-prism-panel` symlink.
+//   - protobuf/buf.deliverable.openapi.yaml — the platform pipeline template that
+//                                           emits docs/openapi.yaml during generation.
+//
+// Both are Milton Prism tooling. The user-facing buf configs (buf.yaml, and for Go
+// buf.go.gen.yaml) are NOT matched here and continue to ship. The generated
+// docs/openapi.yaml artifact is also not matched and still ships.
+func isInternalBufTemplate(path string) bool {
+	switch path {
+	case "protobuf/buf.docs.gen.yaml", "protobuf/buf.deliverable.openapi.yaml":
+		return true
+	}
+	return false
+}
+
 // sourceRoot returns the directory the agent writes generated code under for a
 // non-Go profile (python/, node/ or rust/), which step 3b renames to core/.
 // Returns "" for the Go profile (no rename). Must stay in lockstep with
@@ -222,6 +240,16 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	}
 	for _, f := range artifacts {
 		if f.Path == "" {
+			continue
+		}
+		// Platform-internal buf templates must NEVER ship, regardless of source
+		// (skeleton OR artifacts). The generation agent runs
+		// buf.deliverable.openapi.yaml to emit docs/openapi.yaml; if the agent ever
+		// persists the template itself (or the panel-only buf.docs.gen.yaml) as an
+		// artifact, drop it here so it cannot leak into any deliverable. These are
+		// Milton Prism tooling, not part of the user's exported project. The
+		// generated docs/openapi.yaml itself is fine and still ships.
+		if isInternalBufTemplate(f.Path) {
 			continue
 		}
 		// Profile guard: a Python deliverable must never carry Go artifacts. The
@@ -515,11 +543,22 @@ func isSkeletonFile(rel string) bool {
 	}
 
 	// ── buf config files ────────────────────────────────────────────────────
-	// buf.deliverable.openapi.yaml lets the deliverable regenerate its own
-	// docs/openapi.yaml from the shipped protos.
+	// Ship ONLY the user-facing buf configs:
+	//   - buf.yaml       — the proto module (lint/breaking/deps); lets the user
+	//                       regenerate their own stubs against the shipped protos.
+	//   - buf.go.gen.yaml — the Go codegen template, so a Go user can `buf generate`
+	//                       their *.pb.go / *_grpc.pb.go from protobuf/proto.
+	// The two platform-INTERNAL templates are NEVER shipped (they are Milton Prism
+	// tooling, not part of the user's exported project):
+	//   - buf.docs.gen.yaml          — generates the PLATFORM panel openapi via the
+	//                                    `../milton-prism-panel` symlink (panel-only).
+	//   - buf.deliverable.openapi.yaml — the platform pipeline template that emits
+	//                                    docs/openapi.yaml; the agent runs it during
+	//                                    generation, but the template itself is
+	//                                    internal tooling. The resulting
+	//                                    docs/openapi.yaml still ships as an artifact.
 	switch rel {
-	case "protobuf/buf.yaml", "protobuf/buf.go.gen.yaml",
-		"protobuf/buf.docs.gen.yaml", "protobuf/buf.deliverable.openapi.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.go.gen.yaml":
 		return true
 	}
 
@@ -643,10 +682,14 @@ func isSkeletonFilePython(rel string) bool {
 		return false
 	}
 
-	// ── Neutral buf config files (Go gen config buf.go.gen.yaml is excluded) ──
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a Python user
+	// can regenerate their stubs against the shipped protos with their own gen
+	// template. The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL
+	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
+	// platform pipeline) are all excluded — none belong in a Python project.
 	switch rel {
-	case "protobuf/buf.yaml", "protobuf/buf.docs.gen.yaml",
-		"protobuf/buf.deliverable.openapi.yaml":
+	case "protobuf/buf.yaml":
 		return true
 	}
 
@@ -725,10 +768,14 @@ func isSkeletonFileNode(rel string) bool {
 		return false
 	}
 
-	// ── Neutral buf config files (Go gen config buf.go.gen.yaml is excluded) ──
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a Node user
+	// can regenerate their stubs against the shipped protos with their own gen
+	// template. The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL
+	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
+	// platform pipeline) are all excluded — none belong in a Node project.
 	switch rel {
-	case "protobuf/buf.yaml", "protobuf/buf.docs.gen.yaml",
-		"protobuf/buf.deliverable.openapi.yaml":
+	case "protobuf/buf.yaml":
 		return true
 	}
 
@@ -830,10 +877,14 @@ func isSkeletonFileRust(rel string) bool {
 		return false
 	}
 
-	// ── Neutral buf config files (Go gen config buf.go.gen.yaml is excluded) ──
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a Rust user
+	// can regenerate their stubs against the shipped protos with their own gen
+	// template. The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL
+	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
+	// platform pipeline) are all excluded — none belong in a Rust project.
 	switch rel {
-	case "protobuf/buf.yaml", "protobuf/buf.docs.gen.yaml",
-		"protobuf/buf.deliverable.openapi.yaml":
+	case "protobuf/buf.yaml":
 		return true
 	}
 

@@ -1,5 +1,43 @@
 # Pendientes / Roadmap — backend
 
+## Plantillas buf INTERNAS fuera del deliverable (HECHO, 2026-06-23)
+
+**Bug:** el entregable traía dos plantillas buf que son tooling INTERNO de la
+plataforma, no parte del proyecto exportado del usuario:
+- `protobuf/buf.docs.gen.yaml` → genera el openapi del **PANEL** escribiendo en
+  `../milton-prism-panel` (vía el symlink). Solo-panel.
+- `protobuf/buf.deliverable.openapi.yaml` → plantilla del **pipeline de la
+  plataforma** que emite `docs/openapi.yaml` durante la generación. El agente la
+  corre, pero la plantilla en sí es interna.
+
+**Fix — `core/services/migration/application/assembler/assembler.go` (assembler-only):**
+- **Go** (`isSkeletonFile`): el switch de buf pasó de `{buf.yaml, buf.go.gen.yaml,
+  buf.docs.gen.yaml, buf.deliverable.openapi.yaml}` a SOLO `{buf.yaml,
+  buf.go.gen.yaml}`. Quedan las dos configs user-facing: `buf.yaml` (módulo:
+  lint/breaking/deps, para que el usuario regenere SUS stubs) y `buf.go.gen.yaml`
+  (template de codegen Go).
+- **Python / Node / Rust** (`isSkeletonFilePython|Node|Rust`): el switch pasó de
+  `{buf.yaml, buf.docs.gen.yaml, buf.deliverable.openapi.yaml}` a SOLO `{buf.yaml}`
+  — el módulo es lo único que el usuario necesita para regenerar con su propio
+  template; `buf.go.gen.yaml` ya estaba excluido en esos perfiles (sigue así).
+- **Defensa-en-profundidad:** nueva `isInternalBufTemplate(path)` ({buf.docs.gen.yaml,
+  buf.deliverable.openapi.yaml}) en el loop de merge de artifacts — si el agente
+  llegara a persistir las plantillas como artefactos, se descartan ahí también
+  (no solo en el filtro de skeleton). El `docs/openapi.yaml` GENERADO **sí sigue
+  enviándose** (no lo toca el filtro).
+- Referencias al symlink del panel `milton-prism-panel` ya estaban excluidas vía
+  `skipDir*` en TODOS los perfiles (sin cambio).
+
+**Qué queda en el deliverable por perfil:** Go → `buf.yaml` + `buf.go.gen.yaml`;
+Python/Node/Rust → solo `buf.yaml`. **0** `buf.docs.gen.yaml` / **0**
+`buf.deliverable.openapi.yaml` en cualquier perfil.
+
+**Tests (verdes) — `assembler_profile_test.go`:** fixture añade
+`buf.deliverable.openapi.yaml`; aserciones negativas para ambas plantillas internas
+en Go/Python/Node/Rust; `TestAssemble_DocsOpenAPISurvives` ahora también inyecta las
+plantillas como artifacts y afirma que se descartan, mientras `docs/openapi.yaml`
+sobrevive. `go build ./...` + `go test ./core/services/migration/...` verdes.
+
 ## Cancel/Delete de migración — modelo CORREGIDO (HECHO, 2026-06-23)
 
 **Bug:** una migración `READY` se podía CANCELAR (no debía) y NO se podía ELIMINAR

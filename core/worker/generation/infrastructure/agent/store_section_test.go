@@ -184,13 +184,67 @@ func TestStoreSection_NodeSQLPrisma(t *testing.T) {
 	}
 }
 
+// TestStoreSection_RustSQLSeaORM asserts the Rust + PostgreSQL and Rust + MySQL/
+// MariaDB blocks instruct the generator to emit a SeaORM persistence layer: SeaORM
+// entities in infrastructure/repositories mapping to/from domain (proto/prost),
+// repos implementing the same port traits, a Database::connect builder selecting
+// the sqlx driver feature by store, sea-orm-migration schema, nullable soft-delete,
+// autoincrement IDs, and DATABASE_URL/DB_* env with zero MONGO_* — the v1 certified
+// Rust SQL cells (the DB axis is now complete: 4 langs × Mongo/Postgres/MySQL). Both
+// stores share the same SeaORM scaffold; only the sqlx driver feature + URL differ.
+func TestStoreSection_RustSQLSeaORM(t *testing.T) {
+	cases := []struct {
+		store      string
+		engine     string
+		driverFeat string
+	}{
+		{"postgres", "PostgreSQL", "sqlx-postgres"},
+		{"mysql", "MySQL/MariaDB", "sqlx-mysql"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.store, func(t *testing.T) {
+			s := agent.StoreSection("rust", tc.store)
+			if s == "" {
+				t.Fatalf("StoreSection(rust, %q) is empty, want a SeaORM block", tc.store)
+			}
+			for _, want := range []string{
+				tc.engine,
+				"SeaORM",
+				"sea-orm",
+				"sea-orm-migration",
+				tc.driverFeat,
+				"Database::connect",
+				"seaorm_<resource>_repository.rs",
+				"primary_key",
+				"with_transaction",
+				"DATABASE_URL",
+				"DB_HOST",
+				"cargo build",
+			} {
+				if !strings.Contains(s, want) {
+					t.Errorf("Rust+%s SeaORM store section missing %q", tc.engine, want)
+				}
+			}
+			// SeaORM owns the dialect; the block must not prescribe another Rust ORM
+			// or raw-SQL leftovers. (It DOES say "do NOT emit any MONGO_* variable"
+			// and "NOT the `mongodb`/`bson` crates" as negations, so those literals
+			// are expected and not forbidden here.)
+			for _, forbid := range []string{"diesel", "ON CONFLICT", "BIGSERIAL"} {
+				if strings.Contains(s, forbid) {
+					t.Errorf("Rust+%s SeaORM store section must not mention %q", tc.engine, forbid)
+				}
+			}
+		})
+	}
+}
+
 // TestStoreSection_SQLHoleIsHonest asserts that a SQL store on a profile without a
-// SQL cell (Rust in v1) yields an honest "NOT generated in v1" note that forbids
-// guessing, rather than a fabricated implementation. (Unreachable while the
-// IsGenerableDatabase guard rejects the cell at creation, but kept self-consistent.)
-// Node is no longer a hole — it is generated via Prisma (see TestStoreSection_NodeSQLPrisma).
+// SQL cell (no such generable language remains — every generable language now has a
+// SQL cell, so this is only reachable via an unknown profile string) yields an
+// honest "NOT generated in v1" note that forbids guessing, rather than a fabricated
+// implementation. Kept self-consistent in case the guard is ever relaxed.
 func TestStoreSection_SQLHoleIsHonest(t *testing.T) {
-	for _, profile := range []string{"rust"} {
+	for _, profile := range []string{"unknownlang"} {
 		s := agent.StoreSection(profile, "postgres")
 		if s == "" {
 			t.Fatalf("StoreSection(%q, postgres) is empty, want an honest hole note", profile)

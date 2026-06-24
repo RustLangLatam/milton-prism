@@ -165,6 +165,12 @@ func TestCaptureArtifacts_ExcludesCargoHomeRegistry(t *testing.T) {
 		".rustup/toolchains/stable/lib/rustlib/x.rs",
 		"rust/services/app/target/debug/deps/app.rlib",
 		"rust/services/app/target/debug/app.rmeta",
+		// DEFECT 4b: mig67 set CARGO_HOME=$workspace/.cargo-home (not .cargo), so the
+		// whole registry materialised under .cargo-home and the .cargo segment alone
+		// did not catch it (13014 → 12983 of those files were this bloat).
+		".cargo-home/registry/index/index.crates.io-1949cf8c6b5b557f/.cache/2/cc",
+		".cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/anyhow-1.0.102/src/lib.rs",
+		"rust/.cargo-home/registry/cache/foo.crate",
 	}
 
 	var paths []string

@@ -1266,3 +1266,49 @@ func TestAssemble_RustProfile_EnvExamplePerService(t *testing.T) {
 		}
 	}
 }
+
+// TestAssemble_RustSQL_EnvExample proves the Rust + SQL (SeaORM) deliverable — for
+// both the PostgreSQL ("postgres") and MySQL/MariaDB ("mysql") stores — emits a
+// per-service SQL .env.example (DATABASE_URL / DB_*) with ZERO MONGO_* variables,
+// INSTEAD of the native-Mongo .env.example. Both stores share the same .env shape
+// (SeaORM connection URL). It is the Rust homologue of TestAssemble_GoSQL_EnvExample.
+func TestAssemble_RustSQL_EnvExample(t *testing.T) {
+	for _, store := range []string{"postgres", "mysql"} {
+		t.Run(store, func(t *testing.T) {
+			root := buildSkeletonFixture(t)
+
+			a := New(root, true, "rust", "grpc", store)
+			artifacts := []InputFile{
+				{Path: "rust/services/user/src/main.rs", Content: "fn main() {}\n"},
+			}
+			files, err := a.Assemble(artifacts)
+			if err != nil {
+				t.Fatalf("Assemble: %v", err)
+			}
+
+			envPath := "core/services/user/.env.example"
+			var env string
+			for _, f := range files {
+				if f.Path == envPath {
+					env = string(f.Content)
+				}
+			}
+			if env == "" {
+				t.Fatalf("Rust+%s deliverable missing %s", store, envPath)
+			}
+			for _, want := range []string{"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "user_db", "SeaORM"} {
+				if !strings.Contains(env, want) {
+					t.Errorf("Rust+%s .env.example missing %q", store, want)
+				}
+			}
+			if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
+				t.Errorf("Rust+%s .env.example must not prescribe MONGO_* vars", store)
+			}
+			for _, secret := range knownSecrets {
+				if strings.Contains(env, secret) {
+					t.Errorf("Rust+%s .env.example leaked known secret %q", store, secret)
+				}
+			}
+		})
+	}
+}

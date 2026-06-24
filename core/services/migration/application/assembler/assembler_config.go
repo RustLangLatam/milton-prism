@@ -535,6 +535,76 @@ JWT_SECRET=<your-jwt-secret>
 `, name, db, port)
 }
 
+// generateRustSQLConfigExamples appends a SQL `.env.example` file to each generated
+// Rust service directory for a Rust + SQL deliverable (SeaORM over PostgreSQL or
+// MySQL/MariaDB). It is the SQL homologue of generateRustConfigExamples (the
+// native-`mongodb`-crate .env.example): a Rust + SQL service persists with SeaORM,
+// so its config is a DATABASE_URL / DB_* .env rather than the MONGO_* variables.
+// The same .env shape serves both engines (DATABASE_URL is the SeaORM connection
+// URL; only its scheme differs between postgres:// and mysql:// — documented
+// inline). Zero MONGO_* variables ever appear. It is the Rust homologue of
+// generateGoSQL/generatePythonSQL/generateNodeSQLConfigExamples.
+//
+// MUST run on the assembled map BEFORE the rust/ → core/ rename (same as the
+// native-Mongo path), so service dirs are still keyed under rust/services/<svc>/.
+// Every value is a placeholder; assertNoSecrets guards each file.
+func generateRustSQLConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedRustServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
+		port := 50051 + i
+		content := rustSQLServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("rust/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// rustSQLServiceEnvExample returns the content of a .env.example for one generated
+// Rust + SQL (SeaORM) microservice. It documents BOTH the single DATABASE_URL
+// connection URL (the SeaORM URL — PostgreSQL or MySQL/MariaDB form) and the
+// discrete DB_* parts, the gRPC server bind, and the auth secret. Every value is a
+// placeholder; no MONGO_* variable is present.
+func rustSQLServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via SeaORM)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# This service persists via the SeaORM ORM (async, sqlx-backed). The same entities
+# + repos serve PostgreSQL and MySQL/MariaDB — only the sqlx driver feature in
+# Cargo.toml (sqlx-postgres / sqlx-mysql) and the DATABASE_URL scheme differ. Schema
+# is applied by sea-orm-migration (Migrator::up) on startup. SeaORM reads
+# DATABASE_URL via Database::connect.
+
+# ── Database (SeaORM) ────────────────────────────────────────────────────────
+# DATABASE_URL: full SeaORM connection URL. Examples:
+#   PostgreSQL: postgres://user:password@host:5432/%s
+#   MySQL/MariaDB: mysql://user:password@host:3306/%s
+DATABASE_URL=<your-database-url>
+DB_HOST=localhost
+# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
+DB_PORT=5432
+DB_USER=<your-db-user>
+DB_PASSWORD=<your-db-password>
+DB_NAME=%s
+
+# ── gRPC server (Tonic) ────────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, db, db, db, port)
+}
+
 // detectTokenRole scans the generated main.go for the service to determine
 // whether it acts as a token generator (emitter) or validator. The scan
 // matches the package-qualified constant "config.TokenRoleGenerator" as it

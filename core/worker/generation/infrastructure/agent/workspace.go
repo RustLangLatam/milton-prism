@@ -488,10 +488,10 @@ func authSchemeSection(outputProfile, protocol, authScheme, authSigAlg string) s
 // sqlStore describes a SQL persistence cell as an (ORM, driver) pair. The prompt
 // block is assembled from these parts by ormStoreSection, so the same ORM-SQL
 // scaffold serves every wire-compatible engine (one set of GORM models/repos for
-// PostgreSQL AND MySQL/MariaDB) and the pattern is reusable when SQLAlchemy /
-// Prisma / SeaORM cells land for Python / Node / Rust: only the (orm, driver,
+// PostgreSQL AND MySQL/MariaDB) and the pattern is the same one the SQLAlchemy
+// (Python), Prisma (Node) and SeaORM (Rust) cells follow: only the (orm, driver,
 // dialect) facts change, the surrounding "models in infra, repos implement the
-// ports, mapping domain↔model, AutoMigrate from the models" shape is constant.
+// ports, mapping domain↔model, schema from the models" shape is constant.
 type sqlStore struct {
 	engine     string // human label, e.g. "PostgreSQL", "MySQL/MariaDB"
 	driverPkg  string // GORM driver import path
@@ -582,13 +582,47 @@ var nodePrismaStores = map[string]nodePrismaStore{
 	},
 }
 
+// rustSeaORMStore describes a Rust SeaORM persistence cell as a (sqlx driver
+// feature, runtime URL scheme) pair. It is the SeaORM homologue of sqlStore
+// (Go-GORM), pySQLAlchemyStore (Python) and nodePrismaStore (Node): the prompt
+// block is assembled by seaORMStoreSection so the SAME SeaORM entities + repos
+// serve every wire-compatible engine (one set of entities/repos for PostgreSQL
+// AND MySQL/MariaDB) and only the (sqlx driver feature, DATABASE_URL scheme)
+// facts change per store — SeaORM abstracts the dialect, exactly as
+// GORM/SQLAlchemy/Prisma do for Go/Python/Node.
+type rustSeaORMStore struct {
+	engine     string // human label, e.g. "PostgreSQL", "MySQL/MariaDB"
+	driverFeat string // SeaORM sqlx driver feature, e.g. "sqlx-postgres", "sqlx-mysql"
+	dsnExample string // a placeholder DATABASE_URL example for the .env note
+}
+
+// rustSeaORMStores maps the worker store token to its (SeaORM sqlx feature, URL)
+// facts for the Rust profile. POSTGRES→postgres token, MARIADB→mysql token (see
+// databaseStoreToken) — the SAME homologation as goSQLStores/pySQLAlchemyStores/
+// nodePrismaStores. Both rows reuse the SAME SeaORM entities + repos; only the
+// sqlx driver feature + DATABASE_URL scheme differ, exactly as the Go-GORM cell
+// only changes its driver import + DSN. Rust+Mongo is unaffected: it stays on the
+// native `mongodb` crate, never SeaORM.
+var rustSeaORMStores = map[string]rustSeaORMStore{
+	"postgres": {
+		engine:     "PostgreSQL",
+		driverFeat: "sqlx-postgres",
+		dsnExample: "postgres://user:password@host:5432/<svc>_db",
+	},
+	"mysql": {
+		engine:     "MySQL/MariaDB",
+		driverFeat: "sqlx-mysql",
+		dsnExample: "mysql://user:password@host:3306/<svc>_db",
+	},
+}
+
 // storeSection returns the prose block injected into the combined prompt that
 // pins the persistence engine the generated service must target. It is the store
 // homologue of transportSection / authSchemeSection: profile- and store-aware.
 //
-// v1 GENERATES SQL persistence for Go (via GORM), Python (via SQLAlchemy 2.0 async)
-// AND Node (via Prisma) on + {PostgreSQL, MySQL/MariaDB}; "mongodb" (the original
-// path) injects nothing so the established Mongo behaviour is unchanged:
+// v1 GENERATES SQL persistence for Go (via GORM), Python (via SQLAlchemy 2.0 async),
+// Node (via Prisma) AND Rust (via SeaORM) on + {PostgreSQL, MySQL/MariaDB}; "mongodb"
+// (the original path) injects nothing so the established Mongo behaviour is unchanged:
 //   - "mongodb"/"" → no block; the profile doc's MongoDB persistence is used as-is
 //     (Node+Mongo stays on the native `mongodb` driver, NOT Prisma).
 //   - (go, "postgres" | "mysql") → a GORM persistence layer (ormStoreSection):
@@ -606,6 +640,13 @@ var nodePrismaStores = map[string]nodePrismaStore{
 //     @prisma/client in infrastructure, repos implementing the SAME ports mapping
 //     Prisma model↔domain, schema applied by Prisma Migrate / db push, nullable
 //     soft-delete column, autoincrement IDs, .env with DATABASE_URL/DB_*.
+//   - (rust, "postgres" | "mysql") → a SeaORM persistence layer (seaORMStoreSection):
+//     SeaORM entities (async, sqlx-backed) in infrastructure/repositories mapping
+//     to/from the domain (proto/prost) types, repos implementing the SAME ports,
+//     a Database::connect(DATABASE_URL) builder selecting the sqlx driver feature
+//     by store, sea-orm-migration schema, nullable soft-delete column, autoincrement
+//     IDs, .env with DATABASE_URL/DB_*. (Rust+Mongo stays on the native `mongodb`
+//     crate, NOT SeaORM.)
 //   - any other (profile, store) SQL cell → an HONEST note that SQL for that cell
 //     is a v1 hole and must not be guessed (this path is unreachable while the
 //     IsGenerableDatabase guard rejects those cells at creation, but kept so the
@@ -632,14 +673,19 @@ func storeSection(outputProfile, store string) string {
 			return prismaStoreSection(cell)
 		}
 	}
+	if outputProfile == "rust" {
+		if cell, ok := rustSeaORMStores[s]; ok {
+			return seaORMStoreSection(cell)
+		}
+	}
 	return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
 		"The target database for this migration is **" + s + "** on the **" + outputProfile +
 		"** profile, which v1 of the generator does NOT emit (v1 generates SQL persistence " +
-		"for Go (GORM), Python (SQLAlchemy) and Node (Prisma) on PostgreSQL and MySQL/MariaDB; " +
-		"every other language uses MongoDB). Do NOT guess a " + s + " implementation. Generate " +
-		"the MongoDB persistence layer as the profile doc describes and add a single TODO note " +
-		"stating that `" + s + "` was requested but is a v1 generation hole and must be wired " +
-		"manually. Be honest about the gap.\n\n"
+		"for Go (GORM), Python (SQLAlchemy), Node (Prisma) and Rust (SeaORM) on PostgreSQL and " +
+		"MySQL/MariaDB; every language also supports MongoDB). Do NOT guess a " + s + " " +
+		"implementation. Generate the MongoDB persistence layer as the profile doc describes and " +
+		"add a single TODO note stating that `" + s + "` was requested but is a v1 generation hole " +
+		"and must be wired manually. Be honest about the gap.\n\n"
 }
 
 // ormStoreSection renders the GORM persistence block for one SQL cell. The text
@@ -708,6 +754,31 @@ func prismaStoreSection(c nodePrismaStore) string {
 		"- **Soft-delete** with a nullable timestamp column (`deleteTime DateTime? @map(\"delete_time\")`); deletes set the column instead of issuing a hard `DELETE`, and reads filter `deleteTime: null`, matching the Mongo path's soft-delete semantics.\n" +
 		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
 		"- Ensure `package.json` requires `@prisma/client` (dependencies) and `prisma` (devDependencies), NOT the `mongodb` package. The persistence code MUST pass the build gate (`npm install` + `npx prisma generate` + `tsc --noEmit`): the generated client + repos compile and at least one repository round-trip is exercised (a Prisma-mocked or container-backed test is acceptable).\n\n"
+}
+
+// seaORMStoreSection renders the SeaORM persistence block for one Rust SQL cell.
+// It is the Rust homologue of ormStoreSection (Go-GORM), sqlAlchemyStoreSection
+// (Python) and prismaStoreSection (Node): the text is parametrised by the (sqlx
+// driver feature, DATABASE_URL example) facts so PostgreSQL and MySQL/MariaDB
+// share ONE scaffold (one set of SeaORM entities + repos, only the sqlx driver
+// feature in Cargo.toml + the DATABASE_URL scheme differ — SeaORM handles the
+// dialect), keeping the "entities in infra, repos implement the ports, mapping
+// domain↔entity, schema from sea-orm-migration" shape identical across languages.
+// Rust+Mongo is unaffected: it stays on the native `mongodb` crate, never SeaORM.
+func seaORMStoreSection(c rustSeaORMStore) string {
+	return "## Persistence: " + c.engine + " (SeaORM)\n\n" +
+		"This service persists to **" + c.engine + "** via the **SeaORM** async ORM (`sea-orm`, sqlx-backed, on the tokio runtime), NOT MongoDB. " +
+		"Replace the MongoDB persistence layer (the native `mongodb` crate) the profile doc describes with an idiomatic SeaORM layer. Mandatory constraints:\n" +
+		"- Use **SeaORM** (`sea-orm` with `runtime-tokio-rustls`) and `sea-orm-migration`, backed by sqlx with the driver feature **`" + c.driverFeat + "`**. Open the connection with `Database::connect(DATABASE_URL)` (async). Do NOT use raw sqlx/SQL, the `mongodb` crate, or another ORM — SeaORM is the canon for this cell, and the SAME entities + repos serve PostgreSQL and MySQL/MariaDB unchanged (only the sqlx driver feature in `Cargo.toml` + the `DATABASE_URL` scheme differ; the dialect is SeaORM's job).\n" +
+		"- **Domain stays proto/prost.** Domain types remain aliases/newtypes over the generated prost proto messages (Canon §5.1). The SeaORM **entities are SEPARATE `DeriveEntityModel` structs (a `Model` with `#[sea_orm(...)]` column attrs + the `Entity`/`ActiveModel`) and live in `infrastructure/repositories`** (e.g. `entities/` or alongside the repo), NEVER in domain. Each repository maps domain↔SeaORM-entity on read/write — domain is never decorated with SeaORM derives.\n" +
+		"- For EACH owned resource (a proto message in `owned_resources`) write a SeaORM entity + a repository `infrastructure/repositories/seaorm_<resource>_repository.rs` that implements the SAME repository port `trait` the service already defines (`#[async_trait] impl ports::<Resource>Repository for SeaOrm<Resource>Repository`; same method signatures the gRPC/HTTP handlers depend on) — only the implementation changes from `mongodb` to SeaORM. The repo holds an injected `DatabaseConnection` (`Arc<DatabaseConnection>`).\n" +
+		"- Add a shared connection builder `shared/seaorm.rs` (or `shared::db`) that builds the `DatabaseConnection` once from config via `Database::connect(ConnectOptions::new(database_url))` (the Mongo-client homologue), configures the pool on `ConnectOptions` (`max_connections`/`min_connections`/`connect_timeout`/`sqlx_logging`), and pings on startup (fail-fast). Wire it where the Mongo client was wired (in `wire.rs`).\n" +
+		"- Add a transaction manager implementing the `TransactionManager` trait's async `with_transaction` over `db.transaction::<_, _, DbErr>(|txn| Box::pin(async move { … }))` (a `DatabaseTransaction`-scoped handle), mirroring the existing Mongo transaction abstraction so service-layer transaction boundaries are unchanged.\n" +
+		"- **Schema via `sea-orm-migration`.** Provide a `Migrator` (`MigratorTrait`) whose migrations create the tables from the entities (the `SchemaManager`/`create_table` builder, or `Schema::new(backend).create_table_from_entity(Entity)`); run `Migrator::up(&db, None).await` on startup so the schema is derived from the models (homologue of GORM AutoMigrate / Prisma migrate) — do NOT hand-write raw `*.sql` files and do NOT emulate a `system_counters` collection. Model FK columns/indexes come from the `cross_service_fks` in the boundary spec (FK columns/indexes only, never a hard cross-service FK constraint, per the data-ownership boundary).\n" +
+		"- **IDs** are autoincrement by the database: the entity PK is a `#[sea_orm(primary_key)]` `i64` column (SeaORM auto-increments an integer PK; `auto_increment = true` is the default for a single integer PK; Canon §5.3) — never an emulated counter. Map the proto `uint64 identifier` to/from the entity's `i64` without losing precision. Use snake_case table/column names (`#[sea_orm(table_name = \"…\")]`).\n" +
+		"- **Soft-delete** with a nullable timestamp column (`delete_time: Option<DateTimeUtc>` / a nullable `TimestampWithTimeZone`); deletes set the column via an `ActiveModel` update instead of issuing a hard `DELETE`, and reads filter `delete_time IS NULL` (`.filter(Column::DeleteTime.is_null())`), matching the Mongo path's soft-delete semantics.\n" +
+		"- Read the connection config from `.env` / environment (via `dotenvy`/`envy`/`std::env`): emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
+		"- Ensure the service `Cargo.toml` requires `sea-orm` (with `runtime-tokio-rustls` + **`" + c.driverFeat + "`** + the macros/`with-chrono` features it needs) and `sea-orm-migration`, NOT the `mongodb`/`bson` crates. Keep the crate set minimal (the build-cost note still applies). The persistence code MUST be part of the build gate (`cargo build` + `cargo test`): the entities + repos compile and at least one repository round-trip is exercised (a SeaORM `MockDatabase` or container-backed test is acceptable).\n\n"
 }
 
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.

@@ -1,5 +1,130 @@
 # Pendientes / Roadmap — backend
 
+## Limpieza de DELIVERABLE — cargo bloat + Node proto leak + import-closure + deps por store (HECHO, 2026-06-24)
+
+**Contexto:** el deliverable se ensambla AL DESCARGAR (`:downloadDeliverable` →
+`assembler.Assemble`), así que toda esta limpieza se certifica re-descargando, sin
+generar código nuevo. Tres defectos + un gap de cierre, todos a nivel assembler.
+
+**Defectos arreglados:**
+1. **Cargo bloat (DEFECT 4b).** mig67 (Rust+Postgres) persistió **13014** artifacts;
+   **12983** eran `.cargo-home/registry/{src,index}/…`. El agente resolvió
+   `CARGO_HOME=$workspace/.cargo-home` (NO `.cargo`), así que el filtro previo
+   (`.cargo`/`target`/`.rustup`) no lo cubría. Fix: añadir `.cargo-home` + prefijos
+   `cargo-home`/`.cargo-` al colector (`artifacts.go`) y al assembler
+   (`isCargoBuildArtifact`). mig67 re-empaquetado: **13014 → 32** files, 0 cargo.
+2. **Proto leak / vendor dir variable.** El agente vendoriza los third-party protos
+   (google WKT + a veces toda la plataforma) en dirs que VARÍAN por migración:
+   Rust→`proto_include/`|`third_party/`|`proto_vendor/`; Node→`third_party/proto/`
+   (mig65)|`proto/` (mig21). Fixes: `relocateRustVendoredProtos` ahora reconoce los 3
+   markers y reubica a `protobuf/proto/<import>`; `stripProtoIncludeFromBuildRs`
+   borra el binding `let … = "<marker>"` Y su uso en el include slice (maneja
+   `PathBuf::from`/literal/`.to_str().unwrap()`); Node: `isNodeVendoredProto` dropea
+   **todo `.proto` fuera de `protobuf/proto/`** (independiente del nombre del dir) y
+   `rewriteNodeGenProtoScript` repunta `gen:*` (`-I`/`--includeDirs`/arg) a
+   `../protobuf/proto`. Resultado: **0 `.proto` bajo `core/`** en TODO perfil
+   no-Go, 0 protos de plataforma.
+3. **Import-closure (gap nuevo).** Rust/Node saltan el árbol canónico `protobuf/proto`
+   del skeleton y dependen de artifacts, pero el agente solo embarca los protos del
+   servicio + un set google PARCIAL — NO las deps transitivas (`milton_prism/types/
+   pagination`, `query_params`, `openapiv3/annotations`). Sin ellas `protoc`/
+   tonic-build/proto-loader fallaban ("Import … not found") → el deliverable Rust
+   **nunca** compilaba. Fix: `resolveProtoImportClosure` recorre el grafo `import` de
+   cada `.proto` bajo `protobuf/proto/` y trae las faltantes del skeleton canónico
+   (solo AÑADE, nunca borra). Hace el set de protos self-contained.
+4. **Deps por store (SQL no-Go).** Python+SQL (SQLAlchemy) ya no embarca
+   `python/shared/mongo_client/` ni la dep `motor` (ni el test mongo-only
+   `test_transaction_manager.py`). Node ya emitía `package.json` por store (sin
+   `mongodb` en Prisma) — OK. **Go+SQL NO se puede limpiar:** el scaffold de
+   plataforma `core/internal/svc/builder.go` IMPORTA `core/shared/mongo_client` y
+   construye `*mongo_client.MongoClient` incondicionalmente (Services es
+   store-agnóstico), así que dropearlo rompe `go build`; la dep mongo-driver se queda
+   en go.mod. Limpiar Go+SQL requeriría volver condicional el wiring de Mongo en
+   builder.go (cambio core fuera de re-empaquetado).
+
+**Archivos sin commitear tocados (esta tarea):**
+- `core/worker/generation/infrastructure/agent/artifacts.go` — `.cargo-home` +
+  prefijos cargo-home en `artifactExcludeDirs`/`isExcludedArtifactPath`.
+- `core/worker/generation/infrastructure/agent/artifact_test.go` — casos `.cargo-home`.
+- `core/services/migration/application/assembler/assembler.go` — `isCargoBuildArtifact`
+  (cargo-home); `relocateRustVendoredProtos` (3 markers); `stripProtoIncludeFromBuildRs`
+  (bindings + slice); `isNodeVendoredProto` (todo proto fuera de protobuf/proto);
+  `rewriteNodeGenProtoScript`; `resolveProtoImportClosure` (+ paso 2b);
+  `prunePyprojectMotorDep` (+ guard Python-SQL mongo_client/test).
+- `core/services/migration/application/assembler/assembler_cleanup_test.go` — NUEVO
+  (unit tests de los helpers de limpieza + closure).
+
+**GATES (re-descarga, deployed migration_service):**
+- **L1 Rust:** mig67 (Postgres) 32 files / mig68 (MySQL) 59 files; 0 cargo/target/
+  rustup, 0 `.proto` bajo `core/services`, build.rs reescrito; **`cargo build` del ZIP
+  en contenedor = exit 0 para AMBAS** (SeaORM sqlx-postgres/sqlx-mysql, Database::connect,
+  entities en infra, migrations, `.env` DATABASE_URL/DB_* 0 MONGO_).
+- **L2 Node:** mig65 (Prisma) y mig21 (Mongo): **0 `.proto` bajo `core/`**, sin
+  `core/third_party`, 0 protos de plataforma, gen-script repuntado; **tsc=0** para ambas.
+- **L3 SQL:** mig51 Go (mongo_client+driver presentes POR DISEÑO — builder.go los usa;
+  `go build`=0), mig59 Python (0 mongo_client / 0 motor / SQLAlchemy presente).
+  Mongo intacto: mig19 Python (mongo_client+motor, 0 sqlalchemy, 3 servicios propios)
+  y mig21 Node (driver `mongodb`, 0 prisma).
+- **L4:** `go build ./...` + `go test ./core/services/migration/... ./core/worker/
+  generation/...` verdes; sin regresión.
+
+**=> EJE DB COMPLETO 4×3 CERTIFICADO con deliverable limpio (Rust-SeaORM build OK ambas DBs).**
+
+## Eje BASE DE DATOS — Rust + {PostgreSQL, MySQL/MariaDB} vía SeaORM (HECHO, 2026-06-24)
+
+**Objetivo:** la capa de persistencia SQL de **Rust** usa **SeaORM** (ORM async,
+sqlx-backed, runtime tokio) como ORM, cubriendo **PostgreSQL Y MySQL/MariaDB** con
+**las MISMAS entities + repos** (solo cambia la feature/driver sqlx + el scheme de
+`DATABASE_URL` por store), espejando las celdas Go-GORM / Python-SQLAlchemy /
+Node-Prisma. Es la ÚLTIMA celda del eje DB. Sin cambio de proto/gateway: el enum
+`TargetDatabase` (MONGODB=1/POSTGRES=2/MARIADB=3) ya viajaba; `MARIADB`→token `mysql`
+(`databaseStoreToken` es profile-agnóstico). **Rust+Mongo NO cambia: sigue con el
+crate nativo `mongodb`, nunca SeaORM** — SeaORM es solo para SQL.
+
+**=> EJE DB COMPLETO: 4 lenguajes (Go/Python/Node/Rust) × 3 DBs (Mongo/Postgres/MySQL).**
+Ya no hay holes de lenguaje; MIG111 solo aplicaría a un lenguaje no-generable o un
+engine de DB desconocido.
+
+**Decisión:** SeaORM (`sea-orm` con `runtime-tokio-rustls` + `sqlx-postgres`|`sqlx-mysql`
+por store) + `sea-orm-migration`. Conexión `Database::connect(DATABASE_URL)`. Entities
+`DeriveEntityModel` viven en `infrastructure/repositories` (NO en domain, que sigue
+siendo alias/newtype del proto/prost); repos implementan los MISMOS ports
+(`#[async_trait] impl ports::<Resource>Repository`) mapeando domain↔entity; esquema por
+`sea-orm-migration` (`Migrator::up`); soft-delete columna nullable `delete_time`; PK
+autoincrement `i64` (`#[sea_orm(primary_key)]`, NO `system_counters`). Reusa el patrón
+"ORM + driver/feature" de `ormStoreSection`/`sqlAlchemyStoreSection`/`prismaStoreSection`
+con un `seaORMStoreSection` paralelo.
+
+**Archivos (sin commitear):**
+- `core/services/migration/domain/domain.go` — `generableDatabaseByLanguage`
+  Rust→{MONGODB,**POSTGRES,MARIADB**}; comentario de la matriz actualizado (eje DB completo, Rust=SeaORM).
+- `core/services/migration/domain/errors.go` + `pkg/gateway/common/error/migration_errors.go` —
+  comentarios/mensaje MIG111 actualizados (los 4 lenguajes soportan SQL; sin holes de lenguaje).
+- `core/worker/generation/infrastructure/agent/workspace.go` — `rustSeaORMStores{postgres,mysql}`
+  (struct `rustSeaORMStore`) + `seaORMStoreSection` (entities en infra, repos por port,
+  `Database::connect`, sqlx feature por store, `sea-orm-migration`, tx manager, pool);
+  `storeSection` ramifica go→GORM / python→SQLAlchemy / node→Prisma / **rust→SeaORM** / resto=hole.
+- `core/services/migration/application/assembler/assembler.go` + `assembler_config.go` —
+  `isRustSQL` + `generateRustSQLConfigExamples`/`rustSQLServiceEnvExample` (`.env.example`
+  con `DATABASE_URL`/`DB_*`, 0 `MONGO_*`); rama Rust ramifica SQL vs Mongo.
+- Docs: `milton-prism-rust-profile.md` (§A.13 SeaORM + scope/§A.6/§A.10) y
+  `...-prompt-rust.md` / `...-prompt-rust-http.md` (ramifican por store).
+- Tests: `store_section_test.go` (`TestStoreSection_RustSQLSeaORM`, hole→`unknownlang`),
+  `generable_database_test.go` (rust_postgres/rust_mariadb=true), `database_axis_test.go`
+  (Rust+Postgres/MySQL→accept, Rust+Mongo sin regresión), `assembler_profile_test.go`
+  (`TestAssemble_RustSQL_EnvExample`).
+
+**GATES:** G1 Rust+Postgres/Rust+MariaDB→200, Rust+Mongo sigue 200 (sin rechazo MIG111 por
+lenguaje); G2 worker `profile=rust store=postgres`/`store=mysql`→READY; G3 deliverable con
+entities+repos SeaORM (entities en infra mapeando a domain, `Database::connect`,
+`sea-orm-migration`, features correctas `sqlx-postgres`/`sqlx-mysql` en `Cargo.toml`) +
+`.env` DATABASE_URL/DB_* (0 MONGO_) + `cargo build`=0 para ambas DBs; G4 Rust+Mongo (crate
+nativo) + Go/Python/Node SQL+Mongo sin regresión; G5 `go build ./...` + tests verdes.
+
+**SIGUIENTE:** limpieza de dependencias (eje DB cerrado).
+
+---
+
 ## Eje BASE DE DATOS — Node + {PostgreSQL, MySQL/MariaDB} vía Prisma (HECHO, 2026-06-24)
 
 **Objetivo:** la capa de persistencia SQL de **Node/TypeScript** usa **Prisma** como

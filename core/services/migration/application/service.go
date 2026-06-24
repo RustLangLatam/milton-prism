@@ -148,16 +148,17 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 		return nil, domain.ErrUnsupportedProtocol
 	}
 	// Reject (language, database) cells the generator cannot emit. The DATABASE axis
-	// is orthogonal to language/protocol/topology. v1 supports Go + {MongoDB,
-	// PostgreSQL, MariaDB} (GORM), Python + {MongoDB, PostgreSQL, MariaDB}
-	// (SQLAlchemy), Node + {MongoDB, PostgreSQL, MariaDB} (Prisma; Node+Mongo on the
-	// native driver) and Rust + MongoDB only (SQL for Rust is still a hole).
+	// is orthogonal to language/protocol/topology. The axis is COMPLETE: all four
+	// generable languages support {MongoDB, PostgreSQL, MariaDB} — Go (GORM), Python
+	// (SQLAlchemy), Node (Prisma; Node+Mongo on the native driver) and Rust (SeaORM;
+	// Rust+Mongo on the native `mongodb` crate). No language-level hole remains.
 	// TARGET_DATABASE_UNSPECIFIED is "Auto": the real engine is resolved at
 	// generation time from the analysis database_detection; at creation it
 	// canonicalises to MONGODB (always generable for every language) so an Auto
 	// request is never wrongly rejected. The concrete engine still gets validated in
 	// the worker before generation. A non-UNSPECIFIED database is validated as-is so
-	// e.g. Rust + PostgreSQL is rejected up front.
+	// The DB axis is complete (all four generable languages support Mongo/Postgres/
+	// MySQL), so MIG111 now only fires for a non-generable language or unknown engine.
 	requestedDB := m.GetTarget().GetDatabase()
 	effectiveDB := requestedDB
 	if effectiveDB == domain.TargetDatabaseUnspecified {

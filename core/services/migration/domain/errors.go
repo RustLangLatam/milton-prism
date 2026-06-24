@@ -42,12 +42,12 @@ const (
 	ErrCodeInvalidOrderBy = "MIG110"
 	// ErrCodeUnsupportedDatabase: the requested (language, database) cell is not in
 	// the persistence matrix (IsGenerableDatabase). Rejected at creation so a
-	// migration never targets a database engine the generator cannot emit. v1
-	// supports Go + {MongoDB, PostgreSQL, MariaDB} (GORM), Python + {MongoDB,
-	// PostgreSQL, MariaDB} (SQLAlchemy) and Node + {MongoDB, PostgreSQL, MariaDB}
-	// (Prisma; Node+Mongo stays on the native `mongodb` driver); Rust supports
-	// MongoDB only. SQL for Rust is a hole, so MIG111 fires for e.g. Rust + MySQL,
-	// or any unknown engine.
+	// migration never targets a database engine the generator cannot emit. The DB
+	// axis is COMPLETE: all four generable languages support {MongoDB, PostgreSQL,
+	// MariaDB} — Go (GORM), Python (SQLAlchemy), Node (Prisma) and Rust (SeaORM);
+	// Mongo stays on each language's native driver/crate. There are therefore no
+	// language-level holes; MIG111 only fires for a non-generable language or an
+	// unknown/unsupported database engine.
 	ErrCodeUnsupportedDatabase = "MIG111"
 )
 
@@ -75,11 +75,10 @@ var (
 	// ErrInvalidOrderBy: order_by names a field outside the allowlist.
 	ErrInvalidOrderBy = newError(ErrCodeInvalidOrderBy, "Failure_Invalid_Order_By")
 	// ErrUnsupportedDatabase: the requested (language, database) combination is not
-	// generable (see IsGenerableDatabase). v1 supports Go + {MongoDB, PostgreSQL,
-	// MariaDB} (GORM), Python + {MongoDB, PostgreSQL, MariaDB} (SQLAlchemy) and Node
-	// + {MongoDB, PostgreSQL, MariaDB} (Prisma); Rust supports MongoDB only.
-	// Rejected at creation so a migration never targets a database engine the
-	// generator cannot emit.
+	// generable (see IsGenerableDatabase). The DB axis is complete: all four
+	// generable languages support {MongoDB, PostgreSQL, MariaDB} — Go (GORM),
+	// Python (SQLAlchemy), Node (Prisma) and Rust (SeaORM). Rejected at creation so
+	// a migration never targets a database engine the generator cannot emit.
 	ErrUnsupportedDatabase = newError(ErrCodeUnsupportedDatabase, "Failure_Unsupported_Database")
 )
 

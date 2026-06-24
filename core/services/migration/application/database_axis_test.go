@@ -2,7 +2,6 @@ package application_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"milton_prism/core/services/migration/domain"
@@ -133,18 +132,56 @@ func TestCreateMigration_NodeMySQL_Accepted(t *testing.T) {
 	assert.Equal(t, uint64(10026), out.GetIdentifier())
 }
 
-// TestCreateMigration_RustPostgres_Rejected proves SQL on Rust is still a v1 hole:
-// a Rust + PostgreSQL migration is rejected with MIG111 (Rust persists to MongoDB
-// only; GORM is Go, SQLAlchemy is Python, Prisma is Node).
-func TestCreateMigration_RustPostgres_Rejected(t *testing.T) {
-	svc, _, _, _, _, _ := newSvc(t)
+// TestCreateMigration_RustPostgres_Accepted proves the (Rust, PostgreSQL) cell is
+// now generable via the SeaORM layer: CreateMigration accepts a Rust + PostgreSQL
+// migration (no MIG111) and proceeds to create it. With this the DB axis is
+// complete (Go-GORM, Python-SQLAlchemy, Node-Prisma, Rust-SeaORM).
+func TestCreateMigration_RustPostgres_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
 	m := validMigration()
 	m.Target.Language = domain.TargetLanguageRust
 	m.Target.Database = domain.TargetDatabasePostgres
+	stored := &domain.Migration{Identifier: 10027, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
 
-	_, err := svc.CreateMigration(context.Background(), m)
-	require.Error(t, err)
-	var dErr *domain.Error
-	require.True(t, errors.As(err, &dErr), "want a domain.Error")
-	assert.Equal(t, domain.ErrCodeUnsupportedDatabase, dErr.Code)
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10027), out.GetIdentifier())
+}
+
+// TestCreateMigration_RustMySQL_Accepted proves the (Rust, MySQL/MariaDB) cell is
+// generable via the same SeaORM layer as PostgreSQL (one set of entities, only the
+// sqlx driver feature differs): CreateMigration accepts it (no MIG111).
+func TestCreateMigration_RustMySQL_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguageRust
+	m.Target.Database = domain.TargetDatabaseMariaDB
+	stored := &domain.Migration{Identifier: 10028, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10028), out.GetIdentifier())
+}
+
+// TestCreateMigration_RustMongo_Unaffected proves the established Rust + MongoDB
+// path is unchanged (native `mongodb` crate, NOT SeaORM): no MIG111, accepted.
+func TestCreateMigration_RustMongo_Unaffected(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguageRust
+	m.Target.Database = domain.TargetDatabaseMongoDB
+	stored := &domain.Migration{Identifier: 10029, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10029), out.GetIdentifier())
 }

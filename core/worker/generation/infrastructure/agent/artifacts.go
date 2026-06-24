@@ -43,6 +43,7 @@ var artifactExcludeDirs = map[string]struct{}{
 	"node_modules":  {}, // node deps
 	"target":        {}, // rust/cargo build output (debug/, release/, deps/, incremental)
 	".cargo":        {}, // cargo home: registry index + downloaded crate sources + caches (DEFECT 4)
+	".cargo-home":   {}, // cargo home under an explicit CARGO_HOME=$workspace/.cargo-home (DEFECT 4b: mig67 dumped 12983 registry files here)
 	".rustup":       {}, // rustup toolchain home (if it lands in the workspace)
 	".fingerprint":  {}, // cargo build fingerprints (under target/, defence-in-depth)
 	".git":          {}, // any nested git metadata
@@ -78,6 +79,15 @@ func isExcludedArtifactPath(rel string) bool {
 		// caught by the .cargo segment, but matched by name as belt-and-braces).
 		if seg == ".package-cache" || seg == ".package-cache-mutate" ||
 			seg == "CACHEDIR.TAG" {
+			return true
+		}
+		// Cargo home under any CARGO_HOME=$workspace/<name> convention: the agent
+		// may name it .cargo (caught above), .cargo-home, cargo-home, etc. Match any
+		// segment that is a "cargo home" variant so the whole registry/index/src tree
+		// under it is dropped (DEFECT 4b root cause: mig67's CARGO_HOME was the
+		// workspace-local .cargo-home, which the .cargo segment alone did not catch).
+		if seg == "cargo-home" || strings.HasPrefix(seg, ".cargo-") ||
+			strings.HasPrefix(seg, "cargo-home") {
 			return true
 		}
 		// Cargo lockfile: regenerated deterministically by `cargo build` from

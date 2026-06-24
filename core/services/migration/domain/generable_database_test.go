@@ -3,12 +3,12 @@ package domain
 import "testing"
 
 // TestIsGenerableDatabase proves the (language, database) persistence matrix that
-// backs the MIG111 guard in CreateMigration. v1: Go persists to MongoDB, PostgreSQL
-// AND MySQL/MariaDB (SQL via the same GORM layer); Python persists to MongoDB,
-// PostgreSQL AND MySQL/MariaDB (SQL via the same SQLAlchemy 2.0 async layer);
-// Node persists to MongoDB (native driver), PostgreSQL AND MySQL/MariaDB (SQL via
-// the same Prisma layer); Rust persists to MongoDB only. SQL is a hole for Rust
-// only. A non-generable language is false for every database.
+// backs the MIG111 guard in CreateMigration. The DB axis is COMPLETE: Go persists
+// to MongoDB, PostgreSQL AND MySQL/MariaDB (SQL via the same GORM layer); Python
+// via the same SQLAlchemy 2.0 async layer; Node (Mongo native driver) via the same
+// Prisma layer; Rust (Mongo native crate) via the same SeaORM layer. All four
+// generable languages support all three engines — no language-level hole remains.
+// A non-generable language is false for every database.
 func TestIsGenerableDatabase(t *testing.T) {
 	cases := []struct {
 		name string
@@ -26,7 +26,8 @@ func TestIsGenerableDatabase(t *testing.T) {
 		{"node_postgres", TargetLanguageNode, TargetDatabasePostgres, true}, // ← v1 SQL cell (Prisma)
 		{"node_mariadb", TargetLanguageNode, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (Prisma, same schema)
 		{"rust_mongodb", TargetLanguageRust, TargetDatabaseMongoDB, true},
-		{"rust_postgres_hole", TargetLanguageRust, TargetDatabasePostgres, false},
+		{"rust_postgres", TargetLanguageRust, TargetDatabasePostgres, true}, // ← v1 SQL cell (SeaORM)
+		{"rust_mariadb", TargetLanguageRust, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (SeaORM, same entities)
 		{"unspecified_lang_mongodb", TargetLanguageUnspecified, TargetDatabaseMongoDB, false},
 	}
 	for _, tc := range cases {

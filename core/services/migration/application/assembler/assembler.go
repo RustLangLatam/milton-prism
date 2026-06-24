@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -187,8 +188,60 @@ func isNodeGRPCArtifact(path, content string) bool {
 	return false
 }
 
+// isNodeVendoredProto reports whether path is a `.proto` the Node agent vendored
+// into its source tree (under node/, which becomes core/ after the rename). The
+// agent copies the well-known-types + (often) the whole Milton Prism platform proto
+// set into a per-workspace dir so proto-loader-gen-types can run offline; the dir
+// name varies by migration — node/third_party/proto/… (mig65) or node/proto/…
+// (mig21). None of these belong in a user deliverable: the only protos that ship are
+// the canonical, scoped ones under protobuf/proto/ (the import closure is resolved
+// from the skeleton in step 2b). The rule is therefore "any .proto NOT under
+// protobuf/proto/ is a vendored copy and must be dropped", which is independent of
+// the vendor dir name and of the node/ vs core/ root prefix.
+func isNodeVendoredProto(path string) bool {
+	return strings.HasSuffix(path, ".proto") &&
+		!strings.HasPrefix(path, "protobuf/proto/")
+}
+
+// rewriteNodeGenProtoScript rewrites the proto-loader regeneration npm scripts in a
+// Node package.json so their include dir and per-service .proto arguments resolve
+// against the canonical protobuf/proto tree shipped at the deliverable root
+// (../protobuf/proto relative to core/) instead of the dropped vendored proto dir.
+// The vendored dir name varies by migration, so this handles the include forms the
+// agent emits: `-I third_party/proto` / `-I proto`, `--includeDirs=third_party/proto`
+// / `--includeDirs=proto`, and the bare `third_party/proto/…` / `proto/…` .proto file
+// arguments. Without this the (optional) regeneration script would point at a
+// directory that no longer ships; the committed TS stubs under gen/ are unaffected.
+// Returns the rewritten content and whether a change was made.
+func rewriteNodeGenProtoScript(content string) (string, bool) {
+	out := content
+	// Order matters: rewrite the more specific third_party/proto before the bare
+	// proto so the replacements don't overlap incorrectly.
+	repl := []struct{ from, to string }{
+		{"third_party/proto", "../protobuf/proto"},
+		{"--includeDirs=proto ", "--includeDirs=../protobuf/proto "},
+		{"--includeDirs=proto/", "--includeDirs=../protobuf/proto/"},
+		{"-I proto ", "-I ../protobuf/proto "},
+		{"-I proto/", "-I ../protobuf/proto/"},
+		{" proto/", " ../protobuf/proto/"},
+	}
+	for _, r := range repl {
+		out = strings.ReplaceAll(out, r.from, r.to)
+	}
+	return out, out != content
+}
+
 // isRust reports whether this Assembler targets the Rust profile.
 func (a *Assembler) isRust() bool { return a.profile == "rust" }
+
+// isRustSQL reports whether this Assembler targets a Rust + SQL deliverable
+// (SeaORM): the store is "postgres" or "mysql", so the .env.example is a
+// DATABASE_URL / DB_* file (zero MONGO_*) matching the SeaORM entities/repos the
+// generator wrote. It is the Rust homologue of isGoSQL / isPythonSQL / isNodeSQL.
+// Rust+Mongo (the default) keeps the native `mongodb` crate, NOT SeaORM.
+func (a *Assembler) isRustSQL() bool {
+	return a.isRust() && (a.store == "postgres" || a.store == "mysql")
+}
 
 // isRustHTTP reports whether this Assembler targets the Rust HTTP-native (axum)
 // deliverable (Rust profile + HTTP transport). The tonic gRPC server bootstrap
@@ -324,6 +377,20 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		if a.isNodeHTTP() && isNodeGRPCArtifact(f.Path, f.Content) {
 			continue
 		}
+		// Profile guard: a Node deliverable must never carry `.proto` under its
+		// source tree. The agent vendors the well-known-type + google.api protos AND
+		// the entire Milton Prism PLATFORM proto set (analysis/billing/identity/
+		// migration/repository/articles + openapiv3) into node/third_party/proto/ so
+		// `proto-loader-gen-types` can regenerate the TS stubs offline. That leaks ~27
+		// `.proto` — including every platform service — under core/ after the rename,
+		// violating the invariant that the only protos a deliverable ships are the
+		// canonical, scoped ones under protobuf/proto/. The TS stubs under node/gen/
+		// are committed and self-contained (tsconfig even excludes third_party), so
+		// dropping the vendored proto tree does not affect tsc. The gen:proto script's
+		// include path is rewritten to the canonical protobuf/proto below.
+		if a.isNode() && isNodeVendoredProto(f.Path) {
+			continue
+		}
 		// Profile guard: a Rust (Tonic) deliverable must never carry Go, Python or
 		// Node artifacts. Same rationale as Python/Node — the Go error aggregator
 		// is skipped for the rust profile in the pipeline, but defend here too so a
@@ -378,6 +445,22 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		relocateRustVendoredProtos(merged)
 	}
 
+	// 2b. Proto import-closure resolution (Rust + Node). These profiles skip the
+	// canonical protobuf/proto tree from the skeleton (skipDirRust/skipDirNode) and
+	// rely on the generated artifacts for the protos. The agent ships the service's
+	// own protos under protobuf/proto/ plus a PARTIAL vendored set (mig68 vendored
+	// only the google well-known-types under third_party/, relocated above), but
+	// NOT the transitive platform deps those protos import — e.g.
+	// milton_prism/types/pagination, .../query_params and openapiv3/annotations.
+	// Without them `protoc`/tonic-build/proto-loader fails ("Import … not found").
+	// Walk the import graph of every proto now under protobuf/proto/ and pull any
+	// missing imported .proto from the canonical skeleton tree so the deliverable's
+	// proto set is self-contained. Go is unaffected: its skeleton + generated *.pb.go
+	// already carry the closure as compiled stubs.
+	if a.isRust() || a.isNode() {
+		resolveProtoImportClosure(merged, a.skeletonRoot)
+	}
+
 	// 3. Append config.toml.example files (per-service, always), per-service
 	// Makefiles, and the API gateway entrypoint (conditional on useApiGateway).
 	// Neither ever contains real credentials.
@@ -397,6 +480,10 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			if err := generateSQLConfigExamples(merged); err != nil {
 				return nil, fmt.Errorf("assembler: sql config examples: %w", err)
 			}
+			// NOTE: the mongo-driver require is NOT pruned from go.mod for Go+SQL: the
+			// shipped platform scaffold core/internal/svc/builder.go imports
+			// core/shared/mongo_client unconditionally (see isSkeletonFile), so the
+			// driver is a real build dependency of every Go cell, SQL or Mongo.
 		} else {
 			if err := generateConfigExamples(merged); err != nil {
 				return nil, fmt.Errorf("assembler: config examples: %w", err)
@@ -426,6 +513,11 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			if err := generatePythonSQLConfigExamples(merged); err != nil {
 				return nil, fmt.Errorf("assembler: python sql config examples: %w", err)
 			}
+			// Drop the now-unused Motor/Mongo dependency from pyproject.toml: a Python
+			// + SQL (SQLAlchemy) deliverable has no shared/mongo_client (excluded
+			// above) and persists via SQLAlchemy, so the motor require is a dep for a
+			// store the package never uses.
+			prunePyprojectMotorDep(merged)
 		} else if err := generatePythonConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: python config examples: %w", err)
 		}
@@ -448,6 +540,16 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		} else if err := generateNodeConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: node config examples: %w", err)
 		}
+		// The vendored node/third_party/proto tree was dropped at merge time; repoint
+		// the package.json gen:proto regeneration script at the canonical
+		// protobuf/proto so it still resolves after the node/→core/ rename.
+		for p, c := range merged {
+			if p == "node/package.json" || strings.HasSuffix(p, "/package.json") {
+				if rewritten, changed := rewriteNodeGenProtoScript(string(c)); changed {
+					merged[p] = []byte(rewritten)
+				}
+			}
+		}
 	}
 
 	// 3a-rust. Rust profile: append a per-service .env.example (the Tonic homologue
@@ -456,7 +558,15 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// rust/services/<svc>/. The emitted .env.example paths are rewritten to
 	// core/services/<svc>/.env.example by the rename step below.
 	if a.isRust() {
-		if err := generateRustConfigExamples(merged); err != nil {
+		// Persistence-config variant: Rust + SQL (PostgreSQL or MySQL/MariaDB, both
+		// via SeaORM) emits a per-service SQL .env.example (DATABASE_URL / DB_*, zero
+		// MONGO_*) matching the SeaORM entities/repos the generator wrote; Rust +
+		// MongoDB (default) keeps the native-`mongodb`-crate .env.example.
+		if a.isRustSQL() {
+			if err := generateRustSQLConfigExamples(merged); err != nil {
+				return nil, fmt.Errorf("assembler: rust sql config examples: %w", err)
+			}
+		} else if err := generateRustConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: rust config examples: %w", err)
 		}
 	}
@@ -537,6 +647,19 @@ func (a *Assembler) skipDir(rel string) bool {
 // isSkeletonFile dispatches to the per-profile file filter.
 func (a *Assembler) isSkeletonFile(rel string) bool {
 	if a.isPython() {
+		// Store guard: a Python + SQL (SQLAlchemy) deliverable persists via
+		// SQLAlchemy, so the Mongo scaffolding (python/shared/mongo_client/) is dead
+		// code — drop it from the skeleton so the package carries no motor/mongo
+		// shared client. The SQLAlchemy session/engine arrives via generated artifacts.
+		// Also drop the Mongo-specific transaction-manager test, which imports
+		// shared.mongo_client + motor (both now removed) and would otherwise fail to
+		// import. Unlike Go (whose store-agnostic builder.go hard-imports mongo_client),
+		// no Python shared scaffold imports mongo_client, so this prune is safe.
+		if a.isPythonSQL() &&
+			(strings.HasPrefix(rel, "python/shared/mongo_client/") ||
+				rel == "python/shared/tests/test_transaction_manager.py") {
+			return false
+		}
 		return isSkeletonFilePython(rel)
 	}
 	if a.isNode() {
@@ -561,6 +684,14 @@ func (a *Assembler) isSkeletonFile(rel string) bool {
 	if a.isGoHTTP() && rel == "core/internal/svc/build_server_group.go" {
 		return false
 	}
+	// NOTE: the Mongo shared client (core/shared/mongo_client/) is NOT dropped for a
+	// Go + SQL (GORM) cell, even though the GORM repos do not use it. The shipped
+	// platform scaffold core/internal/svc/builder.go imports mongo_client and
+	// constructs a *mongo_client.MongoClient unconditionally (the Services builder is
+	// store-agnostic), so removing the package would break `go build` with "package
+	// milton_prism/core/shared/mongo_client is not in std". Pruning it would require
+	// also making builder.go's Mongo wiring conditional — a core change beyond
+	// deliverable repackaging. The mongo-driver require therefore stays in go.mod too.
 	return isSkeletonFile(rel)
 }
 
@@ -881,6 +1012,14 @@ func isCargoBuildArtifact(p string) bool {
 			".package-cache", ".package-cache-mutate", "CACHEDIR.TAG":
 			return true
 		}
+		// Cargo home under any CARGO_HOME=$workspace/<name> convention (.cargo-home,
+		// cargo-home, …): the whole registry/index/src tree lives under it. DEFECT 4b:
+		// mig67 set CARGO_HOME to the workspace-local .cargo-home and persisted 12983
+		// registry files there; the .cargo segment alone did not match it.
+		if seg == "cargo-home" || strings.HasPrefix(seg, ".cargo-") ||
+			strings.HasPrefix(seg, "cargo-home") {
+			return true
+		}
 	}
 	return false
 }
@@ -969,21 +1108,34 @@ func isSkeletonFileRust(rel string) bool {
 // already passes. The result: 0 `.proto` under core/services/ and a build.rs that
 // still compiles.
 func relocateRustVendoredProtos(merged map[string][]byte) {
-	const marker = "/proto_include/"
+	// rustVendoredProtoMarkers are the per-service / per-workspace directory names
+	// the agent has used to vendor the well-known-type + google.api protos (the
+	// Alpine protoc carries no bundled includes). The convention varies by
+	// migration: proto_include/ (early), third_party/ (mig68), proto_vendor/
+	// (mig67). Any `.proto` whose path contains one of these segments is relocated
+	// to the canonical protobuf/proto/<import-path> and the per-service copy dropped.
+	markers := []string{"/proto_include/", "/third_party/", "/proto_vendor/"}
 	for p, content := range merged {
-		// Only act on generated Rust service trees (rust/services/<svc>/…).
-		if !strings.HasPrefix(p, "rust/services/") {
+		// Only act on generated Rust trees (rust/services/<svc>/… or rust/<vendor>/…
+		// — mig67 vendored at the workspace root as rust/proto_vendor/).
+		if !strings.HasPrefix(p, "rust/") {
 			continue
 		}
 		if !strings.HasSuffix(p, ".proto") {
 			continue
 		}
-		idx := strings.Index(p, marker)
-		if idx < 0 {
+		var importPath string
+		for _, marker := range markers {
+			if idx := strings.Index(p, marker); idx >= 0 {
+				// importPath is the protoc import string (e.g. google/api/http.proto):
+				// everything after the vendor marker.
+				importPath = p[idx+len(marker):]
+				break
+			}
+		}
+		if importPath == "" {
 			continue
 		}
-		// importPath is the protoc import string (e.g. google/api/http.proto).
-		importPath := p[idx+len(marker):]
 		canonical := "protobuf/proto/" + importPath
 		// Move to canonical location (first writer wins; the vendored copies are
 		// byte-identical google sources, so dedup is safe).
@@ -993,8 +1145,8 @@ func relocateRustVendoredProtos(merged map[string][]byte) {
 		delete(merged, p)
 	}
 
-	// Rewrite each rust build.rs to drop the proto_include include path now that
-	// the google deps resolve via protobuf/proto.
+	// Rewrite each rust build.rs to drop the vendored include path now that the
+	// google deps resolve via protobuf/proto.
 	for p, content := range merged {
 		if !strings.HasPrefix(p, "rust/services/") || !strings.HasSuffix(p, "/build.rs") {
 			continue
@@ -1005,25 +1157,67 @@ func relocateRustVendoredProtos(merged map[string][]byte) {
 	}
 }
 
-// stripProtoIncludeFromBuildRs removes any reference to a per-service
-// `proto_include` include directory from a Rust build.rs body, so tonic-build
-// resolves proto imports solely through the canonical `protobuf/proto` include
-// root. It handles the two shapes the agent emits: a separate `let … =
-// "proto_include";` binding fed into the include slice, and an inline
-// "proto_include" literal inside the &[…] include slice passed to
-// compile_protos. Returns the rewritten body and whether any change was made.
+// rustVendorMarkerLiterals are the directory-name literals the agent uses when it
+// vendors third-party protos and feeds the dir into the tonic-build include slice.
+// They mirror the markers in relocateRustVendoredProtos but as the source-literal
+// forms seen in build.rs (with/without ./, ../ and ../.. relative prefixes).
+var rustVendorMarkerLiterals = []string{
+	"proto_include", "third_party", "proto_vendor",
+}
+
+// rustVendorLineMentionsMarker reports whether a build.rs `let` binding line binds
+// a vendored-proto include dir (proto_include / third_party / proto_vendor), in any
+// relative form: `let third_party = PathBuf::from("third_party");`,
+// `let wkt_include = "../../proto_vendor";`, `let p = "./proto_include";`, etc.
+func rustVendorLineMentionsMarker(trimmed string) bool {
+	for _, m := range rustVendorMarkerLiterals {
+		if strings.Contains(trimmed, `"`+m+`"`) ||
+			strings.Contains(trimmed, `"./`+m+`"`) ||
+			strings.Contains(trimmed, `"../`+m+`"`) ||
+			strings.Contains(trimmed, `"../../`+m+`"`) ||
+			strings.Contains(trimmed, `"../../../`+m+`"`) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripProtoIncludeFromBuildRs removes any reference to a vendored-proto include
+// directory (proto_include / third_party / proto_vendor) from a Rust build.rs
+// body, so tonic-build resolves proto imports solely through the canonical
+// `protobuf/proto` include root. It handles the shapes the agent emits:
+//   - a `let <name> = "<marker>";` (or PathBuf::from("<marker>")) binding fed into
+//     the include slice — the binding line is dropped AND the <name> identifier is
+//     removed from the include slice (incl. .to_str().unwrap() suffix);
+//   - an inline "<marker>" literal directly inside the &[…] include slice.
+//
+// Returns the rewritten body and whether any change was made.
 func stripProtoIncludeFromBuildRs(body string) (string, bool) {
-	if !strings.Contains(body, "proto_include") {
+	mentionsAnyMarker := false
+	for _, m := range rustVendorMarkerLiterals {
+		if strings.Contains(body, m) {
+			mentionsAnyMarker = true
+			break
+		}
+	}
+	if !mentionsAnyMarker {
 		return body, false
 	}
 	changed := false
+	var deletedBindings []string
 	var keep []string
 	for _, line := range strings.Split(body, "\n") {
-		// Drop a `let <name> = "proto_include";` (or "./proto_include") binding line.
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "let ") &&
-			strings.Contains(trimmed, "=") &&
-			(strings.Contains(trimmed, `"proto_include"`) || strings.Contains(trimmed, `"./proto_include"`)) {
+		// Drop a `let <name> = …"<marker>"…;` binding line and remember <name> so its
+		// uses in the include slice can be stripped below.
+		if strings.HasPrefix(trimmed, "let ") && strings.Contains(trimmed, "=") &&
+			rustVendorLineMentionsMarker(trimmed) {
+			if name := strings.TrimSpace(strings.TrimPrefix(trimmed[:strings.Index(trimmed, "=")], "let ")); name != "" {
+				// name may carry a `mut ` qualifier; keep only the identifier.
+				name = strings.TrimPrefix(name, "mut ")
+				name = strings.TrimSpace(name)
+				deletedBindings = append(deletedBindings, name)
+			}
 			changed = true
 			continue
 		}
@@ -1031,15 +1225,33 @@ func stripProtoIncludeFromBuildRs(body string) (string, bool) {
 	}
 	body = strings.Join(keep, "\n")
 
-	// Remove any leftover inline include-slice entries referencing proto_include
-	// (the literal itself, or a binding identifier we just deleted). Strip common
-	// `&[proto_root, vendored_includes]` / `&[proto_root, "proto_include"]` shapes
-	// down to `&[proto_root]` by deleting the trailing include arg.
+	// Remove the deleted binding identifiers from the include slice, in their
+	// common slice forms (`, name.to_str().unwrap()`, `, name`, `, &name`).
+	for _, name := range deletedBindings {
+		for _, form := range []string{
+			", " + name + ".to_str().unwrap()", "," + name + ".to_str().unwrap()",
+			", &" + name, ", " + name, "," + name,
+		} {
+			if strings.Contains(body, form) {
+				body = strings.ReplaceAll(body, form, "")
+				changed = true
+			}
+		}
+	}
+
+	// Remove any leftover inline include-slice entries referencing a marker literal
+	// directly (the literal itself, or a legacy vendored_includes identifier).
 	replacements := []string{
-		`, vendored_includes`, `,vendored_includes`,
-		`, "proto_include"`, `,"proto_include"`,
-		`, "./proto_include"`, `,"./proto_include"`,
-		`, &vendored_includes`,
+		`, vendored_includes`, `,vendored_includes`, `, &vendored_includes`,
+	}
+	for _, m := range rustVendorMarkerLiterals {
+		replacements = append(replacements,
+			`, "`+m+`"`, `,"`+m+`"`,
+			`, "./`+m+`"`, `,"./`+m+`"`,
+			`, "../`+m+`"`, `,"../`+m+`"`,
+			`, "../../`+m+`"`, `,"../../`+m+`"`,
+			`, "../../../`+m+`"`, `,"../../../`+m+`"`,
+		)
 	}
 	for _, r := range replacements {
 		if strings.Contains(body, r) {
@@ -1048,6 +1260,93 @@ func stripProtoIncludeFromBuildRs(body string) (string, bool) {
 		}
 	}
 	return body, changed
+}
+
+// prunePyprojectMotorDep removes the `motor = …` dependency line from the
+// [tool.poetry.dependencies] section of a Python deliverable's pyproject.toml. For
+// a Python + SQL (SQLAlchemy) cell Motor (the async Mongo driver) is unused once
+// python/shared/mongo_client/ is excluded, so the dependency declares a store the
+// package never uses. The mypy-override references to motor/mongo elsewhere in the
+// file are inert (the modules no longer ship), so only the dependency line is cut.
+func prunePyprojectMotorDep(merged map[string][]byte) {
+	c, ok := merged["python/pyproject.toml"]
+	if !ok {
+		return
+	}
+	var keep []string
+	changed := false
+	for _, line := range strings.Split(string(c), "\n") {
+		// Match a top-level `motor = "…"` dependency line (allow leading whitespace
+		// for safety, though poetry deps are at column 0).
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "motor ") || strings.HasPrefix(t, "motor=") {
+			if strings.Contains(t, "=") {
+				changed = true
+				continue
+			}
+		}
+		keep = append(keep, line)
+	}
+	if changed {
+		merged["python/pyproject.toml"] = []byte(strings.Join(keep, "\n"))
+	}
+}
+
+// protoImportRe matches a proto `import "<path>";` (incl. `import public "…";`
+// and `import weak "…";`), capturing the import path (the protoc include string).
+var protoImportRe = regexp.MustCompile(`(?m)^\s*import\s+(?:public\s+|weak\s+)?"([^"]+)"\s*;`)
+
+// resolveProtoImportClosure makes the deliverable's proto set self-contained: for
+// every .proto already under protobuf/proto/ in merged, it follows the `import`
+// graph and pulls any imported .proto that is missing from merged out of the
+// canonical skeleton tree (skeletonRoot/protobuf/proto/<import>). It recurses into
+// the freshly added protos so transitive deps (e.g. pagination → openapiv3
+// annotations → openapiv3/OpenAPIv3 + google/protobuf/descriptor) are all resolved.
+//
+// The import path IS the protoc include string, which maps 1:1 to the on-disk path
+// under protobuf/proto/, so resolution is a direct file read. Imports already
+// present (the google well-known-types the agent vendored, the service's own
+// protos) are skipped. An import with no canonical source on disk is left missing
+// (it is then either a generated-only proto already shipped, or a genuine gap the
+// build will surface) — this only ADDS files, never removes, so it cannot regress a
+// working deliverable.
+func resolveProtoImportClosure(merged map[string][]byte, skeletonRoot string) {
+	const root = "protobuf/proto/"
+	// Seed the work queue with the import paths (relative to protobuf/proto/) of
+	// every proto currently in the deliverable.
+	queue := make([]string, 0)
+	enqueueImports := func(content []byte) {
+		for _, m := range protoImportRe.FindAllSubmatch(content, -1) {
+			queue = append(queue, string(m[1]))
+		}
+	}
+	for p, c := range merged {
+		if strings.HasPrefix(p, root) && strings.HasSuffix(p, ".proto") {
+			enqueueImports(c)
+		}
+	}
+
+	seen := make(map[string]struct{})
+	for len(queue) > 0 {
+		imp := queue[0]
+		queue = queue[1:]
+		if _, done := seen[imp]; done {
+			continue
+		}
+		seen[imp] = struct{}{}
+
+		canonical := root + imp
+		if _, present := merged[canonical]; present {
+			continue // already shipped (vendored / generated / earlier pass)
+		}
+		// Pull from the canonical skeleton tree.
+		abs := filepath.Join(skeletonRoot, filepath.FromSlash(canonical))
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			continue // no canonical source — leave missing, do not fabricate
+		}
+		merged[canonical] = data
+		enqueueImports(data) // resolve this proto's own imports too
+	}
 }
 
 // sortFiles sorts a File slice by path for deterministic output.

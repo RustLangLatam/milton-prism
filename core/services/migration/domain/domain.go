@@ -162,8 +162,9 @@ func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
 // persistence layer against that database engine (profile doc + generator prompt
 // + worker storeSection + assembler config behaviour exist and are certified).
 //
-// v1 state: Go, Python and Node are the languages with a real SQL persistence
-// profile. The certified SQL engines for Go are PostgreSQL AND MariaDB (= the
+// v1 state: ALL FOUR generable languages have a real SQL persistence profile —
+// the DB axis is complete (4 languages × {MongoDB, PostgreSQL, MySQL/MariaDB}).
+// The certified SQL engines for Go are PostgreSQL AND MariaDB (= the
 // MySQL/MariaDB family, slot 3) — both via the SAME GORM models/repos (gorm.io/gorm
 // with gorm.io/driver/postgres or gorm.io/driver/mysql selected by the store; the
 // GORM models live in infrastructure/repositories and map to/from the domain types,
@@ -174,9 +175,13 @@ func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
 // schema.prisma (datasource provider postgresql|mysql + DATABASE_URL selected by
 // store) plus the @prisma/client live in infrastructure/repositories, repos
 // implement the same ports mapping Prisma model↔domain, schema applied by Prisma
-// Migrate / db push. Every generable language keeps MongoDB (the original path,
-// unchanged — Node+Mongo stays on the native `mongodb` driver, NOT Prisma). Rust +
-// SQL is still a hole. Any new cell (a new SQL engine, or SQL for another language)
+// Migrate / db push. Rust mirrors this with SeaORM (async, sqlx-backed): one set of
+// SeaORM entities/repos in infrastructure/repositories serves PostgreSQL
+// (sqlx-postgres) AND MySQL/MariaDB (sqlx-mysql), the driver/feature + DATABASE_URL
+// selected by the store, schema applied by sea-orm-migration. Every generable
+// language keeps MongoDB (the original path, unchanged — Node+Mongo stays on the
+// native `mongodb` driver NOT Prisma, Rust+Mongo stays on the native `mongodb`
+// crate NOT SeaORM). Any new cell (a new SQL engine, or SQL for another language)
 // must be added here AND given a storeSection prompt + assembler config + a
 // certified run.
 var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}{
@@ -196,7 +201,9 @@ var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}
 		TargetDatabaseMariaDB:  {}, // Prisma (provider mysql), MySQL/MariaDB family
 	},
 	TargetLanguageRust: {
-		TargetDatabaseMongoDB: {},
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // SeaORM (sqlx-postgres) + sea-orm-migration
+		TargetDatabaseMariaDB:  {}, // SeaORM (sqlx-mysql), MySQL/MariaDB family
 	},
 }
 

@@ -335,8 +335,17 @@ func TestPipeline_ArtifactsAndRawResultPersistedToStore(t *testing.T) {
 				Success:        true,
 				TotalCostUSD:   1.5,
 				RawResult:      "generation complete",
-				GeneratedFiles: []string{"core/services/articles/domain/domain.go", "core/services/articles/wire.go"},
-				FileArtifacts:  wantArtifacts,
+				// GeneratedFiles is the RAW workspace listing (includes build
+				// artifacts, vendored deps, generated stubs, etc.) and is
+				// intentionally larger than the deliverable FileArtifacts to
+				// guard the GeneratedFileCount source (must count artifacts).
+				GeneratedFiles: []string{
+					"core/services/articles/domain/domain.go",
+					"core/services/articles/wire.go",
+					"target/debug/build/junk.o",
+					"vendor/some/dep.go",
+				},
+				FileArtifacts: wantArtifacts,
 			},
 		},
 	}
@@ -354,7 +363,7 @@ func TestPipeline_ArtifactsAndRawResultPersistedToStore(t *testing.T) {
 	store.mu.Unlock()
 
 	assert.Equal(t, "generation complete", rec.AgentRawResult, "AgentRawResult must be persisted in the generation record")
-	assert.Equal(t, 2, rec.GeneratedFileCount)
+	assert.Equal(t, 2, rec.GeneratedFileCount, "GeneratedFileCount must count persisted FileArtifacts (2), not the raw GeneratedFiles workspace listing (4)")
 	assert.True(t, rec.GatesPassed)
 
 	got, err := store.ListArtifacts(context.Background(), 10, "articles")

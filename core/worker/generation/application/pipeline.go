@@ -324,7 +324,7 @@ persist:
 		CacheReadInputTokens:     result.CacheReadInputTokens,
 		OutputTokens:             result.OutputTokens,
 		Model:                    result.Model,
-		GeneratedFileCount:       len(result.GeneratedFiles),
+		GeneratedFileCount:       len(result.FileArtifacts),
 		AgentRawResult:           result.RawResult,
 	}
 

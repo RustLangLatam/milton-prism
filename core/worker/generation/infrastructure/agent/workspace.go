@@ -550,14 +550,47 @@ var pySQLAlchemyStores = map[string]pySQLAlchemyStore{
 	},
 }
 
+// nodePrismaStore describes a Node Prisma persistence cell as a (Prisma datasource
+// provider, URL scheme) pair. It is the Prisma homologue of sqlStore (Go-GORM) and
+// pySQLAlchemyStore (Python): the prompt block is assembled by prismaStoreSection so
+// the SAME schema.prisma + @prisma/client + repos serve every wire-compatible engine
+// (one schema/client for PostgreSQL AND MySQL/MariaDB) and only the (datasource
+// provider, DATABASE_URL example) facts change per store — Prisma handles the
+// dialect, exactly as GORM/SQLAlchemy do for Go/Python.
+type nodePrismaStore struct {
+	engine     string // human label, e.g. "PostgreSQL", "MySQL/MariaDB"
+	provider   string // Prisma datasource provider, e.g. "postgresql", "mysql"
+	dsnExample string // a placeholder DATABASE_URL example for the .env note
+}
+
+// nodePrismaStores maps the worker store token to its (Prisma provider, URL) facts
+// for the Node profile. POSTGRES→postgres token, MARIADB→mysql token (see
+// databaseStoreToken) — the SAME homologation as goSQLStores/pySQLAlchemyStores.
+// Both rows reuse the SAME schema.prisma + @prisma/client + repos; only the
+// datasource provider + DATABASE_URL scheme differ, exactly as the Go-GORM cell
+// only changes its driver import + DSN.
+var nodePrismaStores = map[string]nodePrismaStore{
+	"postgres": {
+		engine:     "PostgreSQL",
+		provider:   "postgresql",
+		dsnExample: "postgresql://user:password@host:5432/<svc>_db?schema=public",
+	},
+	"mysql": {
+		engine:     "MySQL/MariaDB",
+		provider:   "mysql",
+		dsnExample: "mysql://user:password@host:3306/<svc>_db",
+	},
+}
+
 // storeSection returns the prose block injected into the combined prompt that
 // pins the persistence engine the generated service must target. It is the store
 // homologue of transportSection / authSchemeSection: profile- and store-aware.
 //
-// v1 GENERATES SQL persistence for Go (via GORM) AND Python (via SQLAlchemy 2.0
-// async) on + {PostgreSQL, MySQL/MariaDB}; "mongodb" (the original path) injects
-// nothing so the established Mongo behaviour is unchanged:
-//   - "mongodb"/"" → no block; the profile doc's MongoDB persistence is used as-is.
+// v1 GENERATES SQL persistence for Go (via GORM), Python (via SQLAlchemy 2.0 async)
+// AND Node (via Prisma) on + {PostgreSQL, MySQL/MariaDB}; "mongodb" (the original
+// path) injects nothing so the established Mongo behaviour is unchanged:
+//   - "mongodb"/"" → no block; the profile doc's MongoDB persistence is used as-is
+//     (Node+Mongo stays on the native `mongodb` driver, NOT Prisma).
 //   - (go, "postgres" | "mysql") → a GORM persistence layer (ormStoreSection):
 //     GORM models in infrastructure/repositories mapping to/from the domain types,
 //     repos implementing the SAME ports, a gorm_client builder that opens the
@@ -568,6 +601,11 @@ var pySQLAlchemyStores = map[string]pySQLAlchemyStore{
 //     mapping to/from the domain types, repos implementing the SAME ports, an async
 //     engine builder selecting the driver/URL by store, create_all schema, nullable
 //     soft-delete column, autoincrement IDs, .env with DATABASE_URL/DB_*.
+//   - (node, "postgres" | "mysql") → a Prisma persistence layer (prismaStoreSection):
+//     ONE schema.prisma (datasource provider postgresql|mysql by store) + the
+//     @prisma/client in infrastructure, repos implementing the SAME ports mapping
+//     Prisma model↔domain, schema applied by Prisma Migrate / db push, nullable
+//     soft-delete column, autoincrement IDs, .env with DATABASE_URL/DB_*.
 //   - any other (profile, store) SQL cell → an HONEST note that SQL for that cell
 //     is a v1 hole and must not be guessed (this path is unreachable while the
 //     IsGenerableDatabase guard rejects those cells at creation, but kept so the
@@ -577,8 +615,8 @@ func storeSection(outputProfile, store string) string {
 	if s == "" || s == "mongodb" {
 		return ""
 	}
-	// Go + a known SQL store → GORM. Python + a known SQL store → SQLAlchemy. Every
-	// other (profile, store) SQL cell is a v1 hole.
+	// Go + a known SQL store → GORM. Python → SQLAlchemy. Node → Prisma. Every other
+	// (profile, store) SQL cell is a v1 hole.
 	if outputProfile == "go" {
 		if cell, ok := goSQLStores[s]; ok {
 			return ormStoreSection(cell)
@@ -589,14 +627,19 @@ func storeSection(outputProfile, store string) string {
 			return sqlAlchemyStoreSection(cell)
 		}
 	}
+	if outputProfile == "node" {
+		if cell, ok := nodePrismaStores[s]; ok {
+			return prismaStoreSection(cell)
+		}
+	}
 	return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
 		"The target database for this migration is **" + s + "** on the **" + outputProfile +
 		"** profile, which v1 of the generator does NOT emit (v1 generates SQL persistence " +
-		"for Go (GORM) and Python (SQLAlchemy) on PostgreSQL and MySQL/MariaDB; every other " +
-		"language uses MongoDB). Do NOT guess a " + s + " implementation. Generate the MongoDB " +
-		"persistence layer as the profile doc describes and add a single TODO note stating that `" +
-		s + "` was requested but is a v1 generation hole and must be wired manually. Be honest " +
-		"about the gap.\n\n"
+		"for Go (GORM), Python (SQLAlchemy) and Node (Prisma) on PostgreSQL and MySQL/MariaDB; " +
+		"every other language uses MongoDB). Do NOT guess a " + s + " implementation. Generate " +
+		"the MongoDB persistence layer as the profile doc describes and add a single TODO note " +
+		"stating that `" + s + "` was requested but is a v1 generation hole and must be wired " +
+		"manually. Be honest about the gap.\n\n"
 }
 
 // ormStoreSection renders the GORM persistence block for one SQL cell. The text
@@ -640,6 +683,31 @@ func sqlAlchemyStoreSection(c pySQLAlchemyStore) string {
 		"- **Soft-delete** with a nullable timestamp column (`delete_time: Mapped[datetime | None] = mapped_column(nullable=True)`); deletes set the column instead of issuing a hard `DELETE`, and reads filter `delete_time IS NULL`, matching the Mongo path's soft-delete semantics.\n" +
 		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
 		"- Ensure `pyproject.toml` requires `sqlalchemy[asyncio]` and `" + c.driverPkg + "` (NOT motor/pymongo). The persistence code MUST pass the build gate (`python -m compileall` + importing the app/repos): the repos compile/import and at least one repository round-trip is exercised (an aiosqlite/in-memory or container-backed async test is acceptable).\n\n"
+}
+
+// prismaStoreSection renders the Prisma persistence block for one Node SQL cell.
+// It is the TypeScript homologue of ormStoreSection (Go-GORM) and
+// sqlAlchemyStoreSection (Python): the text is parametrised by the (Prisma
+// datasource provider, DATABASE_URL example) facts so PostgreSQL and MySQL/MariaDB
+// share ONE scaffold (one schema.prisma + @prisma/client + repos, only the
+// datasource `provider` + DATABASE_URL scheme differ — Prisma handles the dialect),
+// keeping the "client+schema in infra, repos implement the ports, mapping
+// domain↔model, schema from the schema.prisma" shape identical across languages.
+// Node+Mongo is unaffected: it stays on the native `mongodb` driver, never Prisma.
+func prismaStoreSection(c nodePrismaStore) string {
+	return "## Persistence: " + c.engine + " (Prisma ORM)\n\n" +
+		"This service persists to **" + c.engine + "** via the **Prisma ORM** (`prisma` + `@prisma/client`), NOT MongoDB. " +
+		"Replace the MongoDB persistence layer (the native `mongodb` driver) the profile doc describes with an idiomatic Prisma layer. Mandatory constraints:\n" +
+		"- Use **Prisma** (`prisma` as a devDependency, `@prisma/client` as a runtime dependency). Define ONE `schema.prisma` whose `datasource db { provider = \"" + c.provider + "\"; url = env(\"DATABASE_URL\") }` and a `generator client { provider = \"prisma-client-js\" }`. Do NOT use a raw SQL driver (`pg`/`mysql2`) or another ORM — Prisma is the canon for this cell, and the SAME schema.prisma + generated client + repos serve PostgreSQL and MySQL/MariaDB unchanged (only the datasource `provider` + DATABASE_URL scheme differ; the dialect is Prisma's job).\n" +
+		"- **Domain stays proto.** Domain types remain the TypeScript types/interfaces derived from the proto messages (Canon §5.1). The Prisma **models live in `schema.prisma` and the generated client (`@prisma/client`) is infrastructure** — the schema.prisma + a `PrismaClient` wrapper live under `services/<svc>/infrastructure/repositories` (or `infrastructure/prisma`), NEVER in domain. Each repository maps domain↔Prisma-model on read/write — domain is never decorated with Prisma types.\n" +
+		"- For EACH owned resource (a proto message in `owned_resources`) declare a Prisma `model` in `schema.prisma` + write a repository `services/<svc>/infrastructure/repositories/prisma-<resource>-repository.ts` that implements the SAME repository port interface the service already defines (`implements <Resource>Repository`; same async method signatures the gRPC/HTTP handlers depend on) — only the implementation changes from `mongodb` to Prisma. The repo uses an injected `PrismaClient`.\n" +
+		"- Add a shared client `shared/prisma/client.ts` that builds the `PrismaClient` once (a module singleton — the Mongo-client homologue), reads `DATABASE_URL` from config/env, configures the pool via the connection-string parameters, and `$connect()`s on startup (fail-fast). Wire it where the Mongo client was wired (in `wire.ts`).\n" +
+		"- Add a transaction manager behind a `withTransaction<T>(fn)` API over `prisma.$transaction(async (tx) => …)` (a tx-scoped `Prisma.TransactionClient`), null-safe and mirroring the existing Mongo transaction abstraction, so service-layer transaction boundaries are unchanged.\n" +
+		"- **Schema via Prisma Migrate / db push.** The schema is derived from `schema.prisma`: run `prisma migrate deploy` (or `prisma db push`) to apply it — do NOT hand-write SQL migrations and do NOT emulate a `system_counters` collection. Model FK columns/relations come from the `cross_service_fks` in the boundary spec (FK columns/indexes only, never a hard cross-service FK constraint, per the data-ownership boundary). `npx prisma generate` produces the typed client (run it as a `postinstall`/build step).\n" +
+		"- **IDs** are autoincrement by the database: the model PK is `id BigInt @id @default(autoincrement())` (Canon §5.3) — never an emulated counter. Map the proto `uint64 identifier` to/from Prisma's `BigInt` (never coerce to a JS `number`). Use snake_case table/column names via `@@map`/`@map`.\n" +
+		"- **Soft-delete** with a nullable timestamp column (`deleteTime DateTime? @map(\"delete_time\")`); deletes set the column instead of issuing a hard `DELETE`, and reads filter `deleteTime: null`, matching the Mongo path's soft-delete semantics.\n" +
+		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
+		"- Ensure `package.json` requires `@prisma/client` (dependencies) and `prisma` (devDependencies), NOT the `mongodb` package. The persistence code MUST pass the build gate (`npm install` + `npx prisma generate` + `tsc --noEmit`): the generated client + repos compile and at least one repository round-trip is exercised (a Prisma-mocked or container-backed test is acceptable).\n\n"
 }
 
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.

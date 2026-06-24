@@ -1,5 +1,58 @@
 # Pendientes / Roadmap — backend
 
+## Eje BASE DE DATOS — Node + {PostgreSQL, MySQL/MariaDB} vía Prisma (HECHO, 2026-06-24)
+
+**Objetivo:** la capa de persistencia SQL de **Node/TypeScript** usa **Prisma** como
+ORM, cubriendo **PostgreSQL Y MySQL/MariaDB** con **el MISMO `schema.prisma` +
+`@prisma/client` + repos** (datasource `provider` + `DATABASE_URL` distinto por store),
+espejando las celdas Go-GORM y Python-SQLAlchemy. Sin cambio de proto/gateway: el enum
+`TargetDatabase` (MONGODB=1/POSTGRES=2/MARIADB=3) ya viajaba; `MARIADB`→token `mysql`
+(`databaseStoreToken` es profile-agnóstico). **Node+Mongo NO cambia: sigue con el driver
+nativo `mongodb`, nunca Prisma** — Prisma es solo para SQL.
+
+**Decisión:** Prisma (`@prisma/client` runtime + `prisma` devDep). UN `schema.prisma`
+con `datasource db { provider = "postgresql"|"mysql"; url = env("DATABASE_URL") }`
+según store + `generator client { provider = "prisma-client-js" }`. Modelos Prisma viven
+en `schema.prisma`/infra (cliente generado = infraestructura), NO en domain; repos
+implementan los MISMOS ports (`implements <Resource>Repository`) mapeando domain↔modelo;
+esquema por Prisma Migrate / `db push`; soft-delete columna nullable `deleteTime`; PK
+autoincrement `id BigInt @id @default(autoincrement())` (proto `uint64`↔`BigInt`, nunca
+`number`). Reusa el patrón "ORM + provider/driver" de `ormStoreSection`/
+`sqlAlchemyStoreSection` con un `prismaStoreSection` paralelo.
+
+**Archivos (sin commitear):**
+- `core/services/migration/domain/domain.go` — `generableDatabaseByLanguage`
+  Node→{MONGODB,**POSTGRES,MARIADB**}; comentario de la matriz actualizado (Node=Prisma).
+- `core/services/migration/domain/errors.go` + `pkg/gateway/common/error/migration_errors.go` —
+  comentarios/MIG111 actualizados (Go, Python y Node soportan SQL; Rust solo Mongo).
+- `core/services/migration/application/service.go` — comentario del guard MIG111 (matriz completa).
+- `core/worker/generation/infrastructure/agent/workspace.go` — `nodePrismaStores{postgres,mysql}`
+  + `prismaStoreSection` (schema.prisma provider por store, `@prisma/client`, repos por port,
+  migrate/db push, singleton client, pool); `storeSection` ramifica go→GORM / python→SQLAlchemy /
+  node→Prisma / resto=hole.
+- `core/services/migration/application/assembler/assembler.go` + `assembler_config.go` —
+  `isNodeSQL` + `generateNodeSQLConfigExamples`/`nodeSQLServiceEnvExample` (`.env.example`
+  con `DATABASE_URL`/`DB_*`, 0 `MONGO_*`); rama Node ramifica SQL vs Mongo.
+- Docs: `milton-prism-node-profile.md` (§A.12 Prisma + scope/§A.10) y
+  `...-prompt-node.md` / `...-prompt-node-http.md` (ramifican por store).
+- Tests: `store_section_test.go` (`TestStoreSection_NodeSQLPrisma`, hole→solo rust),
+  `generable_database_test.go` (node_postgres/node_mariadb=true), `database_axis_test.go`
+  (Node+Postgres/MySQL→accept, Rust+Postgres→MIG111), `assembler_profile_test.go`
+  (`TestAssemble_NodeSQL_EnvExample`).
+
+**GATES:** G1 Node+Postgres/Node+MariaDB→200, Rust+SQL→400 (MIG111), Node+Mongo sigue 200;
+G2 worker `profile=node store=postgres`/`store=mysql`→READY; G3 deliverable con repos Prisma
+(schema.prisma provider correcto, `@prisma/client`, repos por port) + `package.json`
+prisma+@prisma/client + `.env` DATABASE_URL/DB_* (0 MONGO_) + `npm install`+`prisma generate`+
+`tsc --noEmit`=0 para ambas DBs; G4 Node+Mongo (driver nativo) + Go-GORM + Python-SQLAlchemy
+sin regresión; G5 `go build ./...` + tests verdes.
+
+**SIGUIENTE:** Rust SeaORM — reusar el patrón "ORM + driver/provider" de
+`ormStoreSection`/`sqlAlchemyStoreSection`/`prismaStoreSection`. Luego limpieza de
+dependencias.
+
+---
+
 ## Eje BASE DE DATOS — Python + {PostgreSQL, MySQL/MariaDB} vía SQLAlchemy 2.0 async (HECHO, 2026-06-24)
 
 **Objetivo:** la capa de persistencia SQL de **Python** usa **SQLAlchemy 2.0 (async)**
@@ -40,8 +93,8 @@ G3 deliverable con repos SQLAlchemy (DeclarativeBase, engine async, create_all) 
 `pyproject` sqlalchemy+asyncpg/aiomysql + `.env` DATABASE_URL/DB_* (0 MONGO_) + compileall;
 G4 Python+Mongo (Motor) y Go-SQL (GORM) sin regresión; G5 `go build ./...` + tests verdes.
 
-**SIGUIENTE:** Node Prisma, Rust SeaORM — reusar el patrón "ORM + driver" del
-`ormStoreSection`/`sqlAlchemyStoreSection`.
+**SIGUIENTE:** Node Prisma (HECHO 2026-06-24, ver entrada arriba), Rust SeaORM —
+reusar el patrón "ORM + driver" del `ormStoreSection`/`sqlAlchemyStoreSection`.
 
 ---
 

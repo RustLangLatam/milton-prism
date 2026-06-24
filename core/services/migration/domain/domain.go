@@ -162,18 +162,23 @@ func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
 // persistence layer against that database engine (profile doc + generator prompt
 // + worker storeSection + assembler config behaviour exist and are certified).
 //
-// v1 state: Go and Python are the languages with a real SQL persistence profile.
-// The certified SQL engines for Go are PostgreSQL AND MariaDB (= the MySQL/MariaDB
-// family, slot 3) — both via the SAME GORM models/repos (gorm.io/gorm with
-// gorm.io/driver/postgres or gorm.io/driver/mysql selected by the store; the GORM
-// models live in infrastructure/repositories and map to/from the domain types,
+// v1 state: Go, Python and Node are the languages with a real SQL persistence
+// profile. The certified SQL engines for Go are PostgreSQL AND MariaDB (= the
+// MySQL/MariaDB family, slot 3) — both via the SAME GORM models/repos (gorm.io/gorm
+// with gorm.io/driver/postgres or gorm.io/driver/mysql selected by the store; the
+// GORM models live in infrastructure/repositories and map to/from the domain types,
 // schema applied by AutoMigrate). Python mirrors this with SQLAlchemy 2.0 (async):
 // one set of DeclarativeBase models/repos in infrastructure/repositories serves
 // PostgreSQL (asyncpg) AND MySQL/MariaDB (aiomysql), the async engine/URL selected
-// by the store, schema applied by create_all. Every generable language keeps
-// MongoDB (the original path, unchanged). Node/Rust + SQL are still holes. Any new
-// cell (a new SQL engine, or SQL for another language) must be added here AND
-// given a storeSection prompt + assembler config + a certified run.
+// by the store, schema applied by create_all. Node mirrors this with Prisma: ONE
+// schema.prisma (datasource provider postgresql|mysql + DATABASE_URL selected by
+// store) plus the @prisma/client live in infrastructure/repositories, repos
+// implement the same ports mapping Prisma model↔domain, schema applied by Prisma
+// Migrate / db push. Every generable language keeps MongoDB (the original path,
+// unchanged — Node+Mongo stays on the native `mongodb` driver, NOT Prisma). Rust +
+// SQL is still a hole. Any new cell (a new SQL engine, or SQL for another language)
+// must be added here AND given a storeSection prompt + assembler config + a
+// certified run.
 var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}{
 	TargetLanguageGo: {
 		TargetDatabaseMongoDB:  {},
@@ -186,7 +191,9 @@ var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}
 		TargetDatabaseMariaDB:  {}, // SQLAlchemy 2.0 async + aiomysql (MySQL/MariaDB family)
 	},
 	TargetLanguageNode: {
-		TargetDatabaseMongoDB: {},
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // Prisma (provider postgresql) + @prisma/client
+		TargetDatabaseMariaDB:  {}, // Prisma (provider mysql), MySQL/MariaDB family
 	},
 	TargetLanguageRust: {
 		TargetDatabaseMongoDB: {},

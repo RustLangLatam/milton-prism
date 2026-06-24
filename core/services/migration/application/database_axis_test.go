@@ -97,13 +97,49 @@ func TestCreateMigration_PythonMySQL_Accepted(t *testing.T) {
 	assert.Equal(t, uint64(10024), out.GetIdentifier())
 }
 
-// TestCreateMigration_NodePostgres_Rejected proves SQL on Node/Rust is still a v1
-// hole: a Node + PostgreSQL migration is rejected with MIG111 (Node persists to
-// MongoDB only; SQLAlchemy is Python, GORM is Go).
-func TestCreateMigration_NodePostgres_Rejected(t *testing.T) {
-	svc, _, _, _, _, _ := newSvc(t)
+// TestCreateMigration_NodePostgres_Accepted proves the (Node, PostgreSQL) cell is
+// now generable via the Prisma layer: CreateMigration accepts a Node + PostgreSQL
+// migration (no MIG111) and proceeds to create it.
+func TestCreateMigration_NodePostgres_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
 	m := validMigration()
 	m.Target.Language = domain.TargetLanguageNode
+	m.Target.Database = domain.TargetDatabasePostgres
+	stored := &domain.Migration{Identifier: 10025, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10025), out.GetIdentifier())
+}
+
+// TestCreateMigration_NodeMySQL_Accepted proves the (Node, MySQL/MariaDB) cell is
+// generable via the same Prisma layer as PostgreSQL (one schema.prisma, only the
+// datasource provider differs): CreateMigration accepts it (no MIG111).
+func TestCreateMigration_NodeMySQL_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguageNode
+	m.Target.Database = domain.TargetDatabaseMariaDB
+	stored := &domain.Migration{Identifier: 10026, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
+
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10026), out.GetIdentifier())
+}
+
+// TestCreateMigration_RustPostgres_Rejected proves SQL on Rust is still a v1 hole:
+// a Rust + PostgreSQL migration is rejected with MIG111 (Rust persists to MongoDB
+// only; GORM is Go, SQLAlchemy is Python, Prisma is Node).
+func TestCreateMigration_RustPostgres_Rejected(t *testing.T) {
+	svc, _, _, _, _, _ := newSvc(t)
+	m := validMigration()
+	m.Target.Language = domain.TargetLanguageRust
 	m.Target.Database = domain.TargetDatabasePostgres
 
 	_, err := svc.CreateMigration(context.Background(), m)

@@ -20,12 +20,12 @@ func newError(code, message string) *Error {
 // ── Validation errors (MIG1xx) ────────────────────────────────────────────────
 
 const (
-	ErrCodeMissingIdentifier   = "MIG101"
-	ErrCodeMissingPayload      = "MIG102"
-	ErrCodeMissingOwnerUserID  = "MIG103"
-	ErrCodeMissingRepositoryID     = "MIG104"
-	ErrCodeInvalidTargetConfig     = "MIG105"
-	ErrCodeInvalidRootSubdirectory = "MIG106"
+	ErrCodeMissingIdentifier         = "MIG101"
+	ErrCodeMissingPayload            = "MIG102"
+	ErrCodeMissingOwnerUserID        = "MIG103"
+	ErrCodeMissingRepositoryID       = "MIG104"
+	ErrCodeInvalidTargetConfig       = "MIG105"
+	ErrCodeInvalidRootSubdirectory   = "MIG106"
 	ErrCodeUnsupportedTargetLanguage = "MIG107"
 	// ErrCodeMissingSourceBranch: CreateMigration was called without a source_branch.
 	// The branch is mandatory — a migration must declare the branch it runs against.
@@ -43,9 +43,10 @@ const (
 	// ErrCodeUnsupportedDatabase: the requested (language, database) cell is not in
 	// the persistence matrix (IsGenerableDatabase). Rejected at creation so a
 	// migration never targets a database engine the generator cannot emit. v1
-	// supports Go + {MongoDB, PostgreSQL, MariaDB} (GORM) and Python + {MongoDB,
-	// PostgreSQL, MariaDB} (SQLAlchemy); Node/Rust support MongoDB only. SQL for
-	// Node/Rust is a hole, so MIG111 fires for e.g. Node + PostgreSQL, Rust + MySQL,
+	// supports Go + {MongoDB, PostgreSQL, MariaDB} (GORM), Python + {MongoDB,
+	// PostgreSQL, MariaDB} (SQLAlchemy) and Node + {MongoDB, PostgreSQL, MariaDB}
+	// (Prisma; Node+Mongo stays on the native `mongodb` driver); Rust supports
+	// MongoDB only. SQL for Rust is a hole, so MIG111 fires for e.g. Rust + MySQL,
 	// or any unknown engine.
 	ErrCodeUnsupportedDatabase = "MIG111"
 )
@@ -60,7 +61,7 @@ var (
 	// a safe repository-relative path (absolute or contains a ".." traversal).
 	ErrInvalidRootSubdirectory = newError(ErrCodeInvalidRootSubdirectory, "Failure_Invalid_Root_Subdirectory")
 	// ErrUnsupportedTargetLanguage: the requested target language has no code
-	// generator profile yet (only Go and Python are generable). Rejected at
+	// generator profile yet (Go, Python, Node and Rust are generable). Rejected at
 	// creation so a migration never silently falls back to Go.
 	ErrUnsupportedTargetLanguage = newError(ErrCodeUnsupportedTargetLanguage, "Failure_Unsupported_Target_Language")
 	// ErrMissingSourceBranch: CreateMigration rejected because no source_branch
@@ -75,9 +76,10 @@ var (
 	ErrInvalidOrderBy = newError(ErrCodeInvalidOrderBy, "Failure_Invalid_Order_By")
 	// ErrUnsupportedDatabase: the requested (language, database) combination is not
 	// generable (see IsGenerableDatabase). v1 supports Go + {MongoDB, PostgreSQL,
-	// MariaDB} (GORM) and Python + {MongoDB, PostgreSQL, MariaDB} (SQLAlchemy);
-	// Node/Rust support MongoDB only. Rejected at creation so a migration never
-	// targets a database engine the generator cannot emit.
+	// MariaDB} (GORM), Python + {MongoDB, PostgreSQL, MariaDB} (SQLAlchemy) and Node
+	// + {MongoDB, PostgreSQL, MariaDB} (Prisma); Rust supports MongoDB only.
+	// Rejected at creation so a migration never targets a database engine the
+	// generator cannot emit.
 	ErrUnsupportedDatabase = newError(ErrCodeUnsupportedDatabase, "Failure_Unsupported_Database")
 )
 

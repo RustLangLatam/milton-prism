@@ -11,7 +11,7 @@ var migrationErrorMessages = map[string]string{
 	"MIG107": "The selected target language has no code generator yet. Choose Go or Python.",
 	"MIG108": "A source branch is required to start a migration.",
 	"MIG109": "The selected protocol is not yet supported for this target language.",
-	"MIG111": "The selected database is not yet supported for this target language. Go and Python support PostgreSQL, MariaDB/MySQL, or MongoDB; other languages support MongoDB only.",
+	"MIG111": "The selected database is not yet supported for this target language. Go, Python, and Node support PostgreSQL, MariaDB/MySQL, or MongoDB; other languages support MongoDB only.",
 
 	// Domain errors (MIG2xx)
 	"MIG201": "The requested migration was not found.",

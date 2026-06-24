@@ -866,6 +866,55 @@ func TestAssemble_PythonSQL_EnvExample(t *testing.T) {
 	}
 }
 
+// TestAssemble_NodeSQL_EnvExample proves the Node + SQL (Prisma) deliverable — for
+// both the PostgreSQL ("postgres") and MySQL/MariaDB ("mysql") stores — emits a
+// per-service SQL .env.example (DATABASE_URL / DB_*) INSTEAD of the native-mongodb
+// MONGO_* .env.example, with ZERO MONGO_* variables. Both stores share the same
+// .env shape (Prisma connection URL). It is the Node homologue of
+// TestAssemble_GoSQL_EnvExample / TestAssemble_PythonSQL_EnvExample.
+func TestAssemble_NodeSQL_EnvExample(t *testing.T) {
+	for _, store := range []string{"postgres", "mysql"} {
+		t.Run(store, func(t *testing.T) {
+			root := buildSkeletonFixture(t)
+
+			a := New(root, false, "node", "grpc", store)
+			artifacts := []InputFile{
+				{Path: "node/services/user/domain/user.ts", Content: "export interface User { identifier: string }\n"},
+			}
+			files, err := a.Assemble(artifacts)
+			if err != nil {
+				t.Fatalf("Assemble: %v", err)
+			}
+
+			// The .env.example lands under core/ after the node/→core/ rename.
+			envPath := "core/services/user/.env.example"
+			var env string
+			for _, f := range files {
+				if f.Path == envPath {
+					env = string(f.Content)
+				}
+			}
+			if env == "" {
+				t.Fatalf("Node+%s deliverable missing %s", store, envPath)
+			}
+			// Content: DATABASE_URL + discrete DB_* present, zero MONGO_* prescribed.
+			for _, want := range []string{"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "user_db", "Prisma"} {
+				if !strings.Contains(env, want) {
+					t.Errorf("Node+%s .env.example missing %q", store, want)
+				}
+			}
+			if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
+				t.Errorf("Node+%s .env.example must not prescribe MONGO_* vars", store)
+			}
+			for _, secret := range knownSecrets {
+				if strings.Contains(env, secret) {
+					t.Errorf("Node+%s .env.example leaked known secret %q", store, secret)
+				}
+			}
+		})
+	}
+}
+
 // TestAssemble_NodeProfile proves the Node profile bundles ONLY the generated
 // TypeScript artifacts (renamed node/→core/) plus the neutral buf configs and
 // protos, and contains ZERO Go (go.mod/Makefile/.go) and ZERO Python (.py) —

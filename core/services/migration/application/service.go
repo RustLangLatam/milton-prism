@@ -149,13 +149,15 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 	}
 	// Reject (language, database) cells the generator cannot emit. The DATABASE axis
 	// is orthogonal to language/protocol/topology. v1 supports Go + {MongoDB,
-	// PostgreSQL} and every other language + MongoDB only (MySQL/MariaDB and SQL for
-	// non-Go languages are holes). TARGET_DATABASE_UNSPECIFIED is "Auto": the real
-	// engine is resolved at generation time from the analysis database_detection;
-	// at creation it canonicalises to MONGODB (always generable for every language)
-	// so an Auto request is never wrongly rejected. The concrete engine still gets
-	// validated in the worker before generation. A non-UNSPECIFIED database is
-	// validated as-is so e.g. Go + MySQL or Python + PostgreSQL is rejected up front.
+	// PostgreSQL, MariaDB} (GORM), Python + {MongoDB, PostgreSQL, MariaDB}
+	// (SQLAlchemy), Node + {MongoDB, PostgreSQL, MariaDB} (Prisma; Node+Mongo on the
+	// native driver) and Rust + MongoDB only (SQL for Rust is still a hole).
+	// TARGET_DATABASE_UNSPECIFIED is "Auto": the real engine is resolved at
+	// generation time from the analysis database_detection; at creation it
+	// canonicalises to MONGODB (always generable for every language) so an Auto
+	// request is never wrongly rejected. The concrete engine still gets validated in
+	// the worker before generation. A non-UNSPECIFIED database is validated as-is so
+	// e.g. Rust + PostgreSQL is rejected up front.
 	requestedDB := m.GetTarget().GetDatabase()
 	effectiveDB := requestedDB
 	if effectiveDB == domain.TargetDatabaseUnspecified {

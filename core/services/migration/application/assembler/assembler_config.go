@@ -375,6 +375,75 @@ JWT_SECRET=<your-jwt-secret>
 `, name, db, port)
 }
 
+// generateNodeSQLConfigExamples appends a SQL `.env.example` file to each generated
+// Node service directory for a Node + SQL deliverable (Prisma over PostgreSQL or
+// MySQL/MariaDB). It is the SQL homologue of generateNodeConfigExamples (the
+// native-`mongodb`-driver .env.example): a Node + SQL service persists with Prisma,
+// so its config is a DATABASE_URL / DB_* .env rather than the MONGO_* variables.
+// The same .env shape serves both engines (DATABASE_URL is the Prisma connection
+// URL; only its scheme differs between postgresql:// and mysql:// — documented
+// inline). Zero MONGO_* variables ever appear. It is the Node homologue of
+// generateGoSQL/generatePythonSQLConfigExamples.
+//
+// MUST run on the assembled map BEFORE the node/ → core/ rename (same as the
+// native-Mongo path), so service dirs are still keyed under node/services/<svc>/.
+// Every value is a placeholder; assertNoSecrets guards each file.
+func generateNodeSQLConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedNodeServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
+		port := 50051 + i
+		content := nodeSQLServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("node/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// nodeSQLServiceEnvExample returns the content of a .env.example for one generated
+// Node + SQL (Prisma) microservice. It documents BOTH the single DATABASE_URL
+// connection URL (the Prisma URL — PostgreSQL or MySQL/MariaDB form) and the
+// discrete DB_* parts, the gRPC server bind, and the auth secret. Every value is a
+// placeholder; no MONGO_* variable is present.
+func nodeSQLServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via Prisma)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# This service persists via the Prisma ORM. The same schema.prisma + @prisma/client
+# serve PostgreSQL and MySQL/MariaDB — only the datasource provider and the
+# DATABASE_URL scheme differ. Schema is applied by Prisma Migrate (prisma migrate
+# deploy) or prisma db push. Prisma reads DATABASE_URL from the environment.
+
+# ── Database (Prisma) ────────────────────────────────────────────────────────
+# DATABASE_URL: full Prisma connection URL. Examples:
+#   PostgreSQL: postgresql://user:password@host:5432/%s?schema=public
+#   MySQL/MariaDB: mysql://user:password@host:3306/%s
+DATABASE_URL=<your-database-url>
+DB_HOST=localhost
+# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
+DB_PORT=5432
+DB_USER=<your-db-user>
+DB_PASSWORD=<your-db-password>
+DB_NAME=%s
+
+# ── gRPC server (@grpc/grpc-js) ────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, db, db, db, port)
+}
+
 // generateRustConfigExamples appends a `.env.example` file to each generated
 // Rust service directory in the assembled map. It is the Tonic homologue of the
 // Go config.toml.example and the Python/Node .env.example: the Rust deliverable

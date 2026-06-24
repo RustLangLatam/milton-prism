@@ -65,14 +65,15 @@ type Assembler struct {
 // modelled with plain Rust/serde structs.
 // Empty or "grpc" keeps the gateway subtree / gRPC server (the established gRPC
 // behaviour).
-// store selects the persistence-config variant of a Go deliverable. "postgres"
-// or "mysql" makes the synthesised per-service config a SQL `.env.example`
+// store selects the persistence-config variant of a deliverable. "postgres" or
+// "mysql" makes the synthesised per-service config a SQL `.env.example`
 // (DATABASE_URL / DB_HOST/PORT/USER/PASSWORD/NAME) instead of the Mongo
-// config.toml.example, matching the GORM repos the generator emits for Go + SQL
-// (one set of GORM models/repos serves PostgreSQL and MySQL/MariaDB; only the
-// driver + DSN differ). Empty / "mongodb" keeps the Mongo config.toml.example (the
-// established behaviour). The store is consumed only by the Go config-example
-// step; the Python/Node/Rust deliverables are MongoDB-only in v1.
+// config.toml.example (Go) / Mongo .env.example (Python/Node), matching the SQL
+// repos the generator emits: Go via GORM, Python via SQLAlchemy, Node via Prisma
+// (one schema/model set serves PostgreSQL and MySQL/MariaDB; only the
+// driver/provider + DSN differ). Empty / "mongodb" keeps the Mongo config (the
+// established behaviour). The store is consumed by the Go, Python and Node
+// config-example steps; the Rust deliverable is MongoDB-only in v1.
 func New(skeletonRoot string, useApiGateway bool, profile, protocol, store string) *Assembler {
 	return &Assembler{skeletonRoot: skeletonRoot, useApiGateway: useApiGateway, profile: profile, protocol: protocol, store: store}
 }
@@ -142,6 +143,15 @@ func isPythonGRPCArtifact(path, content string) bool {
 
 // isNode reports whether this Assembler targets the Node (TypeScript) profile.
 func (a *Assembler) isNode() bool { return a.profile == "node" }
+
+// isNodeSQL reports whether this Assembler targets a Node + SQL deliverable
+// (Prisma). Both "postgres" and "mysql" (MySQL/MariaDB) are Prisma cells in v1 and
+// emit the same DATABASE_URL/DB_* .env (0 MONGO_*), matching the schema.prisma +
+// @prisma/client repos the generator wrote. It is the Node homologue of isGoSQL /
+// isPythonSQL. Node+Mongo (the default) keeps the native `mongodb` driver, NOT Prisma.
+func (a *Assembler) isNodeSQL() bool {
+	return a.isNode() && (a.store == "postgres" || a.store == "mysql")
+}
 
 // isNodeHTTP reports whether this Assembler targets the Node HTTP-native (Fastify)
 // deliverable (Node profile + HTTP transport). The gRPC server bootstrap
@@ -217,9 +227,9 @@ func isRustGRPCArtifact(path, content string) bool {
 // isInternalBufTemplate reports whether path is a platform-INTERNAL buf template
 // that must never ship in a user deliverable, no matter the profile or source:
 //   - protobuf/buf.docs.gen.yaml         — generates the PLATFORM panel openapi via
-//                                           the `../milton-prism-panel` symlink.
+//     the `../milton-prism-panel` symlink.
 //   - protobuf/buf.deliverable.openapi.yaml — the platform pipeline template that
-//                                           emits docs/openapi.yaml during generation.
+//     emits docs/openapi.yaml during generation.
 //
 // Both are Milton Prism tooling. The user-facing buf configs (buf.yaml, and for Go
 // buf.go.gen.yaml) are NOT matched here and continue to ship. The generated
@@ -427,7 +437,15 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// node/services/<svc>/. The emitted .env.example paths are rewritten to
 	// core/services/<svc>/.env.example by the rename step below.
 	if a.isNode() {
-		if err := generateNodeConfigExamples(merged); err != nil {
+		// Persistence-config variant: Node + SQL (PostgreSQL or MySQL/MariaDB, both
+		// via Prisma) emits a per-service SQL .env.example (DATABASE_URL / DB_*, zero
+		// MONGO_*) matching the schema.prisma + @prisma/client repos the generator
+		// wrote; Node + MongoDB (default) keeps the native-`mongodb`-driver .env.example.
+		if a.isNodeSQL() {
+			if err := generateNodeSQLConfigExamples(merged); err != nil {
+				return nil, fmt.Errorf("assembler: node sql config examples: %w", err)
+			}
+		} else if err := generateNodeConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: node config examples: %w", err)
 		}
 	}

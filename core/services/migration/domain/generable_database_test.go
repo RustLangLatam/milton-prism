@@ -6,8 +6,9 @@ import "testing"
 // backs the MIG111 guard in CreateMigration. v1: Go persists to MongoDB, PostgreSQL
 // AND MySQL/MariaDB (SQL via the same GORM layer); Python persists to MongoDB,
 // PostgreSQL AND MySQL/MariaDB (SQL via the same SQLAlchemy 2.0 async layer);
-// Node/Rust persist to MongoDB only. SQL is a hole for Node/Rust. A non-generable
-// language is false for every database.
+// Node persists to MongoDB (native driver), PostgreSQL AND MySQL/MariaDB (SQL via
+// the same Prisma layer); Rust persists to MongoDB only. SQL is a hole for Rust
+// only. A non-generable language is false for every database.
 func TestIsGenerableDatabase(t *testing.T) {
 	cases := []struct {
 		name string
@@ -16,13 +17,14 @@ func TestIsGenerableDatabase(t *testing.T) {
 		want bool
 	}{
 		{"go_mongodb", TargetLanguageGo, TargetDatabaseMongoDB, true},
-		{"go_postgres", TargetLanguageGo, TargetDatabasePostgres, true},   // ← v1 SQL cell (GORM)
-		{"go_mariadb", TargetLanguageGo, TargetDatabaseMariaDB, true},     // ← v1 SQL cell (GORM, same models)
+		{"go_postgres", TargetLanguageGo, TargetDatabasePostgres, true}, // ← v1 SQL cell (GORM)
+		{"go_mariadb", TargetLanguageGo, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (GORM, same models)
 		{"python_mongodb", TargetLanguagePython, TargetDatabaseMongoDB, true},
 		{"python_postgres", TargetLanguagePython, TargetDatabasePostgres, true}, // ← v1 SQL cell (SQLAlchemy)
 		{"python_mariadb", TargetLanguagePython, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (SQLAlchemy, same models)
 		{"node_mongodb", TargetLanguageNode, TargetDatabaseMongoDB, true},
-		{"node_postgres_hole", TargetLanguageNode, TargetDatabasePostgres, false},
+		{"node_postgres", TargetLanguageNode, TargetDatabasePostgres, true}, // ← v1 SQL cell (Prisma)
+		{"node_mariadb", TargetLanguageNode, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (Prisma, same schema)
 		{"rust_mongodb", TargetLanguageRust, TargetDatabaseMongoDB, true},
 		{"rust_postgres_hole", TargetLanguageRust, TargetDatabasePostgres, false},
 		{"unspecified_lang_mongodb", TargetLanguageUnspecified, TargetDatabaseMongoDB, false},

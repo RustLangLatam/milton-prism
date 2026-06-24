@@ -137,12 +137,60 @@ func TestStoreSection_PythonSQLAlchemy(t *testing.T) {
 	}
 }
 
-// TestStoreSection_SQLHoleIsHonest asserts that a SQL store on a non-Go, non-Python
-// profile (a v1 hole) yields an honest "NOT generated in v1" note that forbids
+// TestStoreSection_NodeSQLPrisma asserts the Node + PostgreSQL and Node + MySQL/
+// MariaDB blocks instruct the generator to emit a Prisma persistence layer: ONE
+// schema.prisma (datasource provider by store) + @prisma/client + repos
+// implementing the same ports mapping Prisma model↔domain, schema by Prisma Migrate
+// / db push, autoincrement BigInt PK, nullable soft-delete, DATABASE_URL/DB_* env.
+// It is the Node homologue of the Go-GORM / Python-SQLAlchemy tests. Both stores
+// share the same Prisma scaffold; only the datasource provider + DATABASE_URL differ.
+func TestStoreSection_NodeSQLPrisma(t *testing.T) {
+	cases := []struct {
+		store    string
+		engine   string
+		provider string
+	}{
+		{"postgres", "PostgreSQL", "postgresql"},
+		{"mysql", "MySQL/MariaDB", "mysql"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.store, func(t *testing.T) {
+			s := agent.StoreSection("node", tc.store)
+			if s == "" {
+				t.Fatalf("StoreSection(node, %q) is empty, want a Prisma block", tc.store)
+			}
+			for _, want := range []string{
+				tc.engine,
+				"Prisma",
+				"schema.prisma",
+				"@prisma/client",
+				tc.provider,
+				"autoincrement",
+				"DATABASE_URL",
+			} {
+				if !strings.Contains(s, want) {
+					t.Errorf("Node+%s Prisma store section missing %q", tc.engine, want)
+				}
+			}
+			// Prisma owns the dialect; the block must not prescribe a raw SQL driver
+			// or another ORM. (It DOES say "do NOT emit any MONGO_* variable", so the
+			// literal "MONGO_" is expected and not forbidden here.)
+			for _, forbid := range []string{"mysql2 ", "import { Pool", "TypeORM", "Sequelize"} {
+				if strings.Contains(s, forbid) {
+					t.Errorf("Node+%s Prisma store section must not mention %q", tc.engine, forbid)
+				}
+			}
+		})
+	}
+}
+
+// TestStoreSection_SQLHoleIsHonest asserts that a SQL store on a profile without a
+// SQL cell (Rust in v1) yields an honest "NOT generated in v1" note that forbids
 // guessing, rather than a fabricated implementation. (Unreachable while the
 // IsGenerableDatabase guard rejects the cell at creation, but kept self-consistent.)
+// Node is no longer a hole — it is generated via Prisma (see TestStoreSection_NodeSQLPrisma).
 func TestStoreSection_SQLHoleIsHonest(t *testing.T) {
-	for _, profile := range []string{"node", "rust"} {
+	for _, profile := range []string{"rust"} {
 		s := agent.StoreSection(profile, "postgres")
 		if s == "" {
 			t.Fatalf("StoreSection(%q, postgres) is empty, want an honest hole note", profile)

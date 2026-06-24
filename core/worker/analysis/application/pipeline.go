@@ -1183,20 +1183,31 @@ func boostManifestLanguage(technologies []*analysisdomain.Technology, deps []wor
 // technologies already contains a category="framework" entry.
 //
 // Current marker rules — evaluated in order, first match wins:
-//   - Flask: Blueprint registrations are exclusive to Flask; no other mainstream
-//     Python web framework uses Blueprint() as an architectural concept.
+//   - Flask: Blueprint registrations in a Python codebase are exclusive to Flask;
+//     no other mainstream Python web framework uses Blueprint() as an
+//     architectural concept. The Python gate is load-bearing: the BlueprintInfo
+//     type is reused by the Java and C# analyzers to model Spring/ASP.NET
+//     controllers (the cross-language analogue of a Flask blueprint), so a bare
+//     "blueprints exist" check would false-positive Flask on Spring/ASP.NET
+//     repos. Only treat blueprints as a Flask signal when Python is among the
+//     detected languages.
 //
 // To add a rule (e.g. FastAPI @app.get router decorators, Django apps.py):
 // add a block below following the same pattern — check blueprints or cards,
-// return the canonical Technology entry, document the exclusive signal.
+// gate on the relevant language, return the canonical Technology entry, and
+// document the exclusive signal.
 func injectInferredFramework(technologies []*analysisdomain.Technology, blueprints []*analysisdomain.BlueprintInfo) []*analysisdomain.Technology {
 	for _, t := range technologies {
 		if t.GetCategory() == "framework" {
 			return technologies // manifest detection wins
 		}
 	}
-	// Flask: Blueprint registrations are a Flask-exclusive structural signal.
-	if len(blueprints) > 0 {
+	// Flask: Blueprint registrations are a Flask-exclusive structural signal, but
+	// only within a Python codebase. The BlueprintInfo type is shared across
+	// language analyzers (Spring/ASP.NET controllers also produce blueprints), so
+	// the inference must be gated to Python evidence to avoid claiming Flask on a
+	// Spring (Java) or ASP.NET Core (C#) repository.
+	if len(blueprints) > 0 && hasLanguage(technologies, "Python") {
 		return append(technologies, &analysisdomain.Technology{
 			Name:     "Flask",
 			Category: "framework",
@@ -1204,6 +1215,18 @@ func injectInferredFramework(technologies []*analysisdomain.Technology, blueprin
 		})
 	}
 	return technologies
+}
+
+// hasLanguage reports whether technologies contains a language entry whose name
+// matches the given language (case-insensitive). Language entries are produced
+// by inventoryTechnologies from go-enry detection (Category == "language").
+func hasLanguage(technologies []*analysisdomain.Technology, language string) bool {
+	for _, t := range technologies {
+		if t.GetCategory() == "language" && strings.EqualFold(t.GetName(), language) {
+			return true
+		}
+	}
+	return false
 }
 
 // manifestTechnologies converts ManifestParser output to Technology entries.

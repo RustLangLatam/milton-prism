@@ -101,6 +101,7 @@ func main() {
 		WithParser(workerdomain.EcosystemPyPI, workeradapters.NewPyPIManifestParser()).
 		WithParser(workerdomain.EcosystemNuGet, workeradapters.NewNuGetManifestParser()).
 		WithParser(workerdomain.EcosystemRubyGems, workeradapters.NewRubyGemsManifestParser()).
+		WithParser(workerdomain.EcosystemGoModules, workeradapters.NewGoModManifestParser()).
 		WithResolver(workeradapters.NewHTTPVersionResolver(http.DefaultClient)).
 		WithScanner(workeradapters.NewOSVVulnerabilityScanner(http.DefaultClient)).
 		WithFrameworkDetector(workeradapters.NewFileSystemFrameworkDetector()).
@@ -109,18 +110,23 @@ func main() {
 		WithAuthSchemeDetector(workeradapters.NewAuthSchemeDetector()).
 		WithBranchSHAResolver(workeradapters.ResolveRemoteBranchSHA)
 
-	// Tier-2 (dependency graph + module cards): Python and PHP analyzers registered;
-	// other stacks are holes — the registry returns nil for unregistered languages.
+	// Tier-2 (dependency graph + module cards): Python, PHP, Java, C# and Go
+	// analyzers registered; other stacks are holes — the registry returns nil
+	// for unregistered languages.
 	registry := workerapp.NewLanguageAnalyzerRegistry()
 	registry.Register(workeradapters.NewPythonLanguageAnalyzer())
 	registry.Register(workeradapters.NewPHPLanguageAnalyzer())
+	registry.Register(workeradapters.NewJavaLanguageAnalyzer())
+	registry.Register(workeradapters.NewCSharpLanguageAnalyzer())
+	registry.Register(workeradapters.NewGoLanguageAnalyzer())
+	registry.Register(workeradapters.NewCppLanguageAnalyzer())
 	pipeline.WithGraphBuilder(registry).
 		WithCardProvider(registry).
 		WithClassifier(workeradapters.NewLanguageAwareClassifier()).
 		WithMigrabilityScorer(workermigrability.NewLouvainMigrabilityScorer()).
 		// Intake gate (guards 5 & 7): the supported-language set is derived from the
 		// registered analyzers so the "unsupported language" warning stays in lockstep
-		// with the actually-wired Tier-2 analyzers (today: PHP, Python).
+		// with the actually-wired Tier-2 analyzers (today: PHP, Python, Java, C#).
 		WithSupportedLanguages(registry.Languages()...)
 
 	analysisHandler := workerjobs.NewAnalysisJobHandler(pipeline)

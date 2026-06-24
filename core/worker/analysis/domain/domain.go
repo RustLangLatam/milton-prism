@@ -27,6 +27,11 @@ const (
 	EcosystemPyPI     Ecosystem = "PyPI"
 	EcosystemNuGet    Ecosystem = "NuGet"
 	EcosystemRubyGems Ecosystem = "RubyGems"
+	// EcosystemGoModules is the OSV.dev / go.mod ecosystem identifier for Go
+	// modules, which OSV spells literally "Go". string(EcosystemGoModules) is
+	// passed straight through to the OSV batch query, so no separate ecosystem
+	// map entry is required for the vulnerability pipeline.
+	EcosystemGoModules Ecosystem = "Go"
 )
 
 // DetectedLanguage is a single language entry produced by the inventory stage.

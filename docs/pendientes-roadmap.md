@@ -1,6 +1,78 @@
 # Pendientes / Roadmap — backend
 
-## Eje BASE DE DATOS — v1 Go + PostgreSQL (HECHO, 2026-06-23)
+## Eje BASE DE DATOS — Go + {PostgreSQL, MySQL/MariaDB} vía GORM (HECHO, 2026-06-23)
+
+**Objetivo:** la capa de persistencia SQL de Go pasa de **raw-SQL (pgx)** a la
+**ORM GORM**, y cubre **PostgreSQL Y MySQL/MariaDB** con **los MISMOS modelos/repos**
+(solo cambia driver/DSN). Reemplaza el enfoque raw-SQL de la celda Go+Postgres v1
+(mig46). Alcance = **Go + {postgres, mysql} + gRPC/HTTP**. Sin proto/gateway: el
+enum `TargetDatabase` (MONGODB=1/POSTGRES=2/MARIADB=3) ya viajaba; `MARIADB`→token
+de store `mysql` (ya existía en `databaseStoreToken`/`detectedEngineStore`).
+
+**Decisión:** GORM (`gorm.io/gorm` + `gorm.io/driver/postgres` | `gorm.io/driver/mysql`).
+Modelos GORM (structs con tags `gorm`) viven en `infrastructure/repositories`, NO en
+domain; el repo implementa los MISMOS ports y mapea domain↔modelo. Domain sigue siendo
+alias de proto. Schema por `AutoMigrate` (no `migrations/*.sql`). IDs autoincrement
+(`primaryKey;autoIncrement`). Soft-delete `gorm.DeletedAt`. Driver elegido por `store`.
+Patrón "ORM + driver" reutilizable (helper `sqlStore{engine,driverPkg,driverCtor,dsn}`
++ `ormStoreSection`) para SQLAlchemy/Prisma/SeaORM futuros.
+
+**Cambios (1 línea c/u):**
+- `core/services/migration/domain/domain.go` — `generableDatabaseByLanguage`
+  Go→{MONGODB,POSTGRES,**MARIADB**}; comentario raw-SQL→GORM.
+- `pkg/gateway/common/error/migration_errors.go` — MIG111 menciona PostgreSQL+MariaDB/MySQL.
+- `core/worker/generation/infrastructure/agent/workspace.go` — `storeSection` reescrito:
+  `goSQLStores{postgres,mysql}` + `ormStoreSection` (modelos GORM en infra mapeando a
+  domain, repos `gorm_*_repository.go` sobre `*gorm.DB`, `gorm_client/builder.go`,
+  `gorm_transaction_manager.go`, `AutoMigrate`, `gorm.DeletedAt`, autoincrement,
+  `.env DATABASE_URL/DB_*`). Reemplaza el bloque pgx raw-SQL.
+- `core/worker/generation/ports/{agent_invoker,generation_ports}.go` — docs Store→GORM.
+- `core/services/migration/application/assembler/{assembler.go,assembler_config.go}` —
+  `isGoPostgres`→`isGoSQL` (postgres|mysql); `generatePostgresConfigExamples`→
+  `generateSQLConfigExamples`; `.env.example` neutral (DSN GORM Postgres/MySQL doc inline).
+- `core/services/migration/application/download_deliverable.go` — comentario Go+SQL/GORM.
+- Docs: `milton-prism-go-profile.md` (§0/§6/§7P/§10/§15 → GORM Postgres+MySQL) y
+  `...-service-generator-prompt.md` (ramifica por store con GORM).
+- Tests: `storeSection` (postgres+mysql GORM), `IsGenerableDatabase` (go_mariadb=true),
+  `CreateMigration_GoMySQL_Accepted`, assembler `GoSQL_EnvExample` (table postgres/mysql).
+
+**GATES:** G1 Go+Postgres/Go+MariaDB→200, Python/Node/Rust+SQL→400 (MIG111); G2 worker
+`store=postgres`/`store=mysql`→READY; G3 deliverable con repos GORM + `gorm.Open`(driver)
++ `AutoMigrate` + `go.mod` gorm+driver + `.env DATABASE_URL/DB_*` (0 MONGO_), `go build
+./...`=0 para ambas DBs; G4 Mongo sin regresión (repos Mongo nativos, `storeSection(mongodb)`
+=no-op); G5 `go build`+`go test` verdes.
+
+**CERTIFICADO POR CONTENIDO (2026-06-24):** Go-GORM (Postgres+MySQL) cerrado, no por
+"READY" sino por contenido y build real de ambos deliverables.
+- C1: `go build ./...`=0 + `go test ./core/services/migration/... ./core/worker/generation/...`
+  verdes en el tree (cambios sin commitear).
+- C2 (mig51, id=51, Go+POSTGRES+gRPC+micro): ZIP con repos GORM en
+  `core/services/user/infrastructure/repositories/gorm_*` (tags `gorm:"..."`),
+  `core/shared/gorm_client/builder.go` con `gorm.Open(postgres.Open(...))`+`AutoMigrate`,
+  `go.mod` con `gorm.io/gorm`+`gorm.io/driver/postgres`, `.env.example` con
+  `DATABASE_URL`/`DB_*` (0 `MONGO_`), 0 `.proto` bajo `core/services/`, sin plantillas buf.
+  **`go build ./...` del ZIP → exit 0.**
+- C3 (mig52, id=52, Go+MARIADB+gRPC+micro): repos GORM, `mysql.Open(...)`,
+  `gorm.io/driver/mysql`, mismas garantías de contenido. **`go build ./...` del ZIP → exit 0.**
+- C4 (guard, live + unit): Python+Postgres→400 MIG111; Go+Postgres→200; Go+MariaDB→200;
+  Go+Mongo sin regresión (`TestCreateMigration_GoMongo_Unaffected` PASS, matriz conserva
+  MONGODB para Go).
+- Nota menor (no defecto): los deliverables SQL siguen incluyendo
+  `core/shared/mongo_client/builder.go` (+ `go.mongodb.org/mongo-driver` en go.mod) como
+  scaffold compartido; compila y no está cableado en el user service GORM. Candidato a
+  poda futura del assembler.
+
+**SIGUIENTE:** Python SQLAlchemy (postgres+mysql), Node Prisma, Rust SeaORM.
+
+**NOTA mig46:** la celda raw-pgx Go+Postgres queda obsoleta (reemplazada por GORM); el
+storeSection/assembler/doc ya no emiten pgx. Las celdas vivas son Go+GORM (Postgres/MySQL).
+
+**PASO SIGUIENTE:** (1) **Python SQLAlchemy** (postgres+mysql), (2) **Node Prisma**,
+(3) **Rust SeaORM** — reusar el patrón "ORM + driver" del `ormStoreSection`; (4) frontend
+tile MySQL/MariaDB en el panel React (follow-up, fuera del backend); (5) relajar guarda
+UNSPECIFIED (MIG105) para exponer Auto (ya cableado en el worker).
+
+## Eje BASE DE DATOS — v1 Go + PostgreSQL (raw-SQL pgx, SUPERSEDED por GORM 2026-06-23)
 
 **Objetivo:** generar capa de persistencia **PostgreSQL** para **Go** (antes la
 generación era solo MongoDB). Alcance v1 = **Go + PostgreSQL + gRPC +

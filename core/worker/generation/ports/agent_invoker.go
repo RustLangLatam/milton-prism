@@ -42,9 +42,11 @@ type InvokeRequest struct {
 	// ("mongodb" | "postgres" | "mysql"), resolved by the reader (override ??
 	// detected). Orthogonal to OutputProfile/Protocol. Drives the store section
 	// injected into the prompt: "mongodb" injects nothing (the original Mongo path,
-	// unchanged); "postgres" instructs raw-SQL pgx/database-sql repos + a
-	// postgres_client pool + golang-migrate migrations (no ORM). Empty is treated as
-	// "mongodb".
+	// unchanged); "postgres"/"mysql" instruct a GORM persistence layer (GORM models
+	// in infrastructure/repositories mapping to/from domain, repos implementing the
+	// same ports, a gorm_client pool builder selecting gorm.io/driver/postgres or
+	// gorm.io/driver/mysql by store, AutoMigrate, gorm.DeletedAt soft-delete). Empty
+	// is treated as "mongodb".
 	Store string
 	// APIKey is ANTHROPIC_API_KEY for production use (sk-ant-api03-…).
 	// Passed to the container as an env var with --bare mode.

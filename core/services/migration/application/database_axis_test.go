@@ -44,18 +44,21 @@ func TestCreateMigration_GoMongo_Unaffected(t *testing.T) {
 	assert.Equal(t, uint64(10021), out.GetIdentifier())
 }
 
-// TestCreateMigration_GoMySQL_Rejected proves the (Go, MySQL/MariaDB) cell is a
-// v1 hole: CreateMigration rejects it with MIG111 before any persistence.
-func TestCreateMigration_GoMySQL_Rejected(t *testing.T) {
-	svc, _, _, _, _, _ := newSvc(t)
+// TestCreateMigration_GoMySQL_Accepted proves the (Go, MySQL/MariaDB) cell is now
+// generable via the same GORM layer as PostgreSQL: CreateMigration accepts a Go +
+// MariaDB migration (no MIG111) and proceeds to create it.
+func TestCreateMigration_GoMySQL_Accepted(t *testing.T) {
+	svc, repo, _, identity, repoClient, _ := newSvc(t)
 	m := validMigration()
 	m.Target.Database = domain.TargetDatabaseMariaDB
+	stored := &domain.Migration{Identifier: 10022, RepositoryId: 42, OwnerUserId: 1, State: domain.MigrationStatePending}
+	identity.On("ValidateUserExists", mock.Anything, uint64(1)).Return(nil)
+	repoClient.On("FetchRepositoryURL", mock.Anything, uint64(42)).Return("https://github.com/org/repo", nil)
+	repo.On("Create", mock.Anything, mock.Anything).Return(stored, nil)
 
-	_, err := svc.CreateMigration(context.Background(), m)
-	require.Error(t, err)
-	var dErr *domain.Error
-	require.True(t, errors.As(err, &dErr), "want a domain.Error")
-	assert.Equal(t, domain.ErrCodeUnsupportedDatabase, dErr.Code)
+	out, err := svc.CreateMigration(context.Background(), m)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10022), out.GetIdentifier())
 }
 
 // TestCreateMigration_PythonPostgres_Rejected proves SQL on a non-Go language is a

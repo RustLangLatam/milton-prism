@@ -66,21 +66,24 @@ type Assembler struct {
 // Empty or "grpc" keeps the gateway subtree / gRPC server (the established gRPC
 // behaviour).
 // store selects the persistence-config variant of a Go deliverable. "postgres"
-// makes the synthesised per-service config a PostgreSQL `.env.example`
+// or "mysql" makes the synthesised per-service config a SQL `.env.example`
 // (DATABASE_URL / DB_HOST/PORT/USER/PASSWORD/NAME) instead of the Mongo
-// config.toml.example, matching the raw-SQL repos the generator emits for
-// Go + PostgreSQL. Empty / "mongodb" keeps the Mongo config.toml.example (the
+// config.toml.example, matching the GORM repos the generator emits for Go + SQL
+// (one set of GORM models/repos serves PostgreSQL and MySQL/MariaDB; only the
+// driver + DSN differ). Empty / "mongodb" keeps the Mongo config.toml.example (the
 // established behaviour). The store is consumed only by the Go config-example
 // step; the Python/Node/Rust deliverables are MongoDB-only in v1.
 func New(skeletonRoot string, useApiGateway bool, profile, protocol, store string) *Assembler {
 	return &Assembler{skeletonRoot: skeletonRoot, useApiGateway: useApiGateway, profile: profile, protocol: protocol, store: store}
 }
 
-// isGoPostgres reports whether this Assembler targets the Go + PostgreSQL
-// deliverable: the per-service config example is a PostgreSQL .env.example rather
-// than the Mongo config.toml.example. Only the Go profile carries a SQL store in v1.
-func (a *Assembler) isGoPostgres() bool {
-	return !a.isPython() && !a.isNode() && !a.isRust() && a.store == "postgres"
+// isGoSQL reports whether this Assembler targets a Go + SQL deliverable (GORM):
+// the per-service config example is a SQL .env.example rather than the Mongo
+// config.toml.example. Both "postgres" and "mysql" (MySQL/MariaDB) are GORM cells
+// in v1 and emit the same DATABASE_URL/DB_* .env. Only the Go profile carries a
+// SQL store in v1.
+func (a *Assembler) isGoSQL() bool {
+	return !a.isPython() && !a.isNode() && !a.isRust() && (a.store == "postgres" || a.store == "mysql")
 }
 
 // isGoHTTP reports whether this Assembler targets the Go HTTP-native deliverable
@@ -367,14 +370,14 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// which must contain zero Go scaffolding; the language-appropriate extras
 	// arrive via the generated artifacts list plus the per-profile .env.example.
 	if !a.isPython() && !a.isNode() && !a.isRust() {
-		// Persistence-config variant: Go + PostgreSQL emits a per-service
-		// PostgreSQL .env.example (DATABASE_URL / DB_*) matching the raw-SQL repos
-		// the generator wrote; Go + MongoDB (default) keeps the Mongo
+		// Persistence-config variant: Go + SQL (PostgreSQL or MySQL/MariaDB) emits
+		// a per-service SQL .env.example (DATABASE_URL / DB_*) matching the GORM
+		// repos the generator wrote; Go + MongoDB (default) keeps the Mongo
 		// config.toml.example. The auth section is identical (EdDSA tokens) in
 		// both — only the data-store config differs.
-		if a.isGoPostgres() {
-			if err := generatePostgresConfigExamples(merged); err != nil {
-				return nil, fmt.Errorf("assembler: postgres config examples: %w", err)
+		if a.isGoSQL() {
+			if err := generateSQLConfigExamples(merged); err != nil {
+				return nil, fmt.Errorf("assembler: sql config examples: %w", err)
 			}
 		} else {
 			if err := generateConfigExamples(merged); err != nil {

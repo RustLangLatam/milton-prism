@@ -3,10 +3,10 @@ package domain
 import "testing"
 
 // TestIsGenerableDatabase proves the (language, database) persistence matrix that
-// backs the MIG111 guard in CreateMigration. v1: Go persists to MongoDB AND
-// PostgreSQL; every other generable language persists to MongoDB only. MySQL/
-// MariaDB is a hole for every language, and SQL is a hole for every non-Go
-// language. A non-generable language is false for every database.
+// backs the MIG111 guard in CreateMigration. v1: Go persists to MongoDB, PostgreSQL
+// AND MySQL/MariaDB (PostgreSQL + MySQL/MariaDB via the same GORM layer); every
+// other generable language persists to MongoDB only. SQL is a hole for every
+// non-Go language. A non-generable language is false for every database.
 func TestIsGenerableDatabase(t *testing.T) {
 	cases := []struct {
 		name string
@@ -15,8 +15,8 @@ func TestIsGenerableDatabase(t *testing.T) {
 		want bool
 	}{
 		{"go_mongodb", TargetLanguageGo, TargetDatabaseMongoDB, true},
-		{"go_postgres", TargetLanguageGo, TargetDatabasePostgres, true}, // ← the v1 SQL cell
-		{"go_mariadb_hole", TargetLanguageGo, TargetDatabaseMariaDB, false},
+		{"go_postgres", TargetLanguageGo, TargetDatabasePostgres, true},   // ← v1 SQL cell (GORM)
+		{"go_mariadb", TargetLanguageGo, TargetDatabaseMariaDB, true},     // ← v1 SQL cell (GORM, same models)
 		{"python_mongodb", TargetLanguagePython, TargetDatabaseMongoDB, true},
 		{"python_postgres_hole", TargetLanguagePython, TargetDatabasePostgres, false},
 		{"node_mongodb", TargetLanguageNode, TargetDatabaseMongoDB, true},

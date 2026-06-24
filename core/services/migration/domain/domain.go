@@ -162,17 +162,20 @@ func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
 // persistence layer against that database engine (profile doc + generator prompt
 // + worker storeSection + assembler config behaviour exist and are certified).
 //
-// v1 state: Go is the only language with a real SQL persistence profile, and the
-// only certified SQL engine is PostgreSQL (raw SQL + pgx/database-sql +
-// golang-migrate, no ORM). Every generable language keeps MongoDB (the original
-// path, unchanged). MariaDB (= MySQL family, slot 3) is a documented hole in v1
-// and is NOT enabled for any language; Python/Node/Rust + SQL are holes too.
-// Any new cell (a new SQL engine for Go, or SQL for another language) must be
-// added here AND given a storeSection prompt + assembler config + a certified run.
+// v1 state: Go is the only language with a real SQL persistence profile. The
+// certified SQL engines for Go are PostgreSQL AND MariaDB (= the MySQL/MariaDB
+// family, slot 3) — both via the SAME GORM models/repos (gorm.io/gorm with
+// gorm.io/driver/postgres or gorm.io/driver/mysql selected by the store; the GORM
+// models live in infrastructure/repositories and map to/from the domain types,
+// schema applied by AutoMigrate). Every generable language keeps MongoDB (the
+// original path, unchanged). Python/Node/Rust + SQL are still holes. Any new cell
+// (a new SQL engine for Go, or SQL for another language) must be added here AND
+// given a storeSection prompt + assembler config + a certified run.
 var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}{
 	TargetLanguageGo: {
 		TargetDatabaseMongoDB:  {},
 		TargetDatabasePostgres: {},
+		TargetDatabaseMariaDB:  {}, // MySQL/MariaDB family (wire-compatible single target)
 	},
 	TargetLanguagePython: {
 		TargetDatabaseMongoDB: {},

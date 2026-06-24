@@ -759,55 +759,61 @@ func TestAssemble_GoProfile_NoEnvExample(t *testing.T) {
 	}
 }
 
-// TestAssemble_GoPostgres_EnvExample proves the Go + PostgreSQL deliverable emits a
-// per-service PostgreSQL .env.example (DATABASE_URL / DB_*) INSTEAD of the Mongo
-// config.toml.example, with ZERO MONGO_* variables — the SQL persistence-config
-// variant. The Makefile and (no) gateway behaviour is unchanged from the Go path.
-func TestAssemble_GoPostgres_EnvExample(t *testing.T) {
-	root := buildSkeletonFixture(t)
+// TestAssemble_GoSQL_EnvExample proves the Go + SQL (GORM) deliverable — for both
+// the PostgreSQL ("postgres") and MySQL/MariaDB ("mysql") stores — emits a
+// per-service SQL .env.example (DATABASE_URL / DB_*) INSTEAD of the Mongo
+// config.toml.example, with ZERO MONGO_* variables. Both stores share the same
+// .env shape (GORM DSN). The Makefile and (no) gateway behaviour is unchanged
+// from the Go path.
+func TestAssemble_GoSQL_EnvExample(t *testing.T) {
+	for _, store := range []string{"postgres", "mysql"} {
+		t.Run(store, func(t *testing.T) {
+			root := buildSkeletonFixture(t)
 
-	a := New(root, false, "go", "grpc", "postgres")
-	artifacts := []InputFile{
-		{Path: "core/cmd/user-services/main.go", Content: "package main\n"},
-	}
-	files, err := a.Assemble(artifacts)
-	if err != nil {
-		t.Fatalf("Assemble: %v", err)
-	}
-	set := pathSet(files)
+			a := New(root, false, "go", "grpc", store)
+			artifacts := []InputFile{
+				{Path: "core/cmd/user-services/main.go", Content: "package main\n"},
+			}
+			files, err := a.Assemble(artifacts)
+			if err != nil {
+				t.Fatalf("Assemble: %v", err)
+			}
+			set := pathSet(files)
 
-	// Postgres .env.example present; Mongo config.toml.example absent.
-	envPath := "core/cmd/user-services/.env.example"
-	if !set[envPath] {
-		t.Fatalf("Go+Postgres deliverable missing %s", envPath)
-	}
-	if set["core/cmd/user-services/config.toml.example"] {
-		t.Errorf("Go+Postgres deliverable must NOT emit the Mongo config.toml.example")
-	}
+			// SQL .env.example present; Mongo config.toml.example absent.
+			envPath := "core/cmd/user-services/.env.example"
+			if !set[envPath] {
+				t.Fatalf("Go+%s deliverable missing %s", store, envPath)
+			}
+			if set["core/cmd/user-services/config.toml.example"] {
+				t.Errorf("Go+%s deliverable must NOT emit the Mongo config.toml.example", store)
+			}
 
-	// Content: DATABASE_URL + discrete DB_* present, zero MONGO_* prescribed.
-	var env string
-	for _, f := range files {
-		if f.Path == envPath {
-			env = string(f.Content)
-		}
-	}
-	for _, want := range []string{"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "user_db"} {
-		if !strings.Contains(env, want) {
-			t.Errorf("Postgres .env.example missing %q", want)
-		}
-	}
-	if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
-		t.Errorf("Postgres .env.example must not prescribe MONGO_* vars")
-	}
-	for _, secret := range knownSecrets {
-		if strings.Contains(env, secret) {
-			t.Errorf("Postgres .env.example leaked known secret %q", secret)
-		}
-	}
-	// The Makefile still ships (Go scaffolding unchanged).
-	if !set["core/cmd/user-services/Makefile"] {
-		t.Errorf("Go+Postgres deliverable missing per-service Makefile")
+			// Content: DATABASE_URL + discrete DB_* present, zero MONGO_* prescribed.
+			var env string
+			for _, f := range files {
+				if f.Path == envPath {
+					env = string(f.Content)
+				}
+			}
+			for _, want := range []string{"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "user_db", "GORM"} {
+				if !strings.Contains(env, want) {
+					t.Errorf("Go+%s .env.example missing %q", store, want)
+				}
+			}
+			if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
+				t.Errorf("Go+%s .env.example must not prescribe MONGO_* vars", store)
+			}
+			for _, secret := range knownSecrets {
+				if strings.Contains(env, secret) {
+					t.Errorf("Go+%s .env.example leaked known secret %q", store, secret)
+				}
+			}
+			// The Makefile still ships (Go scaffolding unchanged).
+			if !set["core/cmd/user-services/Makefile"] {
+				t.Errorf("Go+%s deliverable missing per-service Makefile", store)
+			}
+		})
 	}
 }
 

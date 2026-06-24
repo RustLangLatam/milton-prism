@@ -33,8 +33,8 @@ type ServiceSpec struct {
 	// TargetConfig.database override, or — for Auto (UNSPECIFIED) — the engine
 	// detected in the linked analysis summary. Orthogonal to OutputProfile and
 	// Protocol. Selects the store section injected into the prompt (Mongo client +
-	// repos vs Postgres pool + SQL repos + migrations). Empty is treated as "mongodb"
-	// (the original path, unchanged).
+	// repos vs a GORM persistence layer + AutoMigrate, driver chosen by store).
+	// Empty is treated as "mongodb" (the original path, unchanged).
 	Store string
 }
 

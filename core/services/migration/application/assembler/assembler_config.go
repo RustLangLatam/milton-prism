@@ -44,23 +44,25 @@ func generateConfigExamples(assembled map[string][]byte) error {
 	return nil
 }
 
-// generatePostgresConfigExamples appends a `.env.example` file to each generated
-// Go service cmd directory for a Go + PostgreSQL deliverable. It is the SQL
-// homologue of generateConfigExamples (the Mongo config.toml.example): a Go +
-// PostgreSQL service persists with raw SQL over pgx/database-sql, so its config
-// is a DATABASE_URL / DB_* .env rather than a Mongo `[mongo]` TOML section.
+// generateSQLConfigExamples appends a `.env.example` file to each generated
+// Go service cmd directory for a Go + SQL deliverable (GORM over PostgreSQL or
+// MySQL/MariaDB). It is the SQL homologue of generateConfigExamples (the Mongo
+// config.toml.example): a Go + SQL service persists with GORM, so its config is a
+// DATABASE_URL / DB_* .env rather than a Mongo `[mongo]` TOML section. The same
+// .env shape serves both engines (DATABASE_URL is the GORM DSN; only its format
+// differs between Postgres and MySQL — documented inline).
 //
 // The file is emitted per service at core/cmd/<svc>-services/.env.example,
 // mirroring the Mongo config.toml.example placement. Zero MONGO_* variables ever
 // appear. Every value is a placeholder — never a real credential (assertNoSecrets
 // guards each file).
-func generatePostgresConfigExamples(assembled map[string][]byte) error {
+func generateSQLConfigExamples(assembled map[string][]byte) error {
 	services := discoverGeneratedServices(assembled)
 
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
 		port := 50051 + i
-		content := postgresServiceEnvExample(svc, port)
+		content := sqlServiceEnvExample(svc, port)
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -71,31 +73,35 @@ func generatePostgresConfigExamples(assembled map[string][]byte) error {
 	return nil
 }
 
-// postgresServiceEnvExample returns the content of a .env.example for one
-// generated Go + PostgreSQL microservice. It documents BOTH the single
-// DATABASE_URL DSN and the discrete DB_* parts (the generator may read either),
-// the gRPC server bind, and the auth secret. Every value is a placeholder; no
-// MONGO_* variable is present.
-func postgresServiceEnvExample(name string, port int) string {
+// sqlServiceEnvExample returns the content of a .env.example for one generated
+// Go + SQL (GORM) microservice. It documents BOTH the single DATABASE_URL DSN
+// (the GORM DSN — PostgreSQL or MySQL/MariaDB form) and the discrete DB_* parts
+// (the generator may read either), the gRPC server bind, and the auth secret.
+// Every value is a placeholder; no MONGO_* variable is present.
+func sqlServiceEnvExample(name string, port int) string {
 	db := name + "_db"
-	return fmt.Sprintf(`# .env.example — %s service (PostgreSQL persistence)
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via GORM)
 # Copy this file to .env (in the directory the service is launched from) and fill
 # in the placeholder values, or export them into the environment before starting
 # the service: ./%s-services
 #
-# This service persists to PostgreSQL via raw SQL (pgx / database/sql, no ORM).
-# Schema is applied from migrations/*.sql (golang-migrate). Set EITHER the single
+# This service persists via the GORM ORM. The same models/repos serve PostgreSQL
+# and MySQL/MariaDB — only the driver and the DATABASE_URL DSN format differ.
+# Schema is applied by GORM AutoMigrate on startup. Set EITHER the single
 # DATABASE_URL DSN OR the discrete DB_* parts (DATABASE_URL wins when both are set).
 
-# ── PostgreSQL ──────────────────────────────────────────────────────────────
-# DATABASE_URL: full libpq/pgx DSN, e.g.
-#   postgres://user:password@host:5432/%s?sslmode=disable
-DATABASE_URL=<your-postgres-dsn>
+# ── Database (GORM) ──────────────────────────────────────────────────────────
+# DATABASE_URL: full GORM DSN. Examples:
+#   PostgreSQL: postgres://user:password@host:5432/%s?sslmode=disable
+#   MySQL/MariaDB: user:password@tcp(host:3306)/%s?charset=utf8mb4&parseTime=True&loc=Local
+DATABASE_URL=<your-database-dsn>
 DB_HOST=localhost
+# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
 DB_PORT=5432
 DB_USER=<your-db-user>
 DB_PASSWORD=<your-db-password>
 DB_NAME=%s
+# DB_SSLMODE applies to PostgreSQL; MySQL/MariaDB uses tls in the DSN instead.
 DB_SSLMODE=disable
 
 # ── gRPC server ─────────────────────────────────────────────────────────────
@@ -105,7 +111,7 @@ GRPC_PORT=%d
 # ── Auth ───────────────────────────────────────────────────────────────────
 # JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
 JWT_SECRET=<your-jwt-secret>
-`, name, name, db, db, port)
+`, name, name, db, db, db, port)
 }
 
 // generatePythonConfigExamples appends a `.env.example` file to each generated

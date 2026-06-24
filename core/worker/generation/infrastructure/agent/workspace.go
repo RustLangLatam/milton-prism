@@ -485,17 +485,51 @@ func authSchemeSection(outputProfile, protocol, authScheme, authSigAlg string) s
 		"- The validation code MUST be part of the build gate (" + gate + "): it compiles and is exercised by at least one unit test (valid token passes, missing/expired/wrong-signature token is rejected).\n\n"
 }
 
+// sqlStore describes a SQL persistence cell as an (ORM, driver) pair. The prompt
+// block is assembled from these parts by ormStoreSection, so the same ORM-SQL
+// scaffold serves every wire-compatible engine (one set of GORM models/repos for
+// PostgreSQL AND MySQL/MariaDB) and the pattern is reusable when SQLAlchemy /
+// Prisma / SeaORM cells land for Python / Node / Rust: only the (orm, driver,
+// dialect) facts change, the surrounding "models in infra, repos implement the
+// ports, mapping domain↔model, AutoMigrate from the models" shape is constant.
+type sqlStore struct {
+	engine     string // human label, e.g. "PostgreSQL", "MySQL/MariaDB"
+	driverPkg  string // GORM driver import path
+	driverCtor string // GORM dialector constructor, e.g. "postgres.Open(dsn)"
+	dsnExample string // a placeholder DSN example for the .env note
+}
+
+// goSQLStores maps the worker store token to its (ORM, driver) facts for the Go
+// profile. POSTGRES→postgres token, MARIADB→mysql token (see databaseStoreToken).
+// Both rows reuse the SAME GORM models/repos — only the driver row differs.
+var goSQLStores = map[string]sqlStore{
+	"postgres": {
+		engine:     "PostgreSQL",
+		driverPkg:  "gorm.io/driver/postgres",
+		driverCtor: "postgres.Open(dsn)",
+		dsnExample: "postgres://user:password@host:5432/<svc>_db?sslmode=disable",
+	},
+	"mysql": {
+		engine:     "MySQL/MariaDB",
+		driverPkg:  "gorm.io/driver/mysql",
+		driverCtor: "mysql.Open(dsn)",
+		dsnExample: "user:password@tcp(host:3306)/<svc>_db?charset=utf8mb4&parseTime=True&loc=Local",
+	},
+}
+
 // storeSection returns the prose block injected into the combined prompt that
 // pins the persistence engine the generated service must target. It is the store
 // homologue of transportSection / authSchemeSection: profile- and store-aware.
 //
-// v1 GENERATES SQL persistence only for Go + PostgreSQL; "mongodb" (the original
-// path) injects nothing so the established Mongo behaviour is unchanged:
+// v1 GENERATES SQL persistence (via GORM) for Go + {PostgreSQL, MySQL/MariaDB};
+// "mongodb" (the original path) injects nothing so the established Mongo behaviour
+// is unchanged:
 //   - "mongodb"/"" → no block; the profile doc's MongoDB persistence is used as-is.
-//   - (go, "postgres") → raw-SQL PostgreSQL layer, NO ORM: pgx/v5 (or database/sql)
-//     repos implementing the SAME ports, a postgres_client pool builder, an SQL
-//     transaction manager, golang-migrate migrations/*.sql emitted from the
-//     owned_resources, IDs by sequence/identity, .env with DATABASE_URL/DB_*.
+//   - (go, "postgres" | "mysql") → a GORM persistence layer (ormStoreSection):
+//     GORM models in infrastructure/repositories mapping to/from the domain types,
+//     repos implementing the SAME ports, a gorm_client builder that opens the
+//     connection with the driver chosen by store, AutoMigrate, gorm.DeletedAt
+//     soft-delete, autoincrement IDs, .env with DATABASE_URL/DB_*.
 //   - any other (profile, store) SQL cell → an HONEST note that SQL for that cell
 //     is a v1 hole and must not be guessed (this path is unreachable while the
 //     IsGenerableDatabase guard rejects those cells at creation, but kept so the
@@ -505,28 +539,38 @@ func storeSection(outputProfile, store string) string {
 	if s == "" || s == "mongodb" {
 		return ""
 	}
-	// Only Go + PostgreSQL is generated in v1. Every other SQL cell is a hole.
-	if outputProfile != "go" || s != "postgres" {
+	// Only Go + a known SQL store is generated in v1. Every other SQL cell is a hole.
+	cell, ok := goSQLStores[s]
+	if outputProfile != "go" || !ok {
 		return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
 			"The target database for this migration is **" + s + "** on the **" + outputProfile +
 			"** profile, which v1 of the generator does NOT emit (v1 generates SQL persistence " +
-			"only for Go + PostgreSQL; every other language uses MongoDB). Do NOT guess a " +
-			s + " implementation. Generate the MongoDB persistence layer as the profile doc " +
-			"describes and add a single TODO note stating that `" + s + "` was requested but is a " +
-			"v1 generation hole and must be wired manually. Be honest about the gap.\n\n"
+			"only for Go + PostgreSQL and Go + MySQL/MariaDB; every other language uses MongoDB). " +
+			"Do NOT guess a " + s + " implementation. Generate the MongoDB persistence layer as the " +
+			"profile doc describes and add a single TODO note stating that `" + s + "` was requested " +
+			"but is a v1 generation hole and must be wired manually. Be honest about the gap.\n\n"
 	}
+	return ormStoreSection(cell)
+}
 
-	return "## Persistence: PostgreSQL (raw SQL, no ORM)\n\n" +
-		"This service persists to **PostgreSQL**, NOT MongoDB. Replace the MongoDB persistence " +
-		"layer the profile doc describes with an idiomatic raw-SQL PostgreSQL layer. Mandatory constraints:\n" +
-		"- Use **pgx/v5** (`github.com/jackc/pgx/v5` with `pgxpool`) — or `database/sql` with the pgx stdlib driver. Do NOT use an ORM (no GORM/ent/sqlboiler): the canon is that domain types are aliases of the proto messages, never ORM entities.\n" +
-		"- For EACH owned resource (a proto message in `owned_resources`) write a repository `core/services/<svc>/infrastructure/repositories/postgres_<resource>_repository.go` that implements the SAME repository ports the service already defines (same interface methods/signatures the gRPC/HTTP handlers depend on) — only the implementation changes from Mongo to SQL.\n" +
-		"- Add a shared client `core/shared/postgres_client/builder.go` that builds a `*pgxpool.Pool` from config and pings it on startup (the Mongo-client homologue). Wire it where the Mongo client was wired.\n" +
-		"- Add an SQL transaction manager behind a `WithTransaction(ctx, fn)` API (over `pgx.Tx` / `*sql.Tx`) mirroring the existing Mongo transaction abstraction, so service-layer transaction boundaries are unchanged.\n" +
-		"- Write the DDL as **golang-migrate** migrations under `migrations/NNNN_<name>.up.sql` (+ matching `.down.sql`), deriving the schema from the `owned_resources` (one table per domain message, columns from the message fields, snake_case) and the `cross_service_fks` in the boundary spec (FK columns / indexes, never a hard cross-service FK constraint). Allocate IDs with a sequence / `GENERATED ALWAYS AS IDENTITY` (`BIGINT`/`BIGSERIAL`) — do NOT emulate a `system_counters` collection.\n" +
-		"- Map struct↔row explicitly (snake_case columns), use `$1` placeholders, and implement upserts with `INSERT ... ON CONFLICT (...) DO UPDATE`.\n" +
-		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `postgres://user:password@host:5432/<svc>_db?sslmode=disable`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
-		"- The persistence code MUST be part of the build gate (`go build ./...` + `go test ./...`): the repos compile and at least one repository round-trip is exercised (an in-memory/`sqlmock` or container-backed test is acceptable).\n\n"
+// ormStoreSection renders the GORM persistence block for one SQL cell. The text
+// is parametrised by the (ORM, driver) facts so PostgreSQL and MySQL/MariaDB share
+// one scaffold (one set of GORM models/repos, only the driver import + DSN differ),
+// keeping the pattern reusable for future ORM cells in other languages.
+func ormStoreSection(c sqlStore) string {
+	return "## Persistence: " + c.engine + " (GORM ORM)\n\n" +
+		"This service persists to **" + c.engine + "** via the **GORM** ORM (`gorm.io/gorm`), NOT MongoDB. " +
+		"Replace the MongoDB persistence layer the profile doc describes with an idiomatic GORM layer. Mandatory constraints:\n" +
+		"- Use **GORM** (`gorm.io/gorm`) with the driver **`" + c.driverPkg + "`**. Open the connection with `gorm.Open(" + c.driverCtor + ", &gorm.Config{})`. Do NOT use raw SQL/pgx or another ORM — GORM is the canon for this cell, and the same models/repos serve PostgreSQL and MySQL/MariaDB unchanged (only the driver import + DSN differ).\n" +
+		"- **Domain stays proto.** Domain types remain aliases of the proto messages (Canon §5.1). The GORM **models are SEPARATE structs with `gorm` tags and live in `core/services/<svc>/infrastructure/repositories`** (NEVER in domain). Each repository maps domain↔GORM-model on read/write — domain is never decorated with ORM tags.\n" +
+		"- For EACH owned resource (a proto message in `owned_resources`) write a GORM model + a repository `core/services/<svc>/infrastructure/repositories/gorm_<resource>_repository.go` that implements the SAME repository ports the service already defines (assert `var _ ports.<Resource>Repository = (*Gorm<Resource>Repository)(nil)`; same method signatures the gRPC/HTTP handlers depend on) — only the implementation changes from Mongo to GORM.\n" +
+		"- Add a shared client `core/shared/gorm_client/builder.go` that builds the `*gorm.DB` once (sync.Once) from config, selects the driver by config/store, configures the connection pool via `db.DB()` (`SetMaxOpenConns`/`SetMaxIdleConns`/`SetConnMaxLifetime`), and pings on startup (the Mongo-client homologue). Wire it where the Mongo client was wired.\n" +
+		"- Add a transaction manager behind a `WithTransaction(ctx, fn)` API over `db.Transaction(...)` (GORM transactions, ctx-scoped `*gorm.DB`), nil-safe and mirroring the existing Mongo transaction abstraction, so service-layer transaction boundaries are unchanged.\n" +
+		"- **Schema via `AutoMigrate`.** On startup the client runs `db.AutoMigrate(&Model{}, ...)` over every GORM model so the schema is derived from the models — do NOT hand-write golang-migrate `*.sql` files and do NOT emulate a `system_counters` collection. Model FK columns/indexes come from the `cross_service_fks` in the boundary spec (FK columns/indexes only, never a hard cross-service FK constraint, per the data-ownership boundary).\n" +
+		"- **IDs** are autoincrement by the ORM: model PK is `ID uint64 \\`gorm:\"primaryKey;autoIncrement\"\\`` (Canon §5.3) — never an emulated counter. Use snake_case table/column names (GORM's default naming).\n" +
+		"- **Soft-delete** with `gorm.DeletedAt` (embed `gorm.DeletedAt \\`gorm:\"index\"\\`` or `gorm.Model`) so deletes are logical, matching the Mongo path's soft-delete semantics.\n" +
+		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
+		"- Ensure `go.mod` requires `gorm.io/gorm` and `" + c.driverPkg + "`. The persistence code MUST be part of the build gate (`go build ./...` + `go test ./...`): the repos compile and at least one repository round-trip is exercised (a `sqlmock`/in-memory or container-backed test is acceptable).\n\n"
 }
 
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.

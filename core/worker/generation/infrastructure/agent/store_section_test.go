@@ -20,37 +20,62 @@ func TestStoreSection_MongoDBInjectsNothing(t *testing.T) {
 	}
 }
 
-// TestStoreSection_GoPostgres asserts the Go + PostgreSQL block instructs the
-// generator to emit the raw-SQL persistence layer: pgx, no ORM, postgres repos,
-// a pool client, golang-migrate migrations, sequence IDs, and DATABASE_URL/DB_*
-// env with zero MONGO_* — the v1 certified SQL cell.
-func TestStoreSection_GoPostgres(t *testing.T) {
-	s := agent.StoreSection("go", "postgres")
-	if s == "" {
-		t.Fatal("StoreSection(go, postgres) is empty, want a PostgreSQL block")
+// TestStoreSection_GoSQLGORM asserts the Go + PostgreSQL and Go + MySQL/MariaDB
+// blocks instruct the generator to emit a GORM persistence layer: GORM models in
+// infrastructure/repositories mapping to/from domain, repos implementing the same
+// ports, a gorm_client builder opening the connection with the engine's driver,
+// AutoMigrate, gorm.DeletedAt soft-delete, autoincrement IDs, and DATABASE_URL/DB_*
+// env with zero MONGO_* — the v1 certified SQL cells. Both stores share the same
+// GORM scaffold; only the driver import + DSN differ.
+func TestStoreSection_GoSQLGORM(t *testing.T) {
+	cases := []struct {
+		store      string
+		engine     string
+		driverPkg  string
+		driverCtor string
+	}{
+		{"postgres", "PostgreSQL", "gorm.io/driver/postgres", "postgres.Open(dsn)"},
+		{"mysql", "MySQL/MariaDB", "gorm.io/driver/mysql", "mysql.Open(dsn)"},
 	}
-	for _, want := range []string{
-		"PostgreSQL",
-		"pgx",
-		"no ORM",
-		"postgres_<resource>_repository.go",
-		"postgres_client",
-		"golang-migrate",
-		"migrations/",
-		"WithTransaction",
-		"ON CONFLICT",
-		"DATABASE_URL",
-		"DB_HOST",
-		"go build ./...",
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("Go+Postgres store section missing %q", want)
-		}
-	}
-	// The block names MONGO_* only to FORBID it ("Do NOT emit any MONGO_* variable").
-	// It must not instruct the generator to SET one (no `MONGO_…=` assignment).
-	if strings.Contains(s, "MONGO_URI") || strings.Contains(s, "MONGO_DATABASE") {
-		t.Errorf("Go+Postgres store section must not prescribe MONGO_* env vars")
+	for _, tc := range cases {
+		t.Run(tc.store, func(t *testing.T) {
+			s := agent.StoreSection("go", tc.store)
+			if s == "" {
+				t.Fatalf("StoreSection(go, %q) is empty, want a GORM block", tc.store)
+			}
+			for _, want := range []string{
+				tc.engine,
+				tc.driverPkg,
+				tc.driverCtor,
+				"gorm.io/gorm",
+				"GORM",
+				"gorm_<resource>_repository.go",
+				"gorm_client",
+				"AutoMigrate",
+				"gorm.DeletedAt",
+				"autoIncrement",
+				"WithTransaction",
+				"DATABASE_URL",
+				"DB_HOST",
+				"go build ./...",
+			} {
+				if !strings.Contains(s, want) {
+					t.Errorf("Go+%s GORM store section missing %q", tc.engine, want)
+				}
+			}
+			// No raw-SQL dialect leftovers: GORM owns placeholders/upserts, so the
+			// block must not prescribe ON CONFLICT or $1 placeholders. (pgx and
+			// golang-migrate may appear only as explicit "do NOT use" negations.)
+			for _, forbid := range []string{"ON CONFLICT", "$1, $2", "BIGSERIAL"} {
+				if strings.Contains(s, forbid) {
+					t.Errorf("Go+%s GORM store section must not mention %q (raw-SQL leftover)", tc.engine, forbid)
+				}
+			}
+			// The block names MONGO_* only to FORBID it; it must not SET one.
+			if strings.Contains(s, "MONGO_URI") || strings.Contains(s, "MONGO_DATABASE") {
+				t.Errorf("Go+%s store section must not prescribe MONGO_* env vars", tc.engine)
+			}
+		})
 	}
 }
 

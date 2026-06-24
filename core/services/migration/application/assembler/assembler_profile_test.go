@@ -817,6 +817,55 @@ func TestAssemble_GoSQL_EnvExample(t *testing.T) {
 	}
 }
 
+// TestAssemble_PythonSQL_EnvExample proves the Python + SQL (SQLAlchemy 2.0 async)
+// deliverable — for both the PostgreSQL ("postgres") and MySQL/MariaDB ("mysql")
+// stores — emits a per-service SQL .env.example (DATABASE_URL / DB_*) INSTEAD of the
+// Motor MONGO_* .env.example, with ZERO MONGO_* variables. Both stores share the
+// same .env shape (SQLAlchemy async URL). It is the Python homologue of
+// TestAssemble_GoSQL_EnvExample.
+func TestAssemble_PythonSQL_EnvExample(t *testing.T) {
+	for _, store := range []string{"postgres", "mysql"} {
+		t.Run(store, func(t *testing.T) {
+			root := buildSkeletonFixture(t)
+
+			a := New(root, false, "python", "grpc", store)
+			artifacts := []InputFile{
+				{Path: "python/services/user/domain/user.py", Content: "class User: ...\n"},
+			}
+			files, err := a.Assemble(artifacts)
+			if err != nil {
+				t.Fatalf("Assemble: %v", err)
+			}
+
+			// The .env.example lands under core/ after the python/→core/ rename.
+			envPath := "core/services/user/.env.example"
+			var env string
+			for _, f := range files {
+				if f.Path == envPath {
+					env = string(f.Content)
+				}
+			}
+			if env == "" {
+				t.Fatalf("Python+%s deliverable missing %s", store, envPath)
+			}
+			// Content: DATABASE_URL + discrete DB_* present, zero MONGO_* prescribed.
+			for _, want := range []string{"DATABASE_URL", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "user_db", "SQLAlchemy"} {
+				if !strings.Contains(env, want) {
+					t.Errorf("Python+%s .env.example missing %q", store, want)
+				}
+			}
+			if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
+				t.Errorf("Python+%s .env.example must not prescribe MONGO_* vars", store)
+			}
+			for _, secret := range knownSecrets {
+				if strings.Contains(env, secret) {
+					t.Errorf("Python+%s .env.example leaked known secret %q", store, secret)
+				}
+			}
+		})
+	}
+}
+
 // TestAssemble_NodeProfile proves the Node profile bundles ONLY the generated
 // TypeScript artifacts (renamed node/→core/) plus the neutral buf configs and
 // protos, and contains ZERO Go (go.mod/Makefile/.go) and ZERO Python (.py) —

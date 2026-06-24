@@ -162,14 +162,17 @@ func IsGenerableProtocol(lang TargetLanguage, transport Transport) bool {
 // persistence layer against that database engine (profile doc + generator prompt
 // + worker storeSection + assembler config behaviour exist and are certified).
 //
-// v1 state: Go is the only language with a real SQL persistence profile. The
-// certified SQL engines for Go are PostgreSQL AND MariaDB (= the MySQL/MariaDB
+// v1 state: Go and Python are the languages with a real SQL persistence profile.
+// The certified SQL engines for Go are PostgreSQL AND MariaDB (= the MySQL/MariaDB
 // family, slot 3) — both via the SAME GORM models/repos (gorm.io/gorm with
 // gorm.io/driver/postgres or gorm.io/driver/mysql selected by the store; the GORM
 // models live in infrastructure/repositories and map to/from the domain types,
-// schema applied by AutoMigrate). Every generable language keeps MongoDB (the
-// original path, unchanged). Python/Node/Rust + SQL are still holes. Any new cell
-// (a new SQL engine for Go, or SQL for another language) must be added here AND
+// schema applied by AutoMigrate). Python mirrors this with SQLAlchemy 2.0 (async):
+// one set of DeclarativeBase models/repos in infrastructure/repositories serves
+// PostgreSQL (asyncpg) AND MySQL/MariaDB (aiomysql), the async engine/URL selected
+// by the store, schema applied by create_all. Every generable language keeps
+// MongoDB (the original path, unchanged). Node/Rust + SQL are still holes. Any new
+// cell (a new SQL engine, or SQL for another language) must be added here AND
 // given a storeSection prompt + assembler config + a certified run.
 var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}{
 	TargetLanguageGo: {
@@ -178,7 +181,9 @@ var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}
 		TargetDatabaseMariaDB:  {}, // MySQL/MariaDB family (wire-compatible single target)
 	},
 	TargetLanguagePython: {
-		TargetDatabaseMongoDB: {},
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // SQLAlchemy 2.0 async + asyncpg
+		TargetDatabaseMariaDB:  {}, // SQLAlchemy 2.0 async + aiomysql (MySQL/MariaDB family)
 	},
 	TargetLanguageNode: {
 		TargetDatabaseMongoDB: {},

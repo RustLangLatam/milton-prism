@@ -95,6 +95,14 @@ func (a *Assembler) isGoHTTP() bool {
 // isPython reports whether this Assembler targets the Python output profile.
 func (a *Assembler) isPython() bool { return a.profile == "python" }
 
+// isPythonSQL reports whether this Assembler targets a Python + SQL deliverable
+// (SQLAlchemy 2.0 async). Both "postgres" and "mysql" (MySQL/MariaDB) are SQLAlchemy
+// cells in v1 and emit the same DATABASE_URL/DB_* .env (0 MONGO_*), matching the
+// SQLAlchemy repos the generator wrote. It is the Python homologue of isGoSQL.
+func (a *Assembler) isPythonSQL() bool {
+	return a.isPython() && (a.store == "postgres" || a.store == "mysql")
+}
+
 // isPythonHTTP reports whether this Assembler targets the Python HTTP-native
 // (FastAPI) deliverable (Python profile + HTTP transport). The gRPC server
 // bootstrap and runtime gRPC proto stubs are excluded for this cell — the FastAPI
@@ -400,7 +408,15 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// .env.example paths are rewritten to core/services/<svc>/.env.example by the
 	// rename step below, matching the Go per-service placement.
 	if a.isPython() {
-		if err := generatePythonConfigExamples(merged); err != nil {
+		// Persistence-config variant: Python + SQL (PostgreSQL or MySQL/MariaDB, both
+		// via SQLAlchemy 2.0 async) emits a per-service SQL .env.example (DATABASE_URL
+		// / DB_*, zero MONGO_*) matching the SQLAlchemy repos the generator wrote;
+		// Python + MongoDB (default) keeps the Motor .env.example.
+		if a.isPythonSQL() {
+			if err := generatePythonSQLConfigExamples(merged); err != nil {
+				return nil, fmt.Errorf("assembler: python sql config examples: %w", err)
+			}
+		} else if err := generatePythonConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: python config examples: %w", err)
 		}
 	}

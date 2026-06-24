@@ -4,9 +4,10 @@ import "testing"
 
 // TestIsGenerableDatabase proves the (language, database) persistence matrix that
 // backs the MIG111 guard in CreateMigration. v1: Go persists to MongoDB, PostgreSQL
-// AND MySQL/MariaDB (PostgreSQL + MySQL/MariaDB via the same GORM layer); every
-// other generable language persists to MongoDB only. SQL is a hole for every
-// non-Go language. A non-generable language is false for every database.
+// AND MySQL/MariaDB (SQL via the same GORM layer); Python persists to MongoDB,
+// PostgreSQL AND MySQL/MariaDB (SQL via the same SQLAlchemy 2.0 async layer);
+// Node/Rust persist to MongoDB only. SQL is a hole for Node/Rust. A non-generable
+// language is false for every database.
 func TestIsGenerableDatabase(t *testing.T) {
 	cases := []struct {
 		name string
@@ -18,7 +19,8 @@ func TestIsGenerableDatabase(t *testing.T) {
 		{"go_postgres", TargetLanguageGo, TargetDatabasePostgres, true},   // ← v1 SQL cell (GORM)
 		{"go_mariadb", TargetLanguageGo, TargetDatabaseMariaDB, true},     // ← v1 SQL cell (GORM, same models)
 		{"python_mongodb", TargetLanguagePython, TargetDatabaseMongoDB, true},
-		{"python_postgres_hole", TargetLanguagePython, TargetDatabasePostgres, false},
+		{"python_postgres", TargetLanguagePython, TargetDatabasePostgres, true}, // ← v1 SQL cell (SQLAlchemy)
+		{"python_mariadb", TargetLanguagePython, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (SQLAlchemy, same models)
 		{"node_mongodb", TargetLanguageNode, TargetDatabaseMongoDB, true},
 		{"node_postgres_hole", TargetLanguageNode, TargetDatabasePostgres, false},
 		{"rust_mongodb", TargetLanguageRust, TargetDatabaseMongoDB, true},

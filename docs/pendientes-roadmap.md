@@ -1,5 +1,50 @@
 # Pendientes / Roadmap — backend
 
+## Eje BASE DE DATOS — Python + {PostgreSQL, MySQL/MariaDB} vía SQLAlchemy 2.0 async (HECHO, 2026-06-24)
+
+**Objetivo:** la capa de persistencia SQL de **Python** usa **SQLAlchemy 2.0 (async)**
+como ORM, cubriendo **PostgreSQL Y MySQL/MariaDB** con **los MISMOS modelos/repos**
+(driver/URL distinto por store), espejando la celda Go-GORM. Sin cambio de
+proto/gateway: el enum `TargetDatabase` (MONGODB=1/POSTGRES=2/MARIADB=3) ya viajaba;
+`MARIADB`→token `mysql` (ya existía en `databaseStoreToken`/`detectedEngineStore`).
+
+**Decisión:** SQLAlchemy 2.0 async (`sqlalchemy[asyncio]` + `asyncpg` para Postgres /
+`aiomysql` para MySQL). Modelos `DeclarativeBase` (`Mapped[...]`/`mapped_column`) viven
+en `infrastructure/repositories`, NO en domain; repos implementan los MISMOS ports
+(`Protocol`) mapeando domain↔modelo; engine async por driver/URL según store; esquema
+por `Base.metadata.create_all`; soft-delete columna nullable `delete_time`; PK
+autoincrement `id: Mapped[int]`. Reusa el patrón "ORM + driver" del `ormStoreSection`
+(Go-GORM) con un `sqlAlchemyStoreSection` paralelo.
+
+**Archivos (sin commitear):**
+- `core/services/migration/domain/domain.go` — `generableDatabaseByLanguage`
+  Python→{MONGODB,**POSTGRES,MARIADB**}.
+- `core/services/migration/domain/errors.go` + `pkg/gateway/common/error/migration_errors.go` —
+  comentarios/MIG111 actualizados (Go y Python soportan SQL; Node/Rust solo Mongo).
+- `core/worker/generation/infrastructure/agent/workspace.go` — `pySQLAlchemyStores{postgres,mysql}`
+  + `sqlAlchemyStoreSection` (modelos DeclarativeBase en infra, repos por port, engine async
+  por store, create_all, pool); `storeSection` ramifica go→GORM / python→SQLAlchemy / resto=hole.
+- `core/services/migration/application/assembler/assembler.go` + `assembler_config.go` —
+  `isPythonSQL` + `generatePythonSQLConfigExamples`/`pythonSQLServiceEnvExample` (`.env.example`
+  con `DATABASE_URL`/`DB_*`, 0 `MONGO_*`).
+- Docs: `milton-prism-python-profile.md` (§A.12 SQLAlchemy + scope/§A.10) y
+  `...-prompt-python.md` / `...-prompt-python-http.md` (ramifican por store).
+- Tests: `store_section_test.go` (`TestStoreSection_PythonSQLAlchemy`, hole→node/rust),
+  `generable_database_test.go` (python_postgres/python_mariadb=true), `database_axis_test.go`
+  (Python+Postgres/MySQL→accept, Node+Postgres→MIG111), `assembler_profile_test.go`
+  (`TestAssemble_PythonSQL_EnvExample`).
+
+**GATES:** G1 Python+Postgres/Python+MariaDB→200, Node/Rust+SQL→400 (MIG111),
+Python+Mongo sigue 200; G2 worker `profile=python store=postgres`/`store=mysql`→READY;
+G3 deliverable con repos SQLAlchemy (DeclarativeBase, engine async, create_all) +
+`pyproject` sqlalchemy+asyncpg/aiomysql + `.env` DATABASE_URL/DB_* (0 MONGO_) + compileall;
+G4 Python+Mongo (Motor) y Go-SQL (GORM) sin regresión; G5 `go build ./...` + tests verdes.
+
+**SIGUIENTE:** Node Prisma, Rust SeaORM — reusar el patrón "ORM + driver" del
+`ormStoreSection`/`sqlAlchemyStoreSection`.
+
+---
+
 ## Eje BASE DE DATOS — Go + {PostgreSQL, MySQL/MariaDB} vía GORM (HECHO, 2026-06-23)
 
 **Objetivo:** la capa de persistencia SQL de Go pasa de **raw-SQL (pgx)** a la
@@ -62,13 +107,13 @@ Patrón "ORM + driver" reutilizable (helper `sqlStore{engine,driverPkg,driverCto
   scaffold compartido; compila y no está cableado en el user service GORM. Candidato a
   poda futura del assembler.
 
-**SIGUIENTE:** Python SQLAlchemy (postgres+mysql), Node Prisma, Rust SeaORM.
+**SIGUIENTE:** ~~Python SQLAlchemy (postgres+mysql)~~ (HECHO 2026-06-24, ver sección arriba), Node Prisma, Rust SeaORM.
 
 **NOTA mig46:** la celda raw-pgx Go+Postgres queda obsoleta (reemplazada por GORM); el
 storeSection/assembler/doc ya no emiten pgx. Las celdas vivas son Go+GORM (Postgres/MySQL).
 
-**PASO SIGUIENTE:** (1) **Python SQLAlchemy** (postgres+mysql), (2) **Node Prisma**,
-(3) **Rust SeaORM** — reusar el patrón "ORM + driver" del `ormStoreSection`; (4) frontend
+**PASO SIGUIENTE:** (1) ~~**Python SQLAlchemy** (postgres+mysql)~~ HECHO 2026-06-24, (2) **Node Prisma**,
+(3) **Rust SeaORM** — reusar el patrón "ORM + driver" del `ormStoreSection`/`sqlAlchemyStoreSection`; (4) frontend
 tile MySQL/MariaDB en el panel React (follow-up, fuera del backend); (5) relajar guarda
 UNSPECIFIED (MIG105) para exponer Auto (ya cableado en el worker).
 

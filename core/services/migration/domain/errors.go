@@ -43,9 +43,10 @@ const (
 	// ErrCodeUnsupportedDatabase: the requested (language, database) cell is not in
 	// the persistence matrix (IsGenerableDatabase). Rejected at creation so a
 	// migration never targets a database engine the generator cannot emit. v1
-	// supports Go + {MongoDB, PostgreSQL} and every other language + MongoDB only;
-	// MySQL/MariaDB and SQL for non-Go languages are holes, so MIG111 fires for
-	// e.g. Go + MySQL, Python + PostgreSQL, or any unknown engine.
+	// supports Go + {MongoDB, PostgreSQL, MariaDB} (GORM) and Python + {MongoDB,
+	// PostgreSQL, MariaDB} (SQLAlchemy); Node/Rust support MongoDB only. SQL for
+	// Node/Rust is a hole, so MIG111 fires for e.g. Node + PostgreSQL, Rust + MySQL,
+	// or any unknown engine.
 	ErrCodeUnsupportedDatabase = "MIG111"
 )
 
@@ -73,9 +74,10 @@ var (
 	// ErrInvalidOrderBy: order_by names a field outside the allowlist.
 	ErrInvalidOrderBy = newError(ErrCodeInvalidOrderBy, "Failure_Invalid_Order_By")
 	// ErrUnsupportedDatabase: the requested (language, database) combination is not
-	// generable (see IsGenerableDatabase). v1 supports Go + {MongoDB, PostgreSQL}
-	// and every other language + MongoDB only. Rejected at creation so a migration
-	// never targets a database engine the generator cannot emit.
+	// generable (see IsGenerableDatabase). v1 supports Go + {MongoDB, PostgreSQL,
+	// MariaDB} (GORM) and Python + {MongoDB, PostgreSQL, MariaDB} (SQLAlchemy);
+	// Node/Rust support MongoDB only. Rejected at creation so a migration never
+	// targets a database engine the generator cannot emit.
 	ErrUnsupportedDatabase = newError(ErrCodeUnsupportedDatabase, "Failure_Unsupported_Database")
 )
 

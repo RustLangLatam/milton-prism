@@ -214,6 +214,76 @@ JWT_SECRET=<your-jwt-secret>
 `, name, name, name, db, port)
 }
 
+// generatePythonSQLConfigExamples appends a SQL `.env.example` file to each
+// generated Python service directory for a Python + SQL deliverable (SQLAlchemy
+// 2.0 async over PostgreSQL or MySQL/MariaDB). It is the SQL homologue of
+// generatePythonConfigExamples (the Motor .env.example): a Python + SQL service
+// persists with SQLAlchemy, so its config is a DATABASE_URL / DB_* .env rather
+// than the MONGO_* variables. The same .env shape serves both engines
+// (DATABASE_URL is the SQLAlchemy async URL; only its scheme differs between
+// asyncpg and aiomysql — documented inline). Zero MONGO_* variables ever appear.
+//
+// MUST run on the assembled map BEFORE the python/ → core/ rename (same as the
+// Motor path), so service dirs are still keyed under python/services/<svc>/. Every
+// value is a placeholder; assertNoSecrets guards each file.
+func generatePythonSQLConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedPythonServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as the Motor path).
+		port := 50051 + i
+		content := pythonSQLServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("python/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// pythonSQLServiceEnvExample returns the content of a .env.example for one
+// generated Python + SQL (SQLAlchemy async) microservice. It documents BOTH the
+// single DATABASE_URL async URL (the SQLAlchemy DSN — PostgreSQL or MySQL/MariaDB
+// form) and the discrete DB_* parts, the gRPC server bind, and the auth secret.
+// Every value is a placeholder; no MONGO_* variable is present.
+func pythonSQLServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via SQLAlchemy 2.0 async)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory: pydantic-settings reads .env from the process cwd) and fill
+# in the placeholder values. Alternatively export these as environment variables
+# before starting the service: python -m services.%s
+#
+# This service persists via the SQLAlchemy 2.0 async ORM. The same models/repos
+# serve PostgreSQL and MySQL/MariaDB — only the async driver and the DATABASE_URL
+# scheme differ. Schema is applied by Base.metadata.create_all on startup. Set
+# EITHER the single DATABASE_URL async URL OR the discrete DB_* parts.
+
+# ── Database (SQLAlchemy async) ──────────────────────────────────────────────
+# DATABASE_URL: full SQLAlchemy async URL. Examples:
+#   PostgreSQL: postgresql+asyncpg://user:password@host:5432/%s
+#   MySQL/MariaDB: mysql+aiomysql://user:password@host:3306/%s?charset=utf8mb4
+DATABASE_URL=<your-database-url>
+DB_HOST=localhost
+# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
+DB_PORT=5432
+DB_USER=<your-db-user>
+DB_PASSWORD=<your-db-password>
+DB_NAME=%s
+
+# ── gRPC server (GrpcServerConfig) ─────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+GRPC_MAX_WORKERS=10
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, name, db, db, db, port)
+}
+
 // generateNodeConfigExamples appends a `.env.example` file to each generated
 // Node service directory in the assembled map. It is the TypeScript homologue of
 // the Go config.toml.example and the Python .env.example: the Node deliverable

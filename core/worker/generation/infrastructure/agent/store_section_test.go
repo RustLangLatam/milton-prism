@@ -79,18 +79,78 @@ func TestStoreSection_GoSQLGORM(t *testing.T) {
 	}
 }
 
-// TestStoreSection_SQLHoleIsHonest asserts that a SQL store on a non-Go profile
-// (a v1 hole) yields an honest "NOT generated in v1" note that forbids guessing,
-// rather than a fabricated implementation. (Unreachable while the
+// TestStoreSection_PythonSQLAlchemy asserts the Python + PostgreSQL and Python +
+// MySQL/MariaDB blocks instruct the generator to emit a SQLAlchemy 2.0 async
+// persistence layer: DeclarativeBase models in infrastructure/repositories mapping
+// to/from domain, repos implementing the same Protocol ports, an async engine
+// builder selecting the driver by store, create_all schema, nullable soft-delete,
+// autoincrement IDs, and DATABASE_URL/DB_* env with zero MONGO_* — the v1 certified
+// Python SQL cells. Both stores share the same SQLAlchemy scaffold; only the async
+// driver + URL scheme differ.
+func TestStoreSection_PythonSQLAlchemy(t *testing.T) {
+	cases := []struct {
+		store     string
+		engine    string
+		driverPkg string
+		urlScheme string
+	}{
+		{"postgres", "PostgreSQL", "asyncpg", "postgresql+asyncpg"},
+		{"mysql", "MySQL/MariaDB", "aiomysql", "mysql+aiomysql"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.store, func(t *testing.T) {
+			s := agent.StoreSection("python", tc.store)
+			if s == "" {
+				t.Fatalf("StoreSection(python, %q) is empty, want a SQLAlchemy block", tc.store)
+			}
+			for _, want := range []string{
+				tc.engine,
+				tc.driverPkg,
+				tc.urlScheme,
+				"SQLAlchemy 2.0",
+				"sqlalchemy[asyncio]",
+				"DeclarativeBase",
+				"sqlalchemy_<resource>_repository.py",
+				"sqlalchemy_client",
+				"create_all",
+				"AsyncSession",
+				"with_transaction",
+				"DATABASE_URL",
+				"DB_HOST",
+				"python -m compileall",
+			} {
+				if !strings.Contains(s, want) {
+					t.Errorf("Python+%s SQLAlchemy store section missing %q", tc.engine, want)
+				}
+			}
+			// SQLAlchemy owns the dialect; the block must not prescribe raw SQL
+			// placeholders or sync drivers (named only to forbid).
+			for _, forbid := range []string{"ON CONFLICT", "BIGSERIAL", "Alembic versions"} {
+				if strings.Contains(s, forbid) {
+					t.Errorf("Python+%s SQLAlchemy store section must not mention %q", tc.engine, forbid)
+				}
+			}
+			if strings.Contains(s, "MONGO_URI") || strings.Contains(s, "MONGO_DATABASE") {
+				t.Errorf("Python+%s store section must not prescribe MONGO_* env vars", tc.engine)
+			}
+		})
+	}
+}
+
+// TestStoreSection_SQLHoleIsHonest asserts that a SQL store on a non-Go, non-Python
+// profile (a v1 hole) yields an honest "NOT generated in v1" note that forbids
+// guessing, rather than a fabricated implementation. (Unreachable while the
 // IsGenerableDatabase guard rejects the cell at creation, but kept self-consistent.)
 func TestStoreSection_SQLHoleIsHonest(t *testing.T) {
-	s := agent.StoreSection("python", "postgres")
-	if s == "" {
-		t.Fatal("StoreSection(python, postgres) is empty, want an honest hole note")
-	}
-	for _, want := range []string{"NOT generated in v1", "Do NOT guess", "MongoDB"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("SQL-hole store section missing %q; got:\n%s", want, s)
+	for _, profile := range []string{"node", "rust"} {
+		s := agent.StoreSection(profile, "postgres")
+		if s == "" {
+			t.Fatalf("StoreSection(%q, postgres) is empty, want an honest hole note", profile)
+		}
+		for _, want := range []string{"NOT generated in v1", "Do NOT guess", "MongoDB"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("SQL-hole store section (%s) missing %q; got:\n%s", profile, want, s)
+			}
 		}
 	}
 }

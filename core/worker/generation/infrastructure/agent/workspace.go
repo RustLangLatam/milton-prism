@@ -517,19 +517,57 @@ var goSQLStores = map[string]sqlStore{
 	},
 }
 
+// pySQLAlchemyStore describes a Python SQLAlchemy persistence cell as an
+// (engine, async driver, URL scheme) triple. It is the SQLAlchemy homologue of
+// sqlStore (Go-GORM): the prompt block is assembled by sqlAlchemyStoreSection so
+// the same SQLAlchemy DeclarativeBase models/repos serve every wire-compatible
+// engine (one set of models/repos for PostgreSQL AND MySQL/MariaDB) and only the
+// (driver pip dependency, async URL scheme, DSN example) facts change per store.
+type pySQLAlchemyStore struct {
+	engine     string // human label, e.g. "PostgreSQL", "MySQL/MariaDB"
+	driverPkg  string // pip dependency for the async driver, e.g. "asyncpg"
+	urlScheme  string // SQLAlchemy async URL scheme, e.g. "postgresql+asyncpg"
+	dsnExample string // a placeholder DATABASE_URL example for the .env note
+}
+
+// pySQLAlchemyStores maps the worker store token to its (SQLAlchemy engine, async
+// driver) facts for the Python profile. POSTGRES→postgres token, MARIADB→mysql
+// token (see databaseStoreToken) — the SAME homologation as goSQLStores. Both
+// rows reuse the SAME SQLAlchemy models/repos; only the async driver + URL scheme
+// differ, exactly as the Go-GORM cell only changes its driver import + DSN.
+var pySQLAlchemyStores = map[string]pySQLAlchemyStore{
+	"postgres": {
+		engine:     "PostgreSQL",
+		driverPkg:  "asyncpg",
+		urlScheme:  "postgresql+asyncpg",
+		dsnExample: "postgresql+asyncpg://user:password@host:5432/<svc>_db",
+	},
+	"mysql": {
+		engine:     "MySQL/MariaDB",
+		driverPkg:  "aiomysql",
+		urlScheme:  "mysql+aiomysql",
+		dsnExample: "mysql+aiomysql://user:password@host:3306/<svc>_db?charset=utf8mb4",
+	},
+}
+
 // storeSection returns the prose block injected into the combined prompt that
 // pins the persistence engine the generated service must target. It is the store
 // homologue of transportSection / authSchemeSection: profile- and store-aware.
 //
-// v1 GENERATES SQL persistence (via GORM) for Go + {PostgreSQL, MySQL/MariaDB};
-// "mongodb" (the original path) injects nothing so the established Mongo behaviour
-// is unchanged:
+// v1 GENERATES SQL persistence for Go (via GORM) AND Python (via SQLAlchemy 2.0
+// async) on + {PostgreSQL, MySQL/MariaDB}; "mongodb" (the original path) injects
+// nothing so the established Mongo behaviour is unchanged:
 //   - "mongodb"/"" → no block; the profile doc's MongoDB persistence is used as-is.
 //   - (go, "postgres" | "mysql") → a GORM persistence layer (ormStoreSection):
 //     GORM models in infrastructure/repositories mapping to/from the domain types,
 //     repos implementing the SAME ports, a gorm_client builder that opens the
 //     connection with the driver chosen by store, AutoMigrate, gorm.DeletedAt
 //     soft-delete, autoincrement IDs, .env with DATABASE_URL/DB_*.
+//   - (python, "postgres" | "mysql") → a SQLAlchemy 2.0 async persistence layer
+//     (sqlAlchemyStoreSection): DeclarativeBase models in infrastructure/repositories
+//     mapping to/from the domain types, repos implementing the SAME ports, an async
+//     engine builder selecting the driver/URL by store, create_all schema, nullable
+//     soft-delete column, autoincrement IDs, .env with DATABASE_URL/DB_*.
 //   - any other (profile, store) SQL cell → an HONEST note that SQL for that cell
 //     is a v1 hole and must not be guessed (this path is unreachable while the
 //     IsGenerableDatabase guard rejects those cells at creation, but kept so the
@@ -539,18 +577,26 @@ func storeSection(outputProfile, store string) string {
 	if s == "" || s == "mongodb" {
 		return ""
 	}
-	// Only Go + a known SQL store is generated in v1. Every other SQL cell is a hole.
-	cell, ok := goSQLStores[s]
-	if outputProfile != "go" || !ok {
-		return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
-			"The target database for this migration is **" + s + "** on the **" + outputProfile +
-			"** profile, which v1 of the generator does NOT emit (v1 generates SQL persistence " +
-			"only for Go + PostgreSQL and Go + MySQL/MariaDB; every other language uses MongoDB). " +
-			"Do NOT guess a " + s + " implementation. Generate the MongoDB persistence layer as the " +
-			"profile doc describes and add a single TODO note stating that `" + s + "` was requested " +
-			"but is a v1 generation hole and must be wired manually. Be honest about the gap.\n\n"
+	// Go + a known SQL store → GORM. Python + a known SQL store → SQLAlchemy. Every
+	// other (profile, store) SQL cell is a v1 hole.
+	if outputProfile == "go" {
+		if cell, ok := goSQLStores[s]; ok {
+			return ormStoreSection(cell)
+		}
 	}
-	return ormStoreSection(cell)
+	if outputProfile == "python" {
+		if cell, ok := pySQLAlchemyStores[s]; ok {
+			return sqlAlchemyStoreSection(cell)
+		}
+	}
+	return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
+		"The target database for this migration is **" + s + "** on the **" + outputProfile +
+		"** profile, which v1 of the generator does NOT emit (v1 generates SQL persistence " +
+		"for Go (GORM) and Python (SQLAlchemy) on PostgreSQL and MySQL/MariaDB; every other " +
+		"language uses MongoDB). Do NOT guess a " + s + " implementation. Generate the MongoDB " +
+		"persistence layer as the profile doc describes and add a single TODO note stating that `" +
+		s + "` was requested but is a v1 generation hole and must be wired manually. Be honest " +
+		"about the gap.\n\n"
 }
 
 // ormStoreSection renders the GORM persistence block for one SQL cell. The text
@@ -571,6 +617,29 @@ func ormStoreSection(c sqlStore) string {
 		"- **Soft-delete** with `gorm.DeletedAt` (embed `gorm.DeletedAt \\`gorm:\"index\"\\`` or `gorm.Model`) so deletes are logical, matching the Mongo path's soft-delete semantics.\n" +
 		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
 		"- Ensure `go.mod` requires `gorm.io/gorm` and `" + c.driverPkg + "`. The persistence code MUST be part of the build gate (`go build ./...` + `go test ./...`): the repos compile and at least one repository round-trip is exercised (a `sqlmock`/in-memory or container-backed test is acceptable).\n\n"
+}
+
+// sqlAlchemyStoreSection renders the SQLAlchemy 2.0 (async) persistence block for
+// one Python SQL cell. It is the Python homologue of ormStoreSection (Go-GORM):
+// the text is parametrised by the (engine, async driver, URL scheme) facts so
+// PostgreSQL and MySQL/MariaDB share one scaffold (one set of DeclarativeBase
+// models/repos, only the driver dependency + async URL scheme differ), keeping the
+// "models in infra, repos implement the ports, mapping domain↔model, schema from
+// the models" shape identical across languages.
+func sqlAlchemyStoreSection(c pySQLAlchemyStore) string {
+	return "## Persistence: " + c.engine + " (SQLAlchemy 2.0 async)\n\n" +
+		"This service persists to **" + c.engine + "** via the **SQLAlchemy 2.0 async ORM** (`sqlalchemy[asyncio]`), NOT MongoDB. " +
+		"Replace the MongoDB persistence layer (Motor/pymongo) the profile doc describes with an idiomatic async SQLAlchemy layer. Mandatory constraints:\n" +
+		"- Use **SQLAlchemy 2.0 in async mode** (`sqlalchemy.ext.asyncio`: `create_async_engine`, `AsyncSession`, `async_sessionmaker`) with the async driver **`" + c.driverPkg + "`**. Build the engine from the URL scheme **`" + c.urlScheme + "://…`**. Do NOT use raw SQL/psycopg2 sync, Motor, or another ORM — SQLAlchemy is the canon for this cell, and the SAME models/repos serve PostgreSQL and MySQL/MariaDB unchanged (only the driver dependency + URL scheme differ; the dialect is SQLAlchemy's job).\n" +
+		"- **Domain stays proto.** Domain types remain aliases of the proto messages / dataclasses (Canon §5.1). The SQLAlchemy **models are SEPARATE `DeclarativeBase` mapped classes (`Mapped[...]` / `mapped_column(...)`) and live in `services/<svc>/infrastructure/repositories`** (e.g. `models.py`), NEVER in domain. Each repository maps domain↔ORM-model on read/write — domain is never decorated with ORM mappings.\n" +
+		"- For EACH owned resource (a proto message in `owned_resources`) write a SQLAlchemy model + a repository `services/<svc>/infrastructure/repositories/sqlalchemy_<resource>_repository.py` that implements the SAME repository `Protocol` ports the service already defines (same async method signatures the gRPC/HTTP handlers depend on) — only the implementation changes from Motor to SQLAlchemy. The async repo uses an injected `AsyncSession` / `async_sessionmaker`.\n" +
+		"- Add a shared async engine builder `shared/sqlalchemy_client/engine.py` that builds the `AsyncEngine` once from config (the Motor-client homologue), selects the driver/URL by config/store, configures the pool (`pool_size`/`max_overflow`/`pool_pre_ping=True`), exposes an `async_sessionmaker[AsyncSession]`, and pings on startup (`SELECT 1`). Wire it where the Motor client was wired (in `wire.py`).\n" +
+		"- Add an async transaction manager implementing the `TransactionManager` Protocol's `async def with_transaction(self, fn)` over `async with session.begin(): …` (a session-scoped `AsyncSession`), None-safe and mirroring the existing Motor transaction abstraction, so service-layer transaction boundaries are unchanged.\n" +
+		"- **Schema via `create_all`.** On startup the engine builder runs `async with engine.begin() as conn: await conn.run_sync(Base.metadata.create_all)` over the DeclarativeBase metadata so the schema is derived from the models (homologue of GORM AutoMigrate) — do NOT hand-write Alembic `versions/*.py` migrations and do NOT emulate a `system_counters` collection. Model FK columns/indexes come from the `cross_service_fks` in the boundary spec (FK columns/indexes only, never a hard cross-service FK constraint, per the data-ownership boundary).\n" +
+		"- **IDs** are autoincrement by the ORM: the model PK is `id: Mapped[int] = mapped_column(primary_key=True)` (SQLAlchemy autoincrements an integer PK; Canon §5.3) — never an emulated counter. Use snake_case `__tablename__`/column names.\n" +
+		"- **Soft-delete** with a nullable timestamp column (`delete_time: Mapped[datetime | None] = mapped_column(nullable=True)`); deletes set the column instead of issuing a hard `DELETE`, and reads filter `delete_time IS NULL`, matching the Mongo path's soft-delete semantics.\n" +
+		"- Read the connection config from `.env` / environment: emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
+		"- Ensure `pyproject.toml` requires `sqlalchemy[asyncio]` and `" + c.driverPkg + "` (NOT motor/pymongo). The persistence code MUST pass the build gate (`python -m compileall` + importing the app/repos): the repos compile/import and at least one repository round-trip is exercised (an aiosqlite/in-memory or container-backed async test is acceptable).\n\n"
 }
 
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.

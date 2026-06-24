@@ -78,6 +78,8 @@ enum TargetLanguage {
   TARGET_LANGUAGE_PYTHON = 3;
   // Node/TypeScript — GENERATOR HOLE. Registered for selection; no profile/prompt yet.
   TARGET_LANGUAGE_NODE = 4;
+  // Java — grpc-java (gRPC) / Spring Boot (HTTP); JPA for SQL.
+  TARGET_LANGUAGE_JAVA = 5;
 }
 
 // TargetDatabase is the storage engine for the generated microservices.

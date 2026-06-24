@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Milton Prism — Java generation-profile dependency pre-warm POM.
+
+  This throwaway project exists ONLY to populate the shared local Maven repo
+  (-Dmaven.repo.local=/usr/local/m2) at image build time, so that the runtime
+  generation agent's `mvn package` of a generated Spring Boot + grpc-java
+  service does not download hundreds of jars at generation time (which would
+  blow the task wall-clock budget).
+
+  Keep the dependency/plugin set in LOCKSTEP with milton-prism-java-profile.md.
+  Pinned versions keep the warm cache deterministic across image rebuilds.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Spring Boot parent: brings the spring-boot-dependencies BOM + plugin mgmt. -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.3</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.milton.prism</groupId>
+  <artifactId>prism-java-warm</artifactId>
+  <version>0.0.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <grpc.version>1.73.0</grpc.version>
+    <protobuf.version>4.31.1</protobuf.version>
+    <protoc-gen-grpc-java.version>1.73.0</protoc-gen-grpc-java.version>
+    <jjwt.version>0.12.6</jjwt.version>
+    <postgresql.version>42.7.7</postgresql.version>
+    <mariadb.version>3.5.3</mariadb.version>
+    <annotations-api.version>6.0.53</annotations-api.version>
+    <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
+    <protobuf-maven-plugin.version>0.6.1</protobuf-maven-plugin.version>
+  </properties>
+
+  <dependencies>
+    <!-- ── Spring / HTTP profile ──────────────────────────────────────────── -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- ── SQL profile ────────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>${postgresql.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mariadb.jdbc</groupId>
+      <artifactId>mariadb-java-client</artifactId>
+      <version>${mariadb.version}</version>
+    </dependency>
+
+    <!-- ── Mongo profile ──────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-mongodb</artifactId>
+    </dependency>
+
+    <!-- ── Auth profile ───────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+      <version>${jjwt.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+      <version>${jjwt.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+      <version>${jjwt.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- ── gRPC profile ───────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-protobuf</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-stub</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>${protobuf.version}</version>
+    </dependency>
+    <!-- Required to compile gRPC-generated stubs under JDK 9+ (javax.annotation.Generated). -->
+    <dependency>
+      <groupId>org.apache.tomcat</groupId>
+      <artifactId>annotations-api</artifactId>
+      <version>${annotations-api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <extensions>
+      <!-- os-maven-plugin: resolves ${os.detected.classifier} for the protoc/grpc artifacts. -->
+      <extension>
+        <groupId>kr.motd.maven</groupId>
+        <artifactId>os-maven-plugin</artifactId>
+        <version>${os-maven-plugin.version}</version>
+      </extension>
+    </extensions>
+    <plugins>
+      <!-- protobuf-maven-plugin: drives protoc + protoc-gen-grpc-java codegen.
+           Both the protoc :exe and the protoc-gen-grpc-java :exe are GLIBC
+           binaries from Maven Central (they need /lib64/ld-linux-x86-64.so.2).
+           The Dockerfile installs the `gcompat` glibc shim (+ libstdc++/libgcc)
+           on the musl Alpine base, so those binaries EXECUTE. We therefore BIND
+           both codegen goals here and run them as part of the warm `mvn package`:
+             * `compile`        → protoc emits the message stubs
+             * `compile-custom` → protoc-gen-grpc-java emits `*Grpc.java`
+           Running real codegen at image-build time doubles as the gRPC-on-musl
+           acceptance proof: if the shim were missing the `compile-custom` goal
+           would fail the build with a loader error. It also fully warms the
+           protoc/grpc :exe artifacts into /usr/local/m2 (no generation-time
+           download). The proto driving this lives at src/main/proto/warm.proto. -->
+      <plugin>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>${protobuf-maven-plugin.version}</version>
+        <configuration>
+          <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
+          <pluginId>grpc-java</pluginId>
+          <pluginArtifact>io.grpc:protoc-gen-grpc-java:${protoc-gen-grpc-java.version}:exe:${os.detected.classifier}</pluginArtifact>
+        </configuration>
+        <executions>
+          <execution>
+            <id>codegen</id>
+            <goals>
+              <goal>compile</goal>
+              <goal>compile-custom</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- spring-boot-maven-plugin comes from the parent; declared here so its
+           repackage deps are warmed too. Skip repackage to keep the build fast;
+           we only need the dependency graph cached, not a runnable fat jar. -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

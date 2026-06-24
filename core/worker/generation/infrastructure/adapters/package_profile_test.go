@@ -22,6 +22,7 @@ func TestProfileAndPromptForLanguage_Node(t *testing.T) {
 		{"python", migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON, "python", "docs/prism/milton-prism-service-generator-prompt-python.md"},
 		{"node", migrationv1.TargetLanguage_TARGET_LANGUAGE_NODE, "node", "docs/prism/milton-prism-service-generator-prompt-node.md"},
 		{"rust", migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST, "rust", "docs/prism/milton-prism-service-generator-prompt-rust.md"},
+		{"java", migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA, "java", "docs/prism/milton-prism-service-generator-prompt-java.md"},
 		{"unspecified_defaults_go", migrationv1.TargetLanguage_TARGET_LANGUAGE_UNSPECIFIED, "go", "docs/prism/milton-prism-service-generator-prompt.md"},
 	}
 	for _, tc := range cases {
@@ -60,6 +61,9 @@ func TestProfileAndPromptForLanguage_GoHTTP(t *testing.T) {
 		// Rust + HTTP selects the axum-native prompt; Rust + gRPC keeps the Tonic prompt.
 		{"rust_http", migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST, migrationv1.Transport_TRANSPORT_HTTP, "rust", "docs/prism/milton-prism-service-generator-prompt-rust-http.md"},
 		{"rust_grpc", migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST, migrationv1.Transport_TRANSPORT_GRPC, "rust", "docs/prism/milton-prism-service-generator-prompt-rust.md"},
+		// Java + HTTP selects the Spring Boot HTTP-native prompt; Java + gRPC keeps the grpc-java prompt.
+		{"java_http", migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA, migrationv1.Transport_TRANSPORT_HTTP, "java", "docs/prism/milton-prism-service-generator-prompt-java-http.md"},
+		{"java_grpc", migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA, migrationv1.Transport_TRANSPORT_GRPC, "java", "docs/prism/milton-prism-service-generator-prompt-java.md"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

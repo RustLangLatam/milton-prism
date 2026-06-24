@@ -1004,6 +1004,8 @@ func profileSourceRoot(profile string) string {
 		return "node"
 	case "rust":
 		return "rust"
+	case "java":
+		return "java"
 	default:
 		return ""
 	}
@@ -1038,6 +1040,8 @@ func outputProfileLabel(tc *migrationv1.TargetConfig) string {
 		return "node"
 	case migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST:
 		return "rust"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA:
+		return "java"
 	default:
 		return "go"
 	}
@@ -1122,6 +1126,11 @@ func generatorPromptRef(profile string, transport migrationv1.Transport) string 
 			return "docs/prism/milton-prism-service-generator-prompt-rust-http.md"
 		}
 		return "docs/prism/milton-prism-service-generator-prompt-rust.md"
+	case "java":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-java-http.md"
+		}
+		return "docs/prism/milton-prism-service-generator-prompt-java.md"
 	default:
 		if transport == migrationv1.Transport_TRANSPORT_HTTP {
 			return "docs/prism/milton-prism-service-generator-prompt-go-http.md"

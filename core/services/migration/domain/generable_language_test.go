@@ -16,7 +16,8 @@ func TestIsGenerableLanguage_Node(t *testing.T) {
 		{"go", TargetLanguageGo, true},
 		{"python", TargetLanguagePython, true},
 		{"node", TargetLanguageNode, true}, // filled profile
-		{"rust", TargetLanguageRust, true}, // ← the new filled profile (E10)
+		{"rust", TargetLanguageRust, true}, // filled profile (E10)
+		{"java", TargetLanguageJava, true}, // ← the new filled profile (5th language)
 		{"unspecified", TargetLanguageUnspecified, false},
 	}
 	for _, tc := range cases {

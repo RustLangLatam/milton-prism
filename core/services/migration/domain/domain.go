@@ -74,6 +74,7 @@ const (
 	TargetLanguageRust               = migrationv1.TargetLanguage_TARGET_LANGUAGE_RUST
 	TargetLanguagePython             = migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON
 	TargetLanguageNode               = migrationv1.TargetLanguage_TARGET_LANGUAGE_NODE
+	TargetLanguageJava               = migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA
 	TargetDatabaseUnspecified        = migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED
 	TargetDatabaseMongoDB            = migrationv1.TargetDatabase_TARGET_DATABASE_MONGODB
 	TargetDatabasePostgres           = migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES
@@ -95,14 +96,16 @@ const (
 // lockstep with outputProfileLabel/generatorPromptRef in the application layer.
 // Node (TypeScript + gRPC) and Rust (Tonic + gRPC) are filled profiles: profile
 // doc + generator prompt + assembler skeleton/rename, each certified by a real
-// containerised run. Any future enum value without a real generator profile must
-// be left out of this map so a migration targeting it is rejected rather than
-// silently emitting Go.
+// containerised run. Java (Spring Boot + grpc-java/Spring Boot HTTP, JPA/Spring
+// Data) is a filled profile too. Any future enum value without a real generator
+// profile must be left out of this map so a migration targeting it is rejected
+// rather than silently emitting Go.
 var generableTargetLanguages = map[TargetLanguage]struct{}{
 	TargetLanguageGo:     {},
 	TargetLanguagePython: {},
 	TargetLanguageNode:   {},
 	TargetLanguageRust:   {},
+	TargetLanguageJava:   {},
 }
 
 // IsGenerableLanguage reports whether lang has a code generator profile today.
@@ -138,6 +141,10 @@ var supportedProtocolByLanguage = map[TargetLanguage]map[Transport]struct{}{
 		TransportHTTP: {},
 	},
 	TargetLanguageRust: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguageJava: {
 		TransportGRPC: {},
 		TransportHTTP: {},
 	},
@@ -204,6 +211,11 @@ var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}
 		TargetDatabaseMongoDB:  {},
 		TargetDatabasePostgres: {}, // SeaORM (sqlx-postgres) + sea-orm-migration
 		TargetDatabaseMariaDB:  {}, // SeaORM (sqlx-mysql), MySQL/MariaDB family
+	},
+	TargetLanguageJava: {
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // Spring Data JPA (Hibernate) + org.postgresql:postgresql
+		TargetDatabaseMariaDB:  {}, // Spring Data JPA (Hibernate) + mariadb-java-client (MySQL/MariaDB family)
 	},
 }
 

@@ -605,6 +605,159 @@ JWT_SECRET=<your-jwt-secret>
 `, name, db, db, db, port)
 }
 
+// generateJavaConfigExamples appends a `.env.example` to each generated Java
+// service directory (the Spring Boot homologue of the Go config.toml.example /
+// the Python/Node/Rust .env.example). It is the Mongo path: a Java + MongoDB
+// service persists via Spring Data MongoDB, so its config carries the SPRING_DATA_
+// MONGODB_* / MONGO_* variables. It is the Java homologue of generateRustConfigExamples.
+//
+// MUST run on the assembled map BEFORE the java/ → core/ rename, so service dirs
+// are still keyed under java/services/<svc>/. Every value is a placeholder;
+// assertNoSecrets guards each file.
+func generateJavaConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedJavaServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as Go/Python/Node/Rust).
+		port := 50051 + i
+		content := javaServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("java/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedJavaServices scans assembled paths for
+// java/services/<name>/ directories and returns sorted service name slugs
+// (e.g. "user"). Runs BEFORE the java/ → core/ rename, so paths are still
+// java/-rooted. It is the Java homologue of discoverGeneratedRustServices.
+func discoverGeneratedJavaServices(assembled map[string][]byte) []string {
+	const prefix = "java/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under java/services/
+		}
+		name := rest[:slash]
+		if name == "" || name == "target" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// javaServiceEnvExample returns the content of a .env.example for one generated
+// Java microservice (Spring Data MongoDB persistence). Every value is a
+// placeholder — never a real credential. It is the Java homologue of
+// rustServiceEnvExample.
+func javaServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# These variables are consumed by the Spring Boot config (application.yml /
+# environment) plus the JWT_SECRET read by the auth filter/interceptor.
+
+# ── MongoDB (Spring Data MongoDB) ──────────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
+MONGO_URI=<your-mongo-uri>
+MONGO_DATABASE=%s
+
+# ── gRPC server (grpc-java) ────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, db, port)
+}
+
+// generateJavaSQLConfigExamples appends a SQL `.env.example` file to each generated
+// Java service directory for a Java + SQL deliverable (Spring Data JPA over
+// PostgreSQL or MySQL/MariaDB). It is the SQL homologue of generateJavaConfigExamples
+// (the Spring Data MongoDB .env.example): a Java + SQL service persists with JPA, so
+// its config is a DATABASE_URL / SPRING_DATASOURCE_* .env rather than the MONGO_*
+// variables. The same .env shape serves both engines (only the jdbc: URL scheme
+// differs between jdbc:postgresql and jdbc:mariadb — documented inline). Zero MONGO_*
+// variables ever appear. It is the Java homologue of generateRustSQLConfigExamples.
+//
+// MUST run on the assembled map BEFORE the java/ → core/ rename (same as the
+// native-Mongo path), so service dirs are still keyed under java/services/<svc>/.
+// Every value is a placeholder; assertNoSecrets guards each file.
+func generateJavaSQLConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedJavaServices(assembled)
+
+	for i, svc := range services {
+		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
+		port := 50051 + i
+		content := javaSQLServiceEnvExample(svc, port)
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("java/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// javaSQLServiceEnvExample returns the content of a .env.example for one generated
+// Java + SQL (Spring Data JPA / Hibernate) microservice. It documents BOTH the
+// single DATABASE_URL JDBC URL (the JPA DataSource URL — PostgreSQL or MySQL/MariaDB
+// form) and the Spring SPRING_DATASOURCE_* parts, the gRPC server bind, and the auth
+// secret. Every value is a placeholder; no MONGO_* variable is present.
+func javaSQLServiceEnvExample(name string, port int) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via Spring Data JPA)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# This service persists via Spring Data JPA (Hibernate). The same @Entity classes
+# + JpaRepository adapters serve PostgreSQL and MySQL/MariaDB — only the JDBC driver
+# dependency in pom.xml (org.postgresql:postgresql / org.mariadb.jdbc:mariadb-java-client)
+# and the jdbc: URL scheme differ. Schema is applied by Hibernate ddl-auto=update on
+# startup. Spring reads the DataSource from SPRING_DATASOURCE_* (or DATABASE_URL).
+
+# ── Database (Spring Data JPA / Hibernate) ───────────────────────────────────
+# DATABASE_URL / SPRING_DATASOURCE_URL: full JDBC URL. Examples:
+#   PostgreSQL: jdbc:postgresql://host:5432/%s
+#   MySQL/MariaDB: jdbc:mariadb://host:3306/%s
+DATABASE_URL=<your-jdbc-url>
+SPRING_DATASOURCE_URL=<your-jdbc-url>
+SPRING_DATASOURCE_USERNAME=<your-db-user>
+SPRING_DATASOURCE_PASSWORD=<your-db-password>
+DB_NAME=%s
+
+# ── gRPC server (grpc-java) ────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`, name, db, db, db, port)
+}
+
 // detectTokenRole scans the generated main.go for the service to determine
 // whether it acts as a token generator (emitter) or validator. The scan
 // matches the package-qualified constant "config.TokenRoleGenerator" as it

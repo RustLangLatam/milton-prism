@@ -332,6 +332,11 @@ func profileAndPromptForLanguage(lang migrationv1.TargetLanguage, transport migr
 			return "rust", "docs/prism/milton-prism-service-generator-prompt-rust-http.md"
 		}
 		return "rust", "docs/prism/milton-prism-service-generator-prompt-rust.md"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA:
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "java", "docs/prism/milton-prism-service-generator-prompt-java-http.md"
+		}
+		return "java", "docs/prism/milton-prism-service-generator-prompt-java.md"
 	default:
 		if transport == migrationv1.Transport_TRANSPORT_HTTP {
 			return "go", "docs/prism/milton-prism-service-generator-prompt-go-http.md"

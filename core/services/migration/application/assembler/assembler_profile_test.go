@@ -1066,7 +1066,7 @@ func TestAssemble_DocsOpenAPISurvives(t *testing.T) {
 		{Path: "protobuf/buf.docs.gen.yaml", Content: "version: v2\n"},
 	}
 
-	for _, profile := range []string{"go", "", "python", "node", "rust"} {
+	for _, profile := range []string{"go", "", "python", "node", "rust", "java"} {
 		a := New(root, false, profile, "grpc", "")
 		files, err := a.Assemble(artifacts)
 		if err != nil {
@@ -1307,6 +1307,290 @@ func TestAssemble_RustSQL_EnvExample(t *testing.T) {
 			for _, secret := range knownSecrets {
 				if strings.Contains(env, secret) {
 					t.Errorf("Rust+%s .env.example leaked known secret %q", store, secret)
+				}
+			}
+		})
+	}
+}
+
+// TestAssemble_JavaProfile proves the Java profile bundles ONLY the generated Java
+// artifacts (renamed java/→core/) plus the neutral buf configs and protos, and
+// contains ZERO Go (go.mod/Makefile/.go), ZERO Python (.py), ZERO Node (.ts/
+// package.json) and ZERO Rust (.rs/Cargo.toml) — the monorepo has no java/ skeleton,
+// so the whole Go and Python trees are pruned. The __pipeline__ Go gateway error map
+// artifact and any Maven target/ build output are dropped. It is the Java homologue
+// of TestAssemble_RustProfile.
+func TestAssemble_JavaProfile(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true /* useApiGateway ignored for java */, "java", "grpc", "")
+
+	artifacts := []InputFile{
+		{Path: "java/pom.xml", Content: "<project><modules></modules></project>\n"},
+		{Path: "java/services/user/pom.xml", Content: "<project><artifactId>user</artifactId></project>\n"},
+		{Path: "java/services/user/src/main/java/com/example/user/UserApplication.java", Content: "package com.example.user;\n"},
+		{Path: "java/services/user/src/main/java/com/example/user/domain/User.java", Content: "package com.example.user.domain;\n"},
+		{Path: "protobuf/proto/user/v1/user.proto", Content: "syntax = \"proto3\";\n"},
+		// The __pipeline__ aggregator emits a Go gateway error map even for non-Go
+		// migrations; it must be dropped from a Java deliverable.
+		{Path: "pkg/gateway/common/error/message_error.go", Content: "package message_error\n"},
+		// Stray Python/Node/Rust artifacts must never leak into a Java deliverable.
+		{Path: "java/services/user/legacy.py", Content: "x = 1\n"},
+		{Path: "java/services/user/legacy.ts", Content: "export const x = 1;\n"},
+		{Path: "java/services/user/legacy.rs", Content: "fn main() {}\n"},
+		{Path: "java/package.json", Content: "{}\n"},
+		// Maven build output must never be captured/carried.
+		{Path: "java/services/user/target/classes/com/example/user/UserApplication.class", Content: "CLASS\n"},
+		{Path: "java/services/user/target/user-1.0.jar", Content: "JAR\n"},
+		// A vendored .m2 local repository must be dropped at assembly.
+		{Path: ".m2/repository/org/springframework/spring-core/6.0.0/spring-core-6.0.0.jar", Content: "JAR\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// MUST contain the generated Maven workspace, renamed java/→core/, plus protos
+	// and the neutral buf config.
+	for _, want := range []string{
+		"core/pom.xml",
+		"core/services/user/pom.xml",
+		"core/services/user/src/main/java/com/example/user/UserApplication.java",
+		"core/services/user/src/main/java/com/example/user/domain/User.java",
+		"protobuf/proto/user/v1/user.proto",
+		"protobuf/buf.yaml",
+	} {
+		if !set[want] {
+			t.Errorf("java deliverable missing expected file %q", want)
+		}
+	}
+	// No path may remain under java/ after the rename.
+	for p := range set {
+		if p == "java" || strings.HasPrefix(p, "java/") {
+			t.Errorf("java deliverable still has un-renamed java/ path %q", p)
+		}
+	}
+	// MUST NOT contain any Go/Python/Node/Rust source file, the Go/Python source
+	// trees, the Go-only buf gen config, Maven target/, .class/.jar, or a .m2 tree.
+	for p := range set {
+		if strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".py") ||
+			strings.HasSuffix(p, ".ts") || strings.HasSuffix(p, ".rs") {
+			t.Errorf("java deliverable leaked non-Java source file %q", p)
+		}
+		switch p {
+		case "go.mod", "go.sum", "Makefile", "package.json", "core/package.json":
+			t.Errorf("java deliverable leaked %q", p)
+		}
+		if strings.HasPrefix(p, "pkg/") || strings.HasPrefix(p, "api-gateway/") {
+			t.Errorf("java deliverable leaked Go-tree path %q", p)
+		}
+		if p == "protobuf/buf.go.gen.yaml" {
+			t.Errorf("java deliverable leaked Go-only buf config %q", p)
+		}
+		if p == "protobuf/buf.docs.gen.yaml" || p == "protobuf/buf.deliverable.openapi.yaml" {
+			t.Errorf("java deliverable leaked internal buf template %q", p)
+		}
+		if strings.Contains(p, "/target/") || strings.HasPrefix(p, "core/target/") {
+			t.Errorf("java deliverable leaked Maven target/ path %q", p)
+		}
+		if strings.HasSuffix(p, ".class") || strings.HasSuffix(p, ".jar") {
+			t.Errorf("java deliverable leaked compiled Maven artifact %q", p)
+		}
+		for _, seg := range strings.Split(p, "/") {
+			if seg == ".m2" {
+				t.Errorf("java deliverable leaked .m2 local repository path %q", p)
+			}
+		}
+	}
+}
+
+// TestAssemble_JavaHTTP_ExcludesGRPCBootstrap proves the Java HTTP-native (Spring
+// Boot) deliverable drops the grpc-java server bootstrap (a main/wire that calls
+// io.grpc.Server / ServerBuilder / .addService) and the grpc generated-service base
+// impl (anything under infrastructure/grpc/), while keeping the Spring Boot
+// @SpringBootApplication entrypoint, the @RestController handlers, the POJO/record
+// domain types, and the protos. It is the Java homologue of the Rust/Node/Python-HTTP
+// gRPC-bootstrap-exclusion tests.
+func TestAssemble_JavaHTTP_ExcludesGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, false, "java", "http", "")
+
+	artifacts := []InputFile{
+		// Spring Boot app + REST handlers — MUST survive (no grpc call).
+		{Path: "java/services/user/src/main/java/com/example/user/UserApplication.java", Content: "package com.example.user;\n@SpringBootApplication\npublic class UserApplication { public static void main(String[] a){ SpringApplication.run(UserApplication.class, a); } }\n"},
+		{Path: "java/services/user/src/main/java/com/example/user/infrastructure/http/UserController.java", Content: "package com.example.user.infrastructure.http;\n@RestController\npublic class UserController {}\n"},
+		{Path: "java/services/user/src/main/java/com/example/user/domain/User.java", Content: "package com.example.user.domain;\npublic record User(long identifier) {}\n"},
+		{Path: "java/services/user/pom.xml", Content: "<project></project>\n"},
+		// grpc-java-specific artifacts — MUST be dropped.
+		{Path: "java/services/user/src/main/java/com/example/user/infrastructure/grpc/UserGrpcService.java", Content: "package com.example.user.infrastructure.grpc;\n// generated grpc base impl\n"},
+		{Path: "java/services/legacy/src/main/java/com/example/legacy/LegacyServer.java", Content: "import io.grpc.Server;\nimport io.grpc.ServerBuilder;\nServer s = ServerBuilder.forPort(50051).addService(svc).build();\n"},
+		{Path: "protobuf/proto/milton_prism/services/user/v1/user_service.proto", Content: "syntax = \"proto3\";\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	// Spring Boot app, controller, domain record and proto survive (java/→core/ rename).
+	for _, want := range []string{
+		"core/services/user/src/main/java/com/example/user/UserApplication.java",
+		"core/services/user/src/main/java/com/example/user/infrastructure/http/UserController.java",
+		"core/services/user/src/main/java/com/example/user/domain/User.java",
+		"protobuf/proto/milton_prism/services/user/v1/user_service.proto",
+	} {
+		if !set[want] {
+			t.Errorf("java-http deliverable missing expected file %q", want)
+		}
+	}
+
+	// The grpc handler dir and the grpc-java server bootstrap must be absent.
+	for _, gone := range []string{
+		"core/services/user/src/main/java/com/example/user/infrastructure/grpc/UserGrpcService.java",
+		"core/services/legacy/src/main/java/com/example/legacy/LegacyServer.java",
+	} {
+		if set[gone] {
+			t.Errorf("java-http deliverable leaked grpc-java artifact %q", gone)
+		}
+	}
+
+	// Defence: no /infrastructure/grpc/ path survives.
+	for p := range set {
+		if strings.Contains(p, "/infrastructure/grpc/") {
+			t.Errorf("java-http deliverable leaked grpc dir %q", p)
+		}
+	}
+}
+
+// TestAssemble_JavaGRPC_KeepsGRPCBootstrap proves the grpc-java exclusion is scoped
+// to the HTTP cell: a Java + gRPC deliverable keeps its grpc server bootstrap and the
+// infrastructure/grpc/ handler (no regression to the certified Java gRPC cell).
+func TestAssemble_JavaGRPC_KeepsGRPCBootstrap(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "java", "grpc", "")
+	artifacts := []InputFile{
+		{Path: "java/services/user/src/main/java/com/example/user/UserServer.java", Content: "import io.grpc.ServerBuilder;\nServerBuilder.forPort(50051).addService(svc).build();\n"},
+		{Path: "java/services/user/src/main/java/com/example/user/infrastructure/grpc/UserGrpcService.java", Content: "// grpc servicer impl\n"},
+	}
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+	for _, want := range []string{
+		"core/services/user/src/main/java/com/example/user/UserServer.java",
+		"core/services/user/src/main/java/com/example/user/infrastructure/grpc/UserGrpcService.java",
+	} {
+		if !set[want] {
+			t.Errorf("java-grpc deliverable dropped %q (HTTP exclusion leaked into gRPC cell)", want)
+		}
+	}
+}
+
+// TestAssemble_JavaProfile_EnvExamplePerService proves the Java deliverable ships a
+// per-service .env.example (the Spring Boot homologue of Go's config.toml.example)
+// under core/services/<svc>/, carrying the MONGO_/GRPC_/JWT_SECRET placeholders.
+func TestAssemble_JavaProfile_EnvExamplePerService(t *testing.T) {
+	root := buildSkeletonFixture(t)
+
+	a := New(root, true, "java", "grpc", "")
+	artifacts := []InputFile{
+		{Path: "java/services/user/src/main/java/com/example/user/UserApplication.java", Content: "package com.example.user;\n"},
+		{Path: "java/services/order/src/main/java/com/example/order/OrderApplication.java", Content: "package com.example.order;\n"},
+	}
+
+	files, err := a.Assemble(artifacts)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	set := pathSet(files)
+
+	for _, want := range []string{
+		"core/services/user/.env.example",
+		"core/services/order/.env.example",
+	} {
+		if !set[want] {
+			t.Errorf("java deliverable missing %q", want)
+		}
+	}
+	for p := range set {
+		if strings.HasPrefix(p, "java/") {
+			t.Errorf("java deliverable still has un-renamed path %q", p)
+		}
+	}
+
+	var userEnv string
+	for _, f := range files {
+		if f.Path == "core/services/user/.env.example" {
+			userEnv = string(f.Content)
+		}
+	}
+	for _, frag := range []string{
+		"MONGO_URI=",
+		"MONGO_DATABASE=user_db",
+		"GRPC_HOST=",
+		"GRPC_PORT=",
+		"JWT_SECRET=",
+	} {
+		if !strings.Contains(userEnv, frag) {
+			t.Errorf("user .env.example missing %q; got:\n%s", frag, userEnv)
+		}
+	}
+	if !strings.Contains(strings.ToLower(userEnv), "copy this file to .env") {
+		t.Errorf("user .env.example missing copy-to-.env header; got:\n%s", userEnv)
+	}
+	for _, secret := range knownSecrets {
+		if strings.Contains(userEnv, secret) {
+			t.Errorf("user .env.example leaked known secret %q", secret)
+		}
+	}
+}
+
+// TestAssemble_JavaSQL_EnvExample proves the Java + SQL (Spring Data JPA) deliverable
+// — for both the PostgreSQL ("postgres") and MySQL/MariaDB ("mysql") stores — emits a
+// per-service SQL .env.example (DATABASE_URL / SPRING_DATASOURCE_*) with ZERO MONGO_*
+// variables, INSTEAD of the Spring-Data-MongoDB .env.example. Both stores share the
+// same .env shape (JDBC URL). It is the Java homologue of TestAssemble_RustSQL_EnvExample.
+func TestAssemble_JavaSQL_EnvExample(t *testing.T) {
+	for _, store := range []string{"postgres", "mysql"} {
+		t.Run(store, func(t *testing.T) {
+			root := buildSkeletonFixture(t)
+
+			a := New(root, true, "java", "grpc", store)
+			artifacts := []InputFile{
+				{Path: "java/services/user/src/main/java/com/example/user/UserApplication.java", Content: "package com.example.user;\n"},
+			}
+			files, err := a.Assemble(artifacts)
+			if err != nil {
+				t.Fatalf("Assemble: %v", err)
+			}
+
+			envPath := "core/services/user/.env.example"
+			var env string
+			for _, f := range files {
+				if f.Path == envPath {
+					env = string(f.Content)
+				}
+			}
+			if env == "" {
+				t.Fatalf("Java+%s deliverable missing %s", store, envPath)
+			}
+			for _, want := range []string{"DATABASE_URL", "SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD", "DB_NAME", "user_db", "Spring Data JPA"} {
+				if !strings.Contains(env, want) {
+					t.Errorf("Java+%s .env.example missing %q", store, want)
+				}
+			}
+			if strings.Contains(env, "MONGO_URI") || strings.Contains(env, "MONGO_DATABASE") {
+				t.Errorf("Java+%s .env.example must not prescribe MONGO_* vars", store)
+			}
+			for _, secret := range knownSecrets {
+				if strings.Contains(env, secret) {
+					t.Errorf("Java+%s .env.example leaked known secret %q", store, secret)
 				}
 			}
 		})

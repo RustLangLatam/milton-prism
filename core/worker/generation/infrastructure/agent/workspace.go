@@ -329,6 +329,15 @@ func promptProfileBindings(outputProfile, protocol string) (langLabel, profileDo
 		return "Rust (Tonic)",
 			"docs/prism/milton-prism-rust-profile.md",
 			"write protos, write the service code and build.rs (tonic-build codegen), run cargo build (the build gate), run cargo test."
+	case "java":
+		if protocol == "http" {
+			return "Java (Spring Boot HTTP-native)",
+				"docs/prism/milton-prism-java-profile.md",
+				"write the authoritative .proto WITH google.api.http annotations on every RPC (the OpenAPI is derived from it), write service code exposing a Spring Boot application (a `@SpringBootApplication` main + `@RestController` handlers) as the ONLY entrypoint (NO io.grpc.Server, NO ServerBuilder, NO BindableService), run mvn -B package (the build gate), run mvn test."
+		}
+		return "Java (gRPC, grpc-java)",
+			"docs/prism/milton-prism-java-profile.md",
+			"write protos, run the protobuf/grpc-java codegen, write the service code (grpc-java BindableService + server bootstrap), run mvn -B package (the build gate), run mvn test."
 	default:
 		if protocol == "http" {
 			return "Go (HTTP-native)",
@@ -379,6 +388,15 @@ func transportSection(outputProfile, protocol string) string {
 			"- Model the request/response messages as Rust structs (serde `Serialize`/`Deserialize`) equivalent to the proto messages; you do NOT need the tonic-generated server trait at runtime when the transport is axum.\n" +
 			"- Implement axum handlers that map 1:1 to the proto RPCs and honour the `google.api.http` routes (method + path). Map domain errors to HTTP status codes via the service's error module (`shared::errors` / a `mapError`-style `IntoResponse`).\n" +
 			"- The build gate is `cargo build` (the whole workspace compiles) + `cargo test`. There is NO expectation of a tonic server, `transport::Server`, or `add_service`.\n\n"
+	}
+	if outputProfile == "java" {
+		return "## Transport: HTTP (native, Spring Boot)\n\n" +
+			"This service speaks HTTP, not gRPC. Mandatory constraints:\n" +
+			"- The ONLY entrypoint is a Spring Boot application (a `@SpringBootApplication` class with `SpringApplication.run(...)`) exposing `@RestController` handlers. Do NOT create a gRPC server, do NOT use `io.grpc.Server` / `ServerBuilder` / a `BindableService`, do NOT bootstrap grpc-java, and do NOT register any API gateway.\n" +
+			"- You MUST still write the authoritative `.proto` at the canonical path `protobuf/proto/milton_prism/services/<svc>/v1/...` with a `google.api.http` annotation on EVERY RPC. The platform derives `docs/openapi.yaml` from those annotations — without them the OpenAPI is empty.\n" +
+			"- Model the request/response messages as POJOs / Java records (or Jackson DTOs) equivalent to the proto messages; you do NOT need the grpc-java generated service base classes at runtime when the transport is Spring Boot HTTP.\n" +
+			"- Implement `@RestController` handler methods that map 1:1 to the proto RPCs and honour the `google.api.http` routes (method + path via `@GetMapping`/`@PostMapping`/etc.). Map domain errors to HTTP status codes via the service's error module (`@ControllerAdvice`/`ResponseStatusException`).\n" +
+			"- The build gate is `mvn -B package` + `mvn test`. There is NO expectation of an `io.grpc.Server`, `ServerBuilder`, or `BindableService`.\n\n"
 	}
 	return "## Transport: HTTP (native)\n\n" +
 		"This service speaks HTTP, not gRPC. Mandatory constraints:\n" +
@@ -462,6 +480,14 @@ func authSchemeSection(outputProfile, protocol, authScheme, authSigAlg string) s
 			wire = "a tonic `Interceptor` attached to the service"
 		}
 		gate = "`cargo build` + `cargo test`"
+	case "java":
+		lib = "`io.jsonwebtoken:jjwt` (or `spring-boot-starter-oauth2-resource-server`)"
+		if protocol == "http" {
+			wire = "a Spring `OncePerRequestFilter` registered in the Security filter chain (`SecurityFilterChain`) covering the protected routes"
+		} else {
+			wire = "a grpc-java `ServerInterceptor` attached to the server"
+		}
+		gate = "`mvn -B package` + `mvn test`"
 	default: // go
 		lib = "`github.com/golang-jwt/jwt/v5`"
 		if protocol == "http" {
@@ -616,6 +642,43 @@ var rustSeaORMStores = map[string]rustSeaORMStore{
 	},
 }
 
+// javaJPAStore describes a Java Spring Data JPA persistence cell as an (engine,
+// JDBC driver dependency, JDBC URL scheme) triple. It is the JPA homologue of
+// sqlStore (Go-GORM), pySQLAlchemyStore (Python), nodePrismaStore (Node) and
+// rustSeaORMStore (Rust): the prompt block is assembled by jpaStoreSection so the
+// SAME `@Entity` classes + JpaRepository adapters serve every wire-compatible
+// engine (one set of entities/repos for PostgreSQL AND MySQL/MariaDB) and only the
+// (JDBC driver dependency, jdbc: URL scheme) facts change per store — Hibernate
+// auto-detects the dialect, exactly as GORM/SQLAlchemy/Prisma/SeaORM do.
+type javaJPAStore struct {
+	engine     string // human label, e.g. "PostgreSQL", "MySQL/MariaDB"
+	driverDep  string // Maven JDBC driver coordinate, e.g. "org.postgresql:postgresql"
+	jdbcScheme string // JDBC URL scheme, e.g. "jdbc:postgresql"
+	dsnExample string // a placeholder JDBC URL example for the .env note
+}
+
+// javaJPAStores maps the worker store token to its (JPA engine, JDBC driver) facts
+// for the Java profile. POSTGRES→postgres token, MARIADB→mysql token (see
+// databaseStoreToken) — the SAME homologation as the other SQL cells. Both rows
+// reuse the SAME `@Entity` classes + JpaRepository adapters; only the JDBC driver
+// dependency + URL scheme differ, exactly as the Go-GORM cell only changes its
+// driver import + DSN (Hibernate auto-detects the dialect). Java+Mongo is
+// unaffected: it stays on Spring Data MongoDB, never JPA.
+var javaJPAStores = map[string]javaJPAStore{
+	"postgres": {
+		engine:     "PostgreSQL",
+		driverDep:  "org.postgresql:postgresql",
+		jdbcScheme: "jdbc:postgresql",
+		dsnExample: "jdbc:postgresql://host:5432/<svc>_db",
+	},
+	"mysql": {
+		engine:     "MySQL/MariaDB",
+		driverDep:  "org.mariadb.jdbc:mariadb-java-client",
+		jdbcScheme: "jdbc:mariadb",
+		dsnExample: "jdbc:mariadb://host:3306/<svc>_db",
+	},
+}
+
 // storeSection returns the prose block injected into the combined prompt that
 // pins the persistence engine the generated service must target. It is the store
 // homologue of transportSection / authSchemeSection: profile- and store-aware.
@@ -676,6 +739,11 @@ func storeSection(outputProfile, store string) string {
 	if outputProfile == "rust" {
 		if cell, ok := rustSeaORMStores[s]; ok {
 			return seaORMStoreSection(cell)
+		}
+	}
+	if outputProfile == "java" {
+		if cell, ok := javaJPAStores[s]; ok {
+			return jpaStoreSection(cell)
 		}
 	}
 	return "## Persistence: " + s + " (selected; NOT generated in v1)\n\n" +
@@ -779,6 +847,30 @@ func seaORMStoreSection(c rustSeaORMStore) string {
 		"- **Soft-delete** with a nullable timestamp column (`delete_time: Option<DateTimeUtc>` / a nullable `TimestampWithTimeZone`); deletes set the column via an `ActiveModel` update instead of issuing a hard `DELETE`, and reads filter `delete_time IS NULL` (`.filter(Column::DeleteTime.is_null())`), matching the Mongo path's soft-delete semantics.\n" +
 		"- Read the connection config from `.env` / environment (via `dotenvy`/`envy`/`std::env`): emit a `.env.example` with `DATABASE_URL` (e.g. `" + c.dsnExample + "`) and/or the discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` variables. NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
 		"- Ensure the service `Cargo.toml` requires `sea-orm` (with `runtime-tokio-rustls` + **`" + c.driverFeat + "`** + the macros/`with-chrono` features it needs) and `sea-orm-migration`, NOT the `mongodb`/`bson` crates. Keep the crate set minimal (the build-cost note still applies). The persistence code MUST be part of the build gate (`cargo build` + `cargo test`): the entities + repos compile and at least one repository round-trip is exercised (a SeaORM `MockDatabase` or container-backed test is acceptable).\n\n"
+}
+
+// jpaStoreSection renders the Spring Data JPA persistence block for one Java SQL
+// cell. It is the Java homologue of ormStoreSection (Go-GORM), sqlAlchemyStoreSection
+// (Python), prismaStoreSection (Node) and seaORMStoreSection (Rust): the text is
+// parametrised by the (JDBC driver dependency, JDBC URL scheme) facts so PostgreSQL
+// and MySQL/MariaDB share ONE scaffold (one set of `@Entity` classes + JpaRepository
+// adapters, only the JDBC driver dependency + jdbc: URL scheme differ — Hibernate
+// auto-detects the dialect), keeping the "entities in infra, repos implement the
+// ports, mapping domain↔entity, schema from the entities" shape identical across
+// languages. Java+Mongo is unaffected: it stays on Spring Data MongoDB, never JPA.
+func jpaStoreSection(c javaJPAStore) string {
+	return "## Persistence: " + c.engine + " (Spring Data JPA / Hibernate)\n\n" +
+		"This service persists to **" + c.engine + "** via **Spring Data JPA** (Hibernate, `spring-boot-starter-data-jpa`), NOT MongoDB. " +
+		"Replace the MongoDB persistence layer (Spring Data MongoDB) the profile doc describes with an idiomatic Spring Data JPA layer. Mandatory constraints:\n" +
+		"- Use **Spring Data JPA** (`spring-boot-starter-data-jpa`, Hibernate provider) with the JDBC driver dependency **`" + c.driverDep + "`**. The DataSource URL uses the **`" + c.jdbcScheme + "://…`** scheme. Do NOT use raw JDBC, Spring Data MongoDB, or another ORM — JPA is the canon for this cell, and the SAME entities + repositories serve PostgreSQL and MySQL/MariaDB unchanged (only the JDBC driver dependency + URL scheme differ; Hibernate auto-detects the dialect).\n" +
+		"- **Domain stays proto.** Domain types remain aliases of the proto messages (Canon §5.1). The JPA **entities are SEPARATE `@Entity` classes (with `@Table`/`@Column` mappings) and live in `infrastructure/repositories`** (NEVER in domain). Each repository adapter maps domain↔JPA-entity on read/write — domain is never decorated with JPA annotations.\n" +
+		"- For EACH owned resource (a proto message in `owned_resources`) write a JPA `@Entity` + a Spring Data `JpaRepository<Entity, Long>` and a repository adapter in `infrastructure/repositories` that implements the SAME repository port interface the service already defines (same method signatures the gRPC/HTTP handlers depend on) — only the implementation changes from MongoDB to JPA.\n" +
+		"- Add a DataSource configuration (`@Configuration`/`application.yml`) that picks the JDBC driver + URL by store, configures the connection pool (HikariCP — `maximum-pool-size`/`minimum-idle`/`connection-timeout`), and fails fast on startup. Wire it where the Mongo client was wired. Spring's `@Transactional` carries the transaction boundaries (the Mongo transaction homologue), so service-layer boundaries are unchanged.\n" +
+		"- **Schema via Hibernate `ddl-auto=update`.** Set `spring.jpa.hibernate.ddl-auto=update` so the schema is derived from the `@Entity` classes (the GORM AutoMigrate homologue) — do NOT hand-write Flyway/Liquibase migrations and do NOT emulate a `system_counters` collection. Entity FK columns/indexes come from the `cross_service_fks` in the boundary spec (FK columns/indexes only, never a hard cross-service FK constraint, per the data-ownership boundary).\n" +
+		"- **IDs** are autoincrement by the database: the entity PK is `@Id @GeneratedValue(strategy = GenerationType.IDENTITY)` on a `Long id` (Canon §5.3) — never an emulated counter. Map the proto `uint64 identifier` to/from the entity's `Long` without losing precision. Use snake_case table/column names (`@Table(name = \"…\")`/`@Column(name = \"…\")`).\n" +
+		"- **Soft-delete** with a nullable timestamp column (`@Column(name = \"delete_time\") private Instant deleteTime;` nullable); deletes set the column instead of issuing a hard `DELETE`, and reads filter `delete_time IS NULL`, matching the Mongo path's soft-delete semantics.\n" +
+		"- Read the connection config from the environment: emit configuration for `DATABASE_URL` and/or the Spring `SPRING_DATASOURCE_URL`/`SPRING_DATASOURCE_USERNAME`/`SPRING_DATASOURCE_PASSWORD` variables (e.g. URL `" + c.dsnExample + "`). NEVER hardcode a password — a hardcoded credential is a generation defect. Do NOT emit any `MONGO_*` variable.\n" +
+		"- Ensure `pom.xml` requires `spring-boot-starter-data-jpa` and `" + c.driverDep + "`, NOT `spring-boot-starter-data-mongodb`. The persistence code MUST be part of the build gate (`mvn -B package` + `mvn test`): the entities + repos compile and at least one repository round-trip is exercised (an H2/Testcontainers-backed test is acceptable).\n\n"
 }
 
 // writeCombinedPrompt writes the -p prompt content to workspaceDir/_prompt.md.

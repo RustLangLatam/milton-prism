@@ -277,6 +277,84 @@ func isRustGRPCArtifact(path, content string) bool {
 	return false
 }
 
+// isJava reports whether this Assembler targets the Java profile.
+func (a *Assembler) isJava() bool { return a.profile == "java" }
+
+// isJavaSQL reports whether this Assembler targets a Java + SQL deliverable
+// (Spring Data JPA / Hibernate): the store is "postgres" or "mysql", so the
+// .env.example is a DATABASE_URL / SPRING_DATASOURCE_* file (zero MONGO_*) matching
+// the JPA entities/repos the generator wrote. It is the Java homologue of isGoSQL /
+// isPythonSQL / isNodeSQL / isRustSQL. Java+Mongo (the default) keeps Spring Data
+// MongoDB, NOT JPA.
+func (a *Assembler) isJavaSQL() bool {
+	return a.isJava() && (a.store == "postgres" || a.store == "mysql")
+}
+
+// isJavaHTTP reports whether this Assembler targets the Java HTTP-native (Spring
+// Boot) deliverable (Java profile + HTTP transport). The grpc-java server bootstrap
+// (io.grpc.Server / ServerBuilder / addService over a BindableService) and the
+// grpc-java generated service base classes (infrastructure/grpc/) are excluded for
+// this cell — the Spring Boot @RestController app is the sole entrypoint and the
+// messages are modelled with POJOs/records, so no grpc server bootstrap and no
+// generated grpc service base belong in the package. The grpc-api-gateway is already
+// excluded for HTTP by the download path (useApiGateway = micro && gRPC).
+func (a *Assembler) isJavaHTTP() bool {
+	return a.isJava() && a.protocol == "http"
+}
+
+// isMavenBuildArtifact reports whether p is Maven build output or a vendored local
+// repository — none of which belong in a Java deliverable: the target/ build tree
+// (at any depth), compiled .class files, packaged .jar archives, and a vendored
+// .m2/repository tree. It is the Java homologue of isCargoBuildArtifact: defence in
+// depth so a stray build artifact persisted by the agent never lands in the package.
+func isMavenBuildArtifact(p string) bool {
+	p = strings.TrimPrefix(p, "java/")
+	if p == "target" || strings.HasPrefix(p, "target/") || strings.Contains(p, "/target/") {
+		return true
+	}
+	if strings.HasSuffix(p, ".class") || strings.HasSuffix(p, ".jar") {
+		return true
+	}
+	// Vendored local Maven repository at any depth (.m2/repository/…).
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".m2" {
+			return true
+		}
+	}
+	if strings.Contains(p, "/repository/") || strings.HasPrefix(p, "repository/") {
+		// Only when it is a Maven local-repo tree (under a .m2 parent already handled
+		// above) — a bare "repository" segment elsewhere is NOT matched on purpose, so
+		// a legitimate generated service named "repository" is never dropped.
+		return strings.Contains(p, ".m2/repository/")
+	}
+	return false
+}
+
+// isJavaGRPCArtifact reports whether a generated artifact is grpc-java-specific and
+// therefore must NOT ship in a Java HTTP-native (Spring Boot) deliverable. Two cases:
+//   - any .java under an `infrastructure/grpc/` path — the grpc-java generated-service
+//     base impl (the gRPC handlers), replaced by `infrastructure/http/` (Spring Boot
+//     @RestController) for the HTTP cell.
+//   - any .java whose body bootstraps a grpc-java server: a `ServerBuilder` /
+//     `io.grpc.Server` (the server builder) or an `.addService(` call (servicer
+//     registration) — the gRPC server bootstrap/entrypoint, which the Spring Boot
+//     app replaces. Identified by content so the Spring Boot entrypoint
+//     (`@SpringBootApplication` / `SpringApplication.run`) is kept while a grpc-java
+//     bootstrap is dropped.
+func isJavaGRPCArtifact(path, content string) bool {
+	if !strings.HasSuffix(path, ".java") {
+		return false
+	}
+	if strings.Contains(path, "/infrastructure/grpc/") {
+		return true
+	}
+	if strings.Contains(content, "ServerBuilder") || strings.Contains(content, "io.grpc.Server") ||
+		strings.Contains(content, ".addService(") {
+		return true
+	}
+	return false
+}
+
 // isInternalBufTemplate reports whether path is a platform-INTERNAL buf template
 // that must never ship in a user deliverable, no matter the profile or source:
 //   - protobuf/buf.docs.gen.yaml         — generates the PLATFORM panel openapi via
@@ -307,6 +385,8 @@ func (a *Assembler) sourceRoot() string {
 		return "node"
 	case "rust":
 		return "rust"
+	case "java":
+		return "java"
 	default:
 		return ""
 	}
@@ -417,6 +497,34 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		if a.isRustHTTP() && isRustGRPCArtifact(f.Path, f.Content) {
 			continue
 		}
+		// Profile guard: a Java (Spring Boot) deliverable must never carry Go, Python,
+		// Node or Rust artifacts. Same rationale as the others — the Go error
+		// aggregator is skipped for the java profile in the pipeline, but defend here
+		// too so a stray .go/.py/.ts/.rs (or a Go/Node/Rust manifest) can never leak
+		// into a Java package. Maven build output (target/, *.class, *.jar, vendored
+		// .m2) is also dropped as defence-in-depth.
+		if a.isJava() && (strings.HasSuffix(f.Path, ".go") ||
+			strings.HasSuffix(f.Path, ".py") ||
+			strings.HasSuffix(f.Path, ".ts") ||
+			strings.HasSuffix(f.Path, ".rs") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile" ||
+			strings.HasSuffix(f.Path, "/package.json") || f.Path == "package.json" ||
+			strings.HasSuffix(f.Path, "/package-lock.json") || f.Path == "package-lock.json" ||
+			strings.HasSuffix(f.Path, "/Cargo.toml") || f.Path == "Cargo.toml" ||
+			strings.HasSuffix(f.Path, "/Cargo.lock") || f.Path == "Cargo.lock" ||
+			isMavenBuildArtifact(f.Path)) {
+			continue
+		}
+		// Profile+protocol guard: a Java HTTP-native (Spring Boot) deliverable is its
+		// own entry point and models messages with POJOs/records, so the grpc-java
+		// server bootstrap (io.grpc.Server / ServerBuilder / addService) and the
+		// generated grpc service base impl (infrastructure/grpc/) must not ship — only
+		// the Spring Boot app and its support code. The @SpringBootApplication entry
+		// point is kept (it carries no grpc server call); only grpc-bootstrap .java
+		// files and the grpc handler dir are dropped.
+		if a.isJavaHTTP() && isJavaGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
 		// Profile guard: a Go HTTP-native deliverable is its own entry point and
 		// never wires the gRPC gateway, so the grpc-gateway transcoder
 		// (*.pb.gw.go) and the gRPC server stub (*_grpc.pb.go) must not ship —
@@ -457,7 +565,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// missing imported .proto from the canonical skeleton tree so the deliverable's
 	// proto set is self-contained. Go is unaffected: its skeleton + generated *.pb.go
 	// already carry the closure as compiled stubs.
-	if a.isRust() || a.isNode() {
+	if a.isRust() || a.isNode() || a.isJava() {
 		resolveProtoImportClosure(merged, a.skeletonRoot)
 	}
 
@@ -470,7 +578,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// Go gateway main.go). They are skipped for the Python and Node profiles,
 	// which must contain zero Go scaffolding; the language-appropriate extras
 	// arrive via the generated artifacts list plus the per-profile .env.example.
-	if !a.isPython() && !a.isNode() && !a.isRust() {
+	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() {
 		// Persistence-config variant: Go + SQL (PostgreSQL or MySQL/MariaDB) emits
 		// a per-service SQL .env.example (DATABASE_URL / DB_*) matching the GORM
 		// repos the generator wrote; Go + MongoDB (default) keeps the Mongo
@@ -571,7 +679,27 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		}
 	}
 
-	// 3b. Python/Node/Rust profile: rename the source-root dir (python/, node/ or rust/) →
+	// 3a-java. Java profile: append a per-service .env.example (the Spring Boot
+	// homologue of the Go config.toml.example / Python / Node / Rust .env.example)
+	// BEFORE the java/ → core/ rename, so service dirs are still keyed under
+	// java/services/<svc>/. The emitted .env.example paths are rewritten to
+	// core/services/<svc>/.env.example by the rename step below.
+	if a.isJava() {
+		// Persistence-config variant: Java + SQL (PostgreSQL or MySQL/MariaDB, both
+		// via Spring Data JPA / Hibernate) emits a per-service SQL .env.example
+		// (DATABASE_URL / SPRING_DATASOURCE_*, zero MONGO_*) matching the JPA
+		// entities/repos the generator wrote; Java + MongoDB (default) keeps the
+		// Spring-Data-MongoDB .env.example.
+		if a.isJavaSQL() {
+			if err := generateJavaSQLConfigExamples(merged); err != nil {
+				return nil, fmt.Errorf("assembler: java sql config examples: %w", err)
+			}
+		} else if err := generateJavaConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: java config examples: %w", err)
+		}
+	}
+
+	// 3b. Python/Node/Rust/Java profile: rename the source-root dir (python/, node/, rust/ or java/) →
 	// core/ to homologate with the Go deliverable layout (Go uses core/). The
 	// Python imports are top-level packages relative to the source root and the
 	// Node imports are relative paths within the source root, so renaming the
@@ -641,6 +769,9 @@ func (a *Assembler) skipDir(rel string) bool {
 	if a.isRust() {
 		return skipDirRust(rel)
 	}
+	if a.isJava() {
+		return skipDirJava(rel)
+	}
 	return skipDir(rel)
 }
 
@@ -667,6 +798,9 @@ func (a *Assembler) isSkeletonFile(rel string) bool {
 	}
 	if a.isRust() {
 		return isSkeletonFileRust(rel)
+	}
+	if a.isJava() {
+		return isSkeletonFileJava(rel)
 	}
 	// Go HTTP-native: exclude the whole pkg/gateway/ subtree EXCEPT
 	// pkg/gateway/common/error/ (pure error maps the REST handlers reuse). The
@@ -1085,6 +1219,77 @@ func isSkeletonFileRust(rel string) bool {
 	// template. The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL
 	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
 	// platform pipeline) are all excluded — none belong in a Rust project.
+	switch rel {
+	case "protobuf/buf.yaml":
+		return true
+	}
+
+	return false
+}
+
+// ── Java (Spring Boot) profile skeleton filters ───────────────────────────────
+
+// skipDirJava returns true for directories that should be skipped entirely when
+// assembling a Java deliverable. The monorepo has NO java/ skeleton tree: a Java
+// deliverable is built entirely from generated artifacts (the agent writes a
+// complete Maven workspace under java/) plus the neutral buf configs at protobuf/
+// root. So this prunes the whole Go monorepo (core/, pkg/, api-gateway/), the
+// whole Python tree (python/), all proto source trees, and repo-wide noise. It is
+// the Java homologue of skipDirRust.
+func skipDirJava(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a Java deliverable.
+		"core", "pkg", "api-gateway",
+		// Entire Python tree — never in a Java deliverable.
+		"python",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFileJava.
+		"protobuf/proto",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any Maven build output / cache dir at any depth (defensive).
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "target", "node_modules", ".m2":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFileJava returns true when the file at rel belongs in the Java
+// deliverable skeleton. It admits ONLY the neutral buf configs at protobuf/
+// root — there is no java/ source skeleton in the monorepo. No Go, Python, Node
+// or Rust file can pass this filter: every admitted path is an explicit non-code
+// buf config. All Java source, pom.xml, and protos arrive via the generated
+// artifacts list, never from the repo skeleton. It is the Java homologue of
+// isSkeletonFileRust.
+func isSkeletonFileJava(rel string) bool {
+	// Hard exclude: never emit Go, Python, Node or Rust files in a Java deliverable.
+	if strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, ".py") ||
+		strings.HasSuffix(rel, ".pyc") || strings.HasSuffix(rel, ".ts") ||
+		strings.HasSuffix(rel, ".rs") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a Java user
+	// can regenerate their stubs against the shipped protos with their own gen
+	// template. The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL
+	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
+	// platform pipeline) are all excluded — none belong in a Java project.
 	switch rel {
 	case "protobuf/buf.yaml":
 		return true

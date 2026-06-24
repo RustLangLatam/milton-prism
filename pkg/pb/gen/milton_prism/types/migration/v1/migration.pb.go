@@ -149,6 +149,8 @@ const (
 	TargetLanguage_TARGET_LANGUAGE_PYTHON TargetLanguage = 3
 	// Node/TypeScript — GENERATOR HOLE. Registered for selection; no profile/prompt yet.
 	TargetLanguage_TARGET_LANGUAGE_NODE TargetLanguage = 4
+	// Java — grpc-java (gRPC) / Spring Boot (HTTP); JPA for SQL.
+	TargetLanguage_TARGET_LANGUAGE_JAVA TargetLanguage = 5
 )
 
 // Enum value maps for TargetLanguage.
@@ -159,6 +161,7 @@ var (
 		2: "TARGET_LANGUAGE_RUST",
 		3: "TARGET_LANGUAGE_PYTHON",
 		4: "TARGET_LANGUAGE_NODE",
+		5: "TARGET_LANGUAGE_JAVA",
 	}
 	TargetLanguage_value = map[string]int32{
 		"TARGET_LANGUAGE_UNSPECIFIED": 0,
@@ -166,6 +169,7 @@ var (
 		"TARGET_LANGUAGE_RUST":        2,
 		"TARGET_LANGUAGE_PYTHON":      3,
 		"TARGET_LANGUAGE_NODE":        4,
+		"TARGET_LANGUAGE_JAVA":        5,
 	}
 )
 
@@ -2846,13 +2850,14 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x16MIGRATION_STATE_FAILED\x10\t\x12\x1d\n" +
 	"\x19MIGRATION_STATE_CANCELLED\x10\n" +
 	"\x12'\n" +
-	"#MIGRATION_STATE_RESTRUCTURING_READY\x10\v*\x99\x01\n" +
+	"#MIGRATION_STATE_RESTRUCTURING_READY\x10\v*\xb3\x01\n" +
 	"\x0eTargetLanguage\x12\x1f\n" +
 	"\x1bTARGET_LANGUAGE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12TARGET_LANGUAGE_GO\x10\x01\x12\x18\n" +
 	"\x14TARGET_LANGUAGE_RUST\x10\x02\x12\x1a\n" +
 	"\x16TARGET_LANGUAGE_PYTHON\x10\x03\x12\x18\n" +
-	"\x14TARGET_LANGUAGE_NODE\x10\x04*\x89\x01\n" +
+	"\x14TARGET_LANGUAGE_NODE\x10\x04\x12\x18\n" +
+	"\x14TARGET_LANGUAGE_JAVA\x10\x05*\x89\x01\n" +
 	"\x0eTargetDatabase\x12\x1f\n" +
 	"\x1bTARGET_DATABASE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TARGET_DATABASE_MONGODB\x10\x01\x12\x1c\n" +

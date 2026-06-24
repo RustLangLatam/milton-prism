@@ -21,7 +21,9 @@ func TestIsGenerableProtocol(t *testing.T) {
 		{"node_grpc", TargetLanguageNode, TransportGRPC, true},
 		{"node_http", TargetLanguageNode, TransportHTTP, true}, // ← Fastify-native HTTP cell
 		{"rust_grpc", TargetLanguageRust, TransportGRPC, true},
-		{"rust_http", TargetLanguageRust, TransportHTTP, true}, // ← axum-native HTTP cell (matrix complete)
+		{"rust_http", TargetLanguageRust, TransportHTTP, true}, // axum-native HTTP cell
+		{"java_grpc", TargetLanguageJava, TransportGRPC, true},
+		{"java_http", TargetLanguageJava, TransportHTTP, true}, // ← Spring Boot HTTP-native cell (matrix complete, 5 langs)
 		{"unspecified_lang_grpc", TargetLanguageUnspecified, TransportGRPC, false},
 	}
 	for _, tc := range cases {

@@ -26,8 +26,11 @@ func TestIsGenerableDatabase(t *testing.T) {
 		{"node_postgres", TargetLanguageNode, TargetDatabasePostgres, true}, // ← v1 SQL cell (Prisma)
 		{"node_mariadb", TargetLanguageNode, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (Prisma, same schema)
 		{"rust_mongodb", TargetLanguageRust, TargetDatabaseMongoDB, true},
-		{"rust_postgres", TargetLanguageRust, TargetDatabasePostgres, true}, // ← v1 SQL cell (SeaORM)
-		{"rust_mariadb", TargetLanguageRust, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (SeaORM, same entities)
+		{"rust_postgres", TargetLanguageRust, TargetDatabasePostgres, true}, // v1 SQL cell (SeaORM)
+		{"rust_mariadb", TargetLanguageRust, TargetDatabaseMariaDB, true},   // v1 SQL cell (SeaORM, same entities)
+		{"java_mongodb", TargetLanguageJava, TargetDatabaseMongoDB, true},
+		{"java_postgres", TargetLanguageJava, TargetDatabasePostgres, true}, // ← v1 SQL cell (Spring Data JPA)
+		{"java_mariadb", TargetLanguageJava, TargetDatabaseMariaDB, true},   // ← v1 SQL cell (JPA, same entities)
 		{"unspecified_lang_mongodb", TargetLanguageUnspecified, TargetDatabaseMongoDB, false},
 	}
 	for _, tc := range cases {

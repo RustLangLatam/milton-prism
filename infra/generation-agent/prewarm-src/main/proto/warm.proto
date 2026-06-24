@@ -1,0 +1,30 @@
+// Milton Prism — Java generation-profile gRPC codegen acceptance/pre-warm proto.
+//
+// This tiny proto carries a gRPC `service` so the image-build `mvn package`
+// EXECUTES the full protobuf-maven-plugin codegen path — both `protoc`
+// (message stubs) and `protoc-gen-grpc-java` (the *Grpc.java service stub).
+// Both of those plugin binaries are GLIBC :exe artifacts from Maven Central;
+// running this codegen on the musl Alpine base is exactly what proves the
+// `gcompat` glibc shim makes them executable. If the shim were missing, the
+// `compile-custom` (grpc) goal would fail the image build with a loader error.
+//
+// Kept deliberately minimal: one message + one unary RPC is enough to force the
+// plugin to emit `WarmServiceGrpc.java` plus the message stubs.
+syntax = "proto3";
+
+package milton.prism.warm;
+
+option java_package = "com.milton.prism.warm";
+option java_multiple_files = true;
+
+message WarmRequest {
+  string name = 1;
+}
+
+message WarmReply {
+  string message = 1;
+}
+
+service WarmService {
+  rpc Ping(WarmRequest) returns (WarmReply);
+}

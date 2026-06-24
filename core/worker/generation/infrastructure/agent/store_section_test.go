@@ -12,7 +12,7 @@ import (
 // established Mongo prompt behaviour is unchanged for every profile.
 func TestStoreSection_MongoDBInjectsNothing(t *testing.T) {
 	for _, store := range []string{"", "mongodb", "MongoDB"} {
-		for _, profile := range []string{"go", "python", "node", "rust"} {
+		for _, profile := range []string{"go", "python", "node", "rust", "java"} {
 			if got := agent.StoreSection(profile, store); got != "" {
 				t.Errorf("StoreSection(%q, %q) = %q, want empty", profile, store, got)
 			}
@@ -233,6 +233,66 @@ func TestStoreSection_RustSQLSeaORM(t *testing.T) {
 				if strings.Contains(s, forbid) {
 					t.Errorf("Rust+%s SeaORM store section must not mention %q", tc.engine, forbid)
 				}
+			}
+		})
+	}
+}
+
+// TestStoreSection_JavaSQLJPA asserts the Java + PostgreSQL and Java + MySQL/
+// MariaDB blocks instruct the generator to emit a Spring Data JPA persistence layer:
+// @Entity classes in infrastructure/repositories mapping to/from domain, JpaRepository
+// adapters implementing the same ports, a DataSource picking the JDBC driver by store,
+// Hibernate ddl-auto=update schema, @Id @GeneratedValue(IDENTITY) IDs, nullable
+// delete_time soft-delete, and DATABASE_URL/SPRING_DATASOURCE_* env with zero MONGO_* —
+// the v1 certified Java SQL cells (the DB axis is complete: 5 langs × Mongo/Postgres/
+// MySQL). Both stores share the same JPA scaffold; only the JDBC driver dep + URL differ.
+func TestStoreSection_JavaSQLJPA(t *testing.T) {
+	cases := []struct {
+		store      string
+		engine     string
+		driverDep  string
+		jdbcScheme string
+	}{
+		{"postgres", "PostgreSQL", "org.postgresql:postgresql", "jdbc:postgresql"},
+		{"mysql", "MySQL/MariaDB", "org.mariadb.jdbc:mariadb-java-client", "jdbc:mariadb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.store, func(t *testing.T) {
+			s := agent.StoreSection("java", tc.store)
+			if s == "" {
+				t.Fatalf("StoreSection(java, %q) is empty, want a JPA block", tc.store)
+			}
+			for _, want := range []string{
+				tc.engine,
+				tc.driverDep,
+				tc.jdbcScheme,
+				"Spring Data JPA",
+				"spring-boot-starter-data-jpa",
+				"@Entity",
+				"JpaRepository",
+				"ddl-auto=update",
+				"@GeneratedValue",
+				"IDENTITY",
+				"delete_time",
+				"DATABASE_URL",
+				"SPRING_DATASOURCE_",
+				"mvn -B package",
+			} {
+				if !strings.Contains(s, want) {
+					t.Errorf("Java+%s JPA store section missing %q", tc.engine, want)
+				}
+			}
+			// JPA/Hibernate owns the dialect; the block must not prescribe raw SQL
+			// placeholders or Flyway/Liquibase (named only to forbid).
+			for _, forbid := range []string{"ON CONFLICT", "BIGSERIAL"} {
+				if strings.Contains(s, forbid) {
+					t.Errorf("Java+%s JPA store section must not mention %q", tc.engine, forbid)
+				}
+			}
+			// The block names MONGO_* / Spring Data MongoDB only to FORBID it; it must
+			// not SET a MONGO_* variable.
+			if strings.Contains(s, "MONGO_URI") || strings.Contains(s, "MONGO_DATABASE") {
+				t.Errorf("Java+%s store section must not prescribe MONGO_* env vars", tc.engine)
 			}
 		})
 	}

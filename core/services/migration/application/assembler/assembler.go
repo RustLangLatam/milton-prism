@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	applog "milton_prism/pkg/log"
 )
 
 // InputFile is one generated source file from generation_file_artifacts.
@@ -856,7 +858,18 @@ func (a *Assembler) walkSkeleton(dst map[string][]byte) error {
 
 		content, readErr := os.ReadFile(abs)
 		if readErr != nil {
-			return fmt.Errorf("assembler: read %s: %w", rel, readErr)
+			// A per-file read failure (permission denied on a 0600 file the
+			// distroless uid 65532 can't read, a file that vanished mid-walk,
+			// etc.) must NOT abort the whole deliverable: one unreadable
+			// skeleton file (e.g. protobuf/buf.lock) used to 500 every
+			// DownloadDeliverable. Skip the file and warn — the deliverable
+			// still assembles with the remaining files, mirroring the
+			// tolerance shipBufLockAndCleanBufYaml already has for its read.
+			// A genuinely required file's absence surfaces later/clearly
+			// (failed build), but an unreadable optional file no longer
+			// breaks the download.
+			applog.Warningf("assembler: skipping unreadable skeleton file %s: %v", rel, readErr)
+			return nil
 		}
 		dst[rel] = content
 		return nil

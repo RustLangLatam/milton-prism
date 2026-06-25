@@ -19,6 +19,66 @@ var knownSecrets = []string{
 	"5a6c3d9ba08cb65dc1e3ed455c7115460f2df5b9ec923e8ccf39ae88f624eb0a", // Ed25519 public key (dev, lowercase)
 }
 
+// sqlDBPort returns the default DB_PORT for a SQL store: 5432 for PostgreSQL,
+// 3306 for MySQL/MariaDB. The .env.example default must match the cell's real
+// engine (the audit found a MariaDB Rust deliverable advertising DB_PORT=5432).
+func sqlDBPort(store string) int {
+	if store == "mysql" {
+		return 3306
+	}
+	return 5432
+}
+
+// authBlock returns the auth section for a service .env.example, or "" when the
+// service uses no auth. authEnabled is detected from the generated code (does any
+// artifact read JWT_SECRET / a token secret). When auth is off, no JWT block is
+// emitted — the audit found a Postgres Python deliverable advertising a JWT block
+// though the cell wires no auth. The block is identical across languages (a single
+// JWT_SECRET the auth interceptor reads).
+func authBlock(authEnabled bool) string {
+	if !authEnabled {
+		return ""
+	}
+	return `
+# ── Auth ───────────────────────────────────────────────────────────────────
+# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
+JWT_SECRET=<your-jwt-secret>
+`
+}
+
+// serviceUsesAuth reports whether the generated code for service `slug` (under the
+// given source root, e.g. "python"/"node"/"rust"/"java"/"core") reads an auth
+// secret — i.e. references JWT_SECRET or a token validator/generator. It scans the
+// generated artifacts already in the assembled map for the service. When no
+// generated file is present (e.g. tests with empty artifacts) it returns true so
+// the auth block is kept by default (never silently drop a needed secret). This is
+// the cross-language homologue of detectTokenRole.
+func serviceUsesAuth(assembled map[string][]byte, root, slug string) bool {
+	prefix := root + "/services/" + slug + "/"
+	sawService := false
+	for path, content := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		sawService = true
+		c := string(content)
+		if strings.Contains(c, "JWT_SECRET") ||
+			strings.Contains(c, "jwt_secret") ||
+			strings.Contains(c, "TokenValidator") ||
+			strings.Contains(c, "TokenGenerator") ||
+			strings.Contains(c, "token_validator") ||
+			strings.Contains(c, "token_generator") ||
+			strings.Contains(c, "AuthInterceptor") ||
+			strings.Contains(c, "auth_interceptor") {
+			return true
+		}
+	}
+	// Default: keep auth when no generated service files were seen (defensive — the
+	// test harness may pass no artifacts); drop only when the service IS present and
+	// provably never references auth.
+	return !sawService
+}
+
 // generateConfigExamples appends config.toml.example files to the assembled
 // file map. It scans for service cmd directories and generates one example per
 // service plus one gateway example.
@@ -56,13 +116,17 @@ func generateConfigExamples(assembled map[string][]byte) error {
 // mirroring the Mongo config.toml.example placement. Zero MONGO_* variables ever
 // appear. Every value is a placeholder — never a real credential (assertNoSecrets
 // guards each file).
-func generateSQLConfigExamples(assembled map[string][]byte) error {
+func generateSQLConfigExamples(assembled map[string][]byte, store string) error {
 	services := discoverGeneratedServices(assembled)
 
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
 		port := 50051 + i
-		content := sqlServiceEnvExample(svc, port)
+		// Go places generated code under core/cmd/<svc>-services/; the auth secret is
+		// read by the service main.go (EdDSA token role). Reuse detectTokenRole's
+		// signal: a Go service that sets a token role uses auth.
+		authEnabled := detectTokenRole(svc, assembled) != "" && goServiceUsesAuth(assembled, svc)
+		content := sqlServiceEnvExample(svc, port, store, authEnabled)
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -73,45 +137,61 @@ func generateSQLConfigExamples(assembled map[string][]byte) error {
 	return nil
 }
 
+// goServiceUsesAuth reports whether the generated Go service `slug` reads an auth
+// token secret — it references a token role/validator in its cmd main.go or wire.
+// Defaults to true when no main.go is present (defensive, mirrors serviceUsesAuth).
+func goServiceUsesAuth(assembled map[string][]byte, slug string) bool {
+	mainPath := fmt.Sprintf("core/cmd/%s-services/main.go", slug)
+	content, ok := assembled[mainPath]
+	if !ok {
+		return true
+	}
+	c := string(content)
+	return strings.Contains(c, "TokenRole") || strings.Contains(c, "tokenValidator") ||
+		strings.Contains(c, "tokenGenerator") || strings.Contains(c, "auth")
+}
+
 // sqlServiceEnvExample returns the content of a .env.example for one generated
 // Go + SQL (GORM) microservice. It documents BOTH the single DATABASE_URL DSN
 // (the GORM DSN — PostgreSQL or MySQL/MariaDB form) and the discrete DB_* parts
 // (the generator may read either), the gRPC server bind, and the auth secret.
 // Every value is a placeholder; no MONGO_* variable is present.
-func sqlServiceEnvExample(name string, port int) string {
+func sqlServiceEnvExample(name string, port int, store string, authEnabled bool) string {
 	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var dsnExample, engineLabel, sslLine string
+	if store == "mysql" {
+		dsnExample = fmt.Sprintf("user:password@tcp(host:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local", dbPort, db)
+		engineLabel = "MySQL/MariaDB"
+		sslLine = "# MySQL/MariaDB uses tls in the DSN; there is no DB_SSLMODE.\n"
+	} else {
+		dsnExample = fmt.Sprintf("postgres://user:password@host:%d/%s?sslmode=disable", dbPort, db)
+		engineLabel = "PostgreSQL"
+		sslLine = "DB_SSLMODE=disable\n"
+	}
 	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via GORM)
 # Copy this file to .env (in the directory the service is launched from) and fill
 # in the placeholder values, or export them into the environment before starting
 # the service: ./%s-services
 #
-# This service persists via the GORM ORM. The same models/repos serve PostgreSQL
-# and MySQL/MariaDB — only the driver and the DATABASE_URL DSN format differ.
-# Schema is applied by GORM AutoMigrate on startup. Set EITHER the single
-# DATABASE_URL DSN OR the discrete DB_* parts (DATABASE_URL wins when both are set).
+# This service persists via the GORM ORM over %s. Schema is applied by GORM
+# AutoMigrate on startup. Set EITHER the single DATABASE_URL DSN OR the discrete
+# DB_* parts (DATABASE_URL wins when both are set).
 
-# ── Database (GORM) ──────────────────────────────────────────────────────────
-# DATABASE_URL: full GORM DSN. Examples:
-#   PostgreSQL: postgres://user:password@host:5432/%s?sslmode=disable
-#   MySQL/MariaDB: user:password@tcp(host:3306)/%s?charset=utf8mb4&parseTime=True&loc=Local
+# ── Database (GORM, %s) ───────────────────────────────────────────────────────
+# DATABASE_URL: full GORM DSN, e.g.
+#   %s
 DATABASE_URL=<your-database-dsn>
 DB_HOST=localhost
-# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
-DB_PORT=5432
+DB_PORT=%d
 DB_USER=<your-db-user>
 DB_PASSWORD=<your-db-password>
 DB_NAME=%s
-# DB_SSLMODE applies to PostgreSQL; MySQL/MariaDB uses tls in the DSN instead.
-DB_SSLMODE=disable
-
+%s
 # ── gRPC server ─────────────────────────────────────────────────────────────
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, name, db, db, db, port)
+%s`, name, name, engineLabel, engineLabel, dsnExample, dbPort, db, sslLine, port, authBlock(authEnabled))
 }
 
 // generatePythonConfigExamples appends a `.env.example` file to each generated
@@ -141,7 +221,7 @@ func generatePythonConfigExamples(assembled map[string][]byte) error {
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as Go).
 		port := 50051 + i
-		content := pythonServiceEnvExample(svc, port)
+		content := pythonServiceEnvExample(svc, port, serviceUsesAuth(assembled, "python", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -186,7 +266,7 @@ func discoverGeneratedPythonServices(assembled map[string][]byte) []string {
 // pythonServiceEnvExample returns the content of a .env.example for one generated
 // Python microservice. Every value is a placeholder — never a real credential.
 // The env var names match core/shared/config/loader.py field aliases exactly.
-func pythonServiceEnvExample(name string, port int) string {
+func pythonServiceEnvExample(name string, port int, authEnabled bool) string {
 	db := name + "_db"
 	return fmt.Sprintf(`# .env.example — %s service
 # Copy this file to .env (in the source root the service is launched from, i.e.
@@ -195,8 +275,7 @@ func pythonServiceEnvExample(name string, port int) string {
 # variables before starting the service: python -m services.%s
 #
 # These variables are consumed by core/shared/config/loader.py
-# (MongoConfig env_prefix MONGO_, GrpcServerConfig env_prefix GRPC_) plus the
-# JWT_SECRET read directly in services/%s/__main__.py.
+# (MongoConfig env_prefix MONGO_, GrpcServerConfig env_prefix GRPC_).
 
 # ── MongoDB (MongoConfig) ──────────────────────────────────────────────────
 # MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
@@ -207,11 +286,7 @@ MONGO_DATABASE=%s
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
 GRPC_MAX_WORKERS=10
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, name, name, db, port)
+%s`, name, name, db, port, authBlock(authEnabled))
 }
 
 // generatePythonSQLConfigExamples appends a SQL `.env.example` file to each
@@ -226,13 +301,13 @@ JWT_SECRET=<your-jwt-secret>
 // MUST run on the assembled map BEFORE the python/ → core/ rename (same as the
 // Motor path), so service dirs are still keyed under python/services/<svc>/. Every
 // value is a placeholder; assertNoSecrets guards each file.
-func generatePythonSQLConfigExamples(assembled map[string][]byte) error {
+func generatePythonSQLConfigExamples(assembled map[string][]byte, store string) error {
 	services := discoverGeneratedPythonServices(assembled)
 
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as the Motor path).
 		port := 50051 + i
-		content := pythonSQLServiceEnvExample(svc, port)
+		content := pythonSQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "python", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -248,27 +323,36 @@ func generatePythonSQLConfigExamples(assembled map[string][]byte) error {
 // single DATABASE_URL async URL (the SQLAlchemy DSN — PostgreSQL or MySQL/MariaDB
 // form) and the discrete DB_* parts, the gRPC server bind, and the auth secret.
 // Every value is a placeholder; no MONGO_* variable is present.
-func pythonSQLServiceEnvExample(name string, port int) string {
+func pythonSQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
 	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	// Emit the active driver/URL example for the cell's real engine first.
+	var driver, urlExample, engineLabel string
+	if store == "mysql" {
+		driver = "aiomysql"
+		urlExample = fmt.Sprintf("mysql+aiomysql://user:password@host:%d/%s?charset=utf8mb4", dbPort, db)
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		driver = "asyncpg"
+		urlExample = fmt.Sprintf("postgresql+asyncpg://user:password@host:%d/%s", dbPort, db)
+		engineLabel = "PostgreSQL"
+	}
 	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via SQLAlchemy 2.0 async)
 # Copy this file to .env (in the source root the service is launched from, i.e.
 # the core/ directory: pydantic-settings reads .env from the process cwd) and fill
 # in the placeholder values. Alternatively export these as environment variables
 # before starting the service: python -m services.%s
 #
-# This service persists via the SQLAlchemy 2.0 async ORM. The same models/repos
-# serve PostgreSQL and MySQL/MariaDB — only the async driver and the DATABASE_URL
-# scheme differ. Schema is applied by Base.metadata.create_all on startup. Set
-# EITHER the single DATABASE_URL async URL OR the discrete DB_* parts.
+# This service persists via the SQLAlchemy 2.0 async ORM over %s (driver: %s).
+# Schema is applied by Base.metadata.create_all on startup. Set EITHER the single
+# DATABASE_URL async URL OR the discrete DB_* parts.
 
-# ── Database (SQLAlchemy async) ──────────────────────────────────────────────
-# DATABASE_URL: full SQLAlchemy async URL. Examples:
-#   PostgreSQL: postgresql+asyncpg://user:password@host:5432/%s
-#   MySQL/MariaDB: mysql+aiomysql://user:password@host:3306/%s?charset=utf8mb4
+# ── Database (SQLAlchemy async, %s) ──────────────────────────────────────────
+# DATABASE_URL: full SQLAlchemy async URL, e.g.
+#   %s
 DATABASE_URL=<your-database-url>
 DB_HOST=localhost
-# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
-DB_PORT=5432
+DB_PORT=%d
 DB_USER=<your-db-user>
 DB_PASSWORD=<your-db-password>
 DB_NAME=%s
@@ -277,11 +361,7 @@ DB_NAME=%s
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
 GRPC_MAX_WORKERS=10
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, name, db, db, db, port)
+%s`, name, name, engineLabel, driver, engineLabel, urlExample, dbPort, db, port, authBlock(authEnabled))
 }
 
 // generateNodeConfigExamples appends a `.env.example` file to each generated
@@ -305,7 +385,7 @@ func generateNodeConfigExamples(assembled map[string][]byte) error {
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as Go/Python).
 		port := 50051 + i
-		content := nodeServiceEnvExample(svc, port)
+		content := nodeServiceEnvExample(svc, port, serviceUsesAuth(assembled, "node", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -350,15 +430,14 @@ func discoverGeneratedNodeServices(assembled map[string][]byte) []string {
 // nodeServiceEnvExample returns the content of a .env.example for one generated
 // Node microservice. Every value is a placeholder — never a real credential.
 // The env var names match the Node profile config contract exactly.
-func nodeServiceEnvExample(name string, port int) string {
+func nodeServiceEnvExample(name string, port int, authEnabled bool) string {
 	db := name + "_db"
 	return fmt.Sprintf(`# .env.example — %s service
 # Copy this file to .env (in the source root the service is launched from, i.e.
 # the core/ directory) and fill in the placeholder values. Alternatively export
 # these as environment variables before starting the service.
 #
-# These variables are consumed by core/shared/config (the typed config loader)
-# plus the JWT_SECRET read by the auth interceptor.
+# These variables are consumed by core/shared/config (the typed config loader).
 
 # ── MongoDB (official mongodb driver) ──────────────────────────────────────
 # MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
@@ -368,11 +447,7 @@ MONGO_DATABASE=%s
 # ── gRPC server (@grpc/grpc-js) ────────────────────────────────────────────
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, db, port)
+%s`, name, db, port, authBlock(authEnabled))
 }
 
 // generateNodeSQLConfigExamples appends a SQL `.env.example` file to each generated
@@ -388,13 +463,13 @@ JWT_SECRET=<your-jwt-secret>
 // MUST run on the assembled map BEFORE the node/ → core/ rename (same as the
 // native-Mongo path), so service dirs are still keyed under node/services/<svc>/.
 // Every value is a placeholder; assertNoSecrets guards each file.
-func generateNodeSQLConfigExamples(assembled map[string][]byte) error {
+func generateNodeSQLConfigExamples(assembled map[string][]byte, store string) error {
 	services := discoverGeneratedNodeServices(assembled)
 
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
 		port := 50051 + i
-		content := nodeSQLServiceEnvExample(svc, port)
+		content := nodeSQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "node", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -410,26 +485,34 @@ func generateNodeSQLConfigExamples(assembled map[string][]byte) error {
 // connection URL (the Prisma URL — PostgreSQL or MySQL/MariaDB form) and the
 // discrete DB_* parts, the gRPC server bind, and the auth secret. Every value is a
 // placeholder; no MONGO_* variable is present.
-func nodeSQLServiceEnvExample(name string, port int) string {
+func nodeSQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
 	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var urlExample, provider, engineLabel string
+	if store == "mysql" {
+		urlExample = fmt.Sprintf("mysql://user:password@host:%d/%s", dbPort, db)
+		provider = "mysql"
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		urlExample = fmt.Sprintf("postgresql://user:password@host:%d/%s?schema=public", dbPort, db)
+		provider = "postgresql"
+		engineLabel = "PostgreSQL"
+	}
 	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via Prisma)
 # Copy this file to .env (in the source root the service is launched from, i.e.
 # the core/ directory) and fill in the placeholder values. Alternatively export
 # these as environment variables before starting the service.
 #
-# This service persists via the Prisma ORM. The same schema.prisma + @prisma/client
-# serve PostgreSQL and MySQL/MariaDB — only the datasource provider and the
-# DATABASE_URL scheme differ. Schema is applied by Prisma Migrate (prisma migrate
-# deploy) or prisma db push. Prisma reads DATABASE_URL from the environment.
+# This service persists via the Prisma ORM over %s (datasource provider: %s).
+# Schema is applied by Prisma Migrate (prisma migrate deploy) or prisma db push.
+# Prisma reads DATABASE_URL from the environment.
 
-# ── Database (Prisma) ────────────────────────────────────────────────────────
-# DATABASE_URL: full Prisma connection URL. Examples:
-#   PostgreSQL: postgresql://user:password@host:5432/%s?schema=public
-#   MySQL/MariaDB: mysql://user:password@host:3306/%s
+# ── Database (Prisma, %s) ─────────────────────────────────────────────────────
+# DATABASE_URL: full Prisma connection URL, e.g.
+#   %s
 DATABASE_URL=<your-database-url>
 DB_HOST=localhost
-# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
-DB_PORT=5432
+DB_PORT=%d
 DB_USER=<your-db-user>
 DB_PASSWORD=<your-db-password>
 DB_NAME=%s
@@ -437,11 +520,7 @@ DB_NAME=%s
 # ── gRPC server (@grpc/grpc-js) ────────────────────────────────────────────
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, db, db, db, port)
+%s`, name, engineLabel, provider, engineLabel, urlExample, dbPort, db, port, authBlock(authEnabled))
 }
 
 // generateRustConfigExamples appends a `.env.example` file to each generated
@@ -465,7 +544,7 @@ func generateRustConfigExamples(assembled map[string][]byte) error {
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as Go/Python/Node).
 		port := 50051 + i
-		content := rustServiceEnvExample(svc, port)
+		content := rustServiceEnvExample(svc, port, serviceUsesAuth(assembled, "rust", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -510,15 +589,14 @@ func discoverGeneratedRustServices(assembled map[string][]byte) []string {
 // rustServiceEnvExample returns the content of a .env.example for one generated
 // Rust microservice. Every value is a placeholder — never a real credential.
 // The env var names match the Rust profile config contract exactly.
-func rustServiceEnvExample(name string, port int) string {
+func rustServiceEnvExample(name string, port int, authEnabled bool) string {
 	db := name + "_db"
 	return fmt.Sprintf(`# .env.example — %s service
 # Copy this file to .env (in the source root the service is launched from, i.e.
 # the core/ directory) and fill in the placeholder values. Alternatively export
 # these as environment variables before starting the service.
 #
-# These variables are consumed by the typed config loader (dotenvy/envy) plus
-# the JWT_SECRET read by the auth interceptor.
+# These variables are consumed by the typed config loader (dotenvy/envy).
 
 # ── MongoDB (official mongodb crate) ───────────────────────────────────────
 # MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
@@ -528,11 +606,7 @@ MONGO_DATABASE=%s
 # ── gRPC server (Tonic) ────────────────────────────────────────────────────
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, db, port)
+%s`, name, db, port, authBlock(authEnabled))
 }
 
 // generateRustSQLConfigExamples appends a SQL `.env.example` file to each generated
@@ -548,13 +622,13 @@ JWT_SECRET=<your-jwt-secret>
 // MUST run on the assembled map BEFORE the rust/ → core/ rename (same as the
 // native-Mongo path), so service dirs are still keyed under rust/services/<svc>/.
 // Every value is a placeholder; assertNoSecrets guards each file.
-func generateRustSQLConfigExamples(assembled map[string][]byte) error {
+func generateRustSQLConfigExamples(assembled map[string][]byte, store string) error {
 	services := discoverGeneratedRustServices(assembled)
 
 	for i, svc := range services {
 		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
 		port := 50051 + i
-		content := rustSQLServiceEnvExample(svc, port)
+		content := rustSQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "rust", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -570,27 +644,35 @@ func generateRustSQLConfigExamples(assembled map[string][]byte) error {
 // connection URL (the SeaORM URL — PostgreSQL or MySQL/MariaDB form) and the
 // discrete DB_* parts, the gRPC server bind, and the auth secret. Every value is a
 // placeholder; no MONGO_* variable is present.
-func rustSQLServiceEnvExample(name string, port int) string {
+func rustSQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
 	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var urlExample, feature, engineLabel string
+	if store == "mysql" {
+		urlExample = fmt.Sprintf("mysql://user:password@host:%d/%s", dbPort, db)
+		feature = "sqlx-mysql"
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		urlExample = fmt.Sprintf("postgres://user:password@host:%d/%s", dbPort, db)
+		feature = "sqlx-postgres"
+		engineLabel = "PostgreSQL"
+	}
 	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via SeaORM)
 # Copy this file to .env (in the source root the service is launched from, i.e.
 # the core/ directory) and fill in the placeholder values. Alternatively export
 # these as environment variables before starting the service.
 #
-# This service persists via the SeaORM ORM (async, sqlx-backed). The same entities
-# + repos serve PostgreSQL and MySQL/MariaDB — only the sqlx driver feature in
-# Cargo.toml (sqlx-postgres / sqlx-mysql) and the DATABASE_URL scheme differ. Schema
-# is applied by sea-orm-migration (Migrator::up) on startup. SeaORM reads
-# DATABASE_URL via Database::connect.
+# This service persists via the SeaORM ORM (async, sqlx-backed) over %s — the
+# Cargo.toml compiles the %s driver feature. Schema is applied by
+# sea-orm-migration (Migrator::up) on startup. SeaORM reads DATABASE_URL via
+# Database::connect.
 
-# ── Database (SeaORM) ────────────────────────────────────────────────────────
-# DATABASE_URL: full SeaORM connection URL. Examples:
-#   PostgreSQL: postgres://user:password@host:5432/%s
-#   MySQL/MariaDB: mysql://user:password@host:3306/%s
+# ── Database (SeaORM, %s) ─────────────────────────────────────────────────────
+# DATABASE_URL: full SeaORM connection URL, e.g.
+#   %s
 DATABASE_URL=<your-database-url>
 DB_HOST=localhost
-# DB_PORT: 5432 (PostgreSQL) or 3306 (MySQL/MariaDB)
-DB_PORT=5432
+DB_PORT=%d
 DB_USER=<your-db-user>
 DB_PASSWORD=<your-db-password>
 DB_NAME=%s
@@ -598,11 +680,7 @@ DB_NAME=%s
 # ── gRPC server (Tonic) ────────────────────────────────────────────────────
 GRPC_HOST=0.0.0.0
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, db, db, db, port)
+%s`, name, engineLabel, feature, engineLabel, urlExample, dbPort, db, port, authBlock(authEnabled))
 }
 
 // generateJavaConfigExamples appends a `.env.example` to each generated Java
@@ -618,9 +696,11 @@ func generateJavaConfigExamples(assembled map[string][]byte) error {
 	services := discoverGeneratedJavaServices(assembled)
 
 	for i, svc := range services {
-		// Assign sequential ports: 50051, 50052, ... (same scheme as Go/Python/Node/Rust).
-		port := 50051 + i
-		content := javaServiceEnvExample(svc, port)
+		// Java gRPC port: net.devh grpc-spring-boot-starter binds 9090 by default
+		// (NOT 50051). The generated Spring Boot service reads grpc.server.port /
+		// GRPC_PORT, so seed sequential ports from 9090 to match the real bind.
+		port := 9090 + i
+		content := javaServiceEnvExample(svc, port, serviceUsesAuth(assembled, "java", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -666,7 +746,7 @@ func discoverGeneratedJavaServices(assembled map[string][]byte) []string {
 // Java microservice (Spring Data MongoDB persistence). Every value is a
 // placeholder — never a real credential. It is the Java homologue of
 // rustServiceEnvExample.
-func javaServiceEnvExample(name string, port int) string {
+func javaServiceEnvExample(name string, port int, authEnabled bool) string {
 	db := name + "_db"
 	return fmt.Sprintf(`# .env.example — %s service
 # Copy this file to .env (in the source root the service is launched from, i.e.
@@ -674,21 +754,19 @@ func javaServiceEnvExample(name string, port int) string {
 # these as environment variables before starting the service.
 #
 # These variables are consumed by the Spring Boot config (application.yml /
-# environment) plus the JWT_SECRET read by the auth filter/interceptor.
+# environment). Spring Boot maps the SPRING_DATA_MONGODB_* env vars onto the
+# spring.data.mongodb.* properties; the grpc server binds grpc.server.port.
 
 # ── MongoDB (Spring Data MongoDB) ──────────────────────────────────────────
-# MONGO_URI: full MongoDB connection string, e.g. mongodb://user:password@host:27017
-MONGO_URI=<your-mongo-uri>
-MONGO_DATABASE=%s
+# SPRING_DATA_MONGODB_URI: full MongoDB connection string, e.g.
+#   mongodb://user:password@host:27017/%s
+SPRING_DATA_MONGODB_URI=<your-mongo-uri>
+SPRING_DATA_MONGODB_DATABASE=%s
 
-# ── gRPC server (grpc-java) ────────────────────────────────────────────────
-GRPC_HOST=0.0.0.0
+# ── gRPC server (grpc-java / grpc-spring-boot-starter) ─────────────────────
+# GRPC_PORT maps to grpc.server.port (net.devh default 9090).
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, db, port)
+%s`, name, db, db, port, authBlock(authEnabled))
 }
 
 // generateJavaSQLConfigExamples appends a SQL `.env.example` file to each generated
@@ -703,13 +781,14 @@ JWT_SECRET=<your-jwt-secret>
 // MUST run on the assembled map BEFORE the java/ → core/ rename (same as the
 // native-Mongo path), so service dirs are still keyed under java/services/<svc>/.
 // Every value is a placeholder; assertNoSecrets guards each file.
-func generateJavaSQLConfigExamples(assembled map[string][]byte) error {
+func generateJavaSQLConfigExamples(assembled map[string][]byte, store string) error {
 	services := discoverGeneratedJavaServices(assembled)
 
 	for i, svc := range services {
-		// Assign sequential ports: 50051, 50052, ... (same scheme as the Mongo path).
-		port := 50051 + i
-		content := javaSQLServiceEnvExample(svc, port)
+		// Java gRPC port seeds from 9090 (net.devh grpc-spring-boot-starter default),
+		// same as the Mongo path.
+		port := 9090 + i
+		content := javaSQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "java", svc))
 		if err := assertNoSecrets(content, svc+" .env"); err != nil {
 			return err
 		}
@@ -725,37 +804,41 @@ func generateJavaSQLConfigExamples(assembled map[string][]byte) error {
 // single DATABASE_URL JDBC URL (the JPA DataSource URL — PostgreSQL or MySQL/MariaDB
 // form) and the Spring SPRING_DATASOURCE_* parts, the gRPC server bind, and the auth
 // secret. Every value is a placeholder; no MONGO_* variable is present.
-func javaSQLServiceEnvExample(name string, port int) string {
+func javaSQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
 	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var jdbcExample, driverDep, engineLabel string
+	if store == "mysql" {
+		jdbcExample = fmt.Sprintf("jdbc:mariadb://host:%d/%s", dbPort, db)
+		driverDep = "org.mariadb.jdbc:mariadb-java-client"
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		jdbcExample = fmt.Sprintf("jdbc:postgresql://host:%d/%s", dbPort, db)
+		driverDep = "org.postgresql:postgresql"
+		engineLabel = "PostgreSQL"
+	}
 	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via Spring Data JPA)
 # Copy this file to .env (in the source root the service is launched from, i.e.
 # the core/ directory) and fill in the placeholder values. Alternatively export
 # these as environment variables before starting the service.
 #
-# This service persists via Spring Data JPA (Hibernate). The same @Entity classes
-# + JpaRepository adapters serve PostgreSQL and MySQL/MariaDB — only the JDBC driver
-# dependency in pom.xml (org.postgresql:postgresql / org.mariadb.jdbc:mariadb-java-client)
-# and the jdbc: URL scheme differ. Schema is applied by Hibernate ddl-auto=update on
+# This service persists via Spring Data JPA (Hibernate) over %s — the pom.xml
+# bundles the %s JDBC driver. Schema is applied by Hibernate ddl-auto=update on
 # startup. Spring reads the DataSource from SPRING_DATASOURCE_* (or DATABASE_URL).
 
-# ── Database (Spring Data JPA / Hibernate) ───────────────────────────────────
-# DATABASE_URL / SPRING_DATASOURCE_URL: full JDBC URL. Examples:
-#   PostgreSQL: jdbc:postgresql://host:5432/%s
-#   MySQL/MariaDB: jdbc:mariadb://host:3306/%s
+# ── Database (Spring Data JPA / Hibernate, %s) ────────────────────────────────
+# DATABASE_URL / SPRING_DATASOURCE_URL: full JDBC URL, e.g.
+#   %s
 DATABASE_URL=<your-jdbc-url>
 SPRING_DATASOURCE_URL=<your-jdbc-url>
 SPRING_DATASOURCE_USERNAME=<your-db-user>
 SPRING_DATASOURCE_PASSWORD=<your-db-password>
 DB_NAME=%s
 
-# ── gRPC server (grpc-java) ────────────────────────────────────────────────
-GRPC_HOST=0.0.0.0
+# ── gRPC server (grpc-java / grpc-spring-boot-starter) ─────────────────────
+# GRPC_PORT maps to grpc.server.port (net.devh default 9090).
 GRPC_PORT=%d
-
-# ── Auth ───────────────────────────────────────────────────────────────────
-# JWT_SECRET: signing/validation secret. Generate with: openssl rand -hex 32
-JWT_SECRET=<your-jwt-secret>
-`, name, db, db, db, port)
+%s`, name, engineLabel, driverDep, engineLabel, jdbcExample, db, port, authBlock(authEnabled))
 }
 
 // detectTokenRole scans the generated main.go for the service to determine

@@ -670,9 +670,10 @@ func TestAssemble_PythonProfile_EnvExamplePerService(t *testing.T) {
 
 	a := New(root, true, "python", "grpc", "")
 	artifacts := []InputFile{
-		{Path: "python/services/user/__main__.py", Content: "cfg = 1\n"},
+		// __main__ reads JWT_SECRET → the .env.example must carry the auth block.
+		{Path: "python/services/user/__main__.py", Content: "import os\nsecret = os.environ['JWT_SECRET']\n"},
 		{Path: "python/services/user/domain/user.py", Content: "class User: ...\n"},
-		{Path: "python/services/order/__main__.py", Content: "cfg = 1\n"},
+		{Path: "python/services/order/__main__.py", Content: "import os\nsecret = os.environ['JWT_SECRET']\n"},
 	}
 
 	files, err := a.Assemble(artifacts)
@@ -998,8 +999,9 @@ func TestAssemble_NodeProfile_EnvExamplePerService(t *testing.T) {
 
 	a := New(root, true, "node", "grpc", "")
 	artifacts := []InputFile{
-		{Path: "node/services/user/index.ts", Content: "// server\n"},
-		{Path: "node/services/order/index.ts", Content: "// server\n"},
+		// index.ts reads JWT_SECRET → the .env.example must carry the auth block.
+		{Path: "node/services/user/index.ts", Content: "const secret = process.env.JWT_SECRET;\n"},
+		{Path: "node/services/order/index.ts", Content: "const secret = process.env.JWT_SECRET;\n"},
 	}
 
 	files, err := a.Assemble(artifacts)
@@ -1216,8 +1218,9 @@ func TestAssemble_RustProfile_EnvExamplePerService(t *testing.T) {
 
 	a := New(root, true, "rust", "grpc", "")
 	artifacts := []InputFile{
-		{Path: "rust/services/user/src/main.rs", Content: "fn main() {}\n"},
-		{Path: "rust/services/order/src/main.rs", Content: "fn main() {}\n"},
+		// main.rs reads JWT_SECRET → the .env.example must carry the auth block.
+		{Path: "rust/services/user/src/main.rs", Content: "fn main() { let _ = std::env::var(\"JWT_SECRET\"); }\n"},
+		{Path: "rust/services/order/src/main.rs", Content: "fn main() { let _ = std::env::var(\"JWT_SECRET\"); }\n"},
 	}
 
 	files, err := a.Assemble(artifacts)
@@ -1500,8 +1503,9 @@ func TestAssemble_JavaProfile_EnvExamplePerService(t *testing.T) {
 
 	a := New(root, true, "java", "grpc", "")
 	artifacts := []InputFile{
-		{Path: "java/services/user/src/main/java/com/example/user/UserApplication.java", Content: "package com.example.user;\n"},
-		{Path: "java/services/order/src/main/java/com/example/order/OrderApplication.java", Content: "package com.example.order;\n"},
+		// The application reads JWT_SECRET → the .env.example must carry the auth block.
+		{Path: "java/services/user/src/main/java/com/example/user/UserApplication.java", Content: "package com.example.user;\n// System.getenv(\"JWT_SECRET\")\n"},
+		{Path: "java/services/order/src/main/java/com/example/order/OrderApplication.java", Content: "package com.example.order;\n// System.getenv(\"JWT_SECRET\")\n"},
 	}
 
 	files, err := a.Assemble(artifacts)
@@ -1530,15 +1534,23 @@ func TestAssemble_JavaProfile_EnvExamplePerService(t *testing.T) {
 			userEnv = string(f.Content)
 		}
 	}
+	// Java reads the Spring-Boot env names (SPRING_DATA_MONGODB_*), NOT MONGO_URI,
+	// and binds the grpc server on 9090 (net.devh default), NOT 50051.
+	// Services sort as [order, user] → ports 9090, 9091; "user" is index 1 = 9091.
 	for _, frag := range []string{
-		"MONGO_URI=",
-		"MONGO_DATABASE=user_db",
-		"GRPC_HOST=",
-		"GRPC_PORT=",
+		"SPRING_DATA_MONGODB_URI=",
+		"SPRING_DATA_MONGODB_DATABASE=user_db",
+		"GRPC_PORT=9091",
 		"JWT_SECRET=",
 	} {
 		if !strings.Contains(userEnv, frag) {
 			t.Errorf("user .env.example missing %q; got:\n%s", frag, userEnv)
+		}
+	}
+	// The wrong/legacy var names + port must NOT appear.
+	for _, bad := range []string{"MONGO_URI=", "MONGO_DATABASE=", "GRPC_HOST=", "GRPC_PORT=50051"} {
+		if strings.Contains(userEnv, bad) {
+			t.Errorf("user .env.example has stale Java var %q the code does not read; got:\n%s", bad, userEnv)
 		}
 	}
 	if !strings.Contains(strings.ToLower(userEnv), "copy this file to .env") {

@@ -553,20 +553,104 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		relocateRustVendoredProtos(merged)
 	}
 
-	// 2b. Proto import-closure resolution (Rust + Node). These profiles skip the
-	// canonical protobuf/proto tree from the skeleton (skipDirRust/skipDirNode) and
-	// rely on the generated artifacts for the protos. The agent ships the service's
-	// own protos under protobuf/proto/ plus a PARTIAL vendored set (mig68 vendored
-	// only the google well-known-types under third_party/, relocated above), but
-	// NOT the transitive platform deps those protos import — e.g.
-	// milton_prism/types/pagination, .../query_params and openapiv3/annotations.
-	// Without them `protoc`/tonic-build/proto-loader fails ("Import … not found").
-	// Walk the import graph of every proto now under protobuf/proto/ and pull any
-	// missing imported .proto from the canonical skeleton tree so the deliverable's
-	// proto set is self-contained. Go is unaffected: its skeleton + generated *.pb.go
-	// already carry the closure as compiled stubs.
-	if a.isRust() || a.isNode() || a.isJava() {
-		resolveProtoImportClosure(merged, a.skeletonRoot)
+	// 2a-java. Java guardrail: a generated Java gRPC service must never ship `.proto`
+	// files under its source tree (which becomes core/services/<svc>/ after the
+	// rename in step 3b). The agent image's protoc carries no bundled google.api /
+	// well-known-type includes, so the agent vendors those third-party protos into
+	// java/services/<svc>/src/main/proto-include/<import-path> and wires that dir as
+	// the protobuf-maven-plugin <additionalProtoPathElement>. That places `.proto`
+	// under core/ after the rename — violating the invariant that EVERY `.proto`
+	// lives ONLY under the canonical top-level protobuf/proto/ tree and that
+	// `core/services/` is source-only. Relocate every such vendored proto to
+	// protobuf/proto/<import-path> (the suffix after proto-include/ IS the protoc
+	// import string), dedup across services, drop the per-service copies, and rewrite
+	// each pom.xml to point its protoSourceRoot / additionalProtoPathElement at the
+	// canonical protobuf/proto tree (the same ../../../protobuf/proto the service
+	// protos already resolve through) so `mvn package` codegen still resolves. The
+	// result: 0 `.proto` under core/ and a pom that still builds.
+	if a.isJava() {
+		relocateJavaVendoredProtos(merged)
+	}
+
+	// 2a-go/py. Go and Python guardrail: TASK A requires ZERO `.proto` under core/
+	// for EVERY profile. Go ships generated code under core/services/<svc>/ directly
+	// (no rename) and Python under python/services/<svc>/ (renamed to core/ in 3b);
+	// the canonical home for every proto is protobuf/proto/. The Node/Rust/Java paths
+	// already enforce "no .proto outside protobuf/proto/" (Node drops vendored protos
+	// at merge time; Rust/Java relocate them above). Apply the same invariant to Go
+	// and Python: relocate any `.proto` that is NOT already under protobuf/proto/ —
+	// i.e. one the agent placed inside the service source tree (e.g.
+	// core/services/<svc>/proto/<svc>.proto or python/services/<svc>/proto/…) — to the
+	// canonical protobuf/proto/<import-path> tree, deduping against what already
+	// ships, so no proto ever lands under core/. The path after a `…/proto/` segment
+	// is the protoc import string; absent that, the basename is used as a safe
+	// fallback. Go/Python codegen (buf generate / scripts/gen_proto.py) already
+	// resolves protos from protobuf/proto/, so the relocation keeps codegen working.
+	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() {
+		relocateStraySourceProtos(merged, "core/services/")
+	}
+	if a.isPython() {
+		relocateStraySourceProtos(merged, "python/")
+	}
+
+	// 2b. Proto import-closure resolution (ALL profiles). Every deliverable ships
+	// the generated service's own protos under protobuf/proto/, but the agent does
+	// NOT ship the transitive platform deps those protos import — e.g.
+	// milton_prism/types/pagination, .../query_params and openapiv3/annotations
+	// (+ their own transitive deps openapiv3/OpenAPIv3, google/protobuf/descriptor).
+	// Without those imported .proto SOURCES the shipped proto tree is not
+	// self-consistent: `buf generate` (Go), `scripts/gen_proto.py` (Python),
+	// tonic-build (Rust), proto-loader (Node) and protoc (Java) all fail with
+	// "Import … not found". Walk the import graph of every proto now under
+	// protobuf/proto/ and pull any missing imported .proto from the canonical
+	// skeleton tree so the deliverable's proto set is self-contained and
+	// REGENERABLE. This was previously applied only to Rust/Node/Java; the audit
+	// found Go and Python ship the service proto + buf config but NOT the imported
+	// pagination/query_params/openapiv3 sources (only their generated stubs), so the
+	// shipped tree cannot be regenerated. Applying it to every profile fixes that.
+	// google/* imports resolve via the buf.build deps (buf.lock, shipped below), not
+	// from disk, so the resolver correctly leaves them missing.
+	resolveProtoImportClosure(merged, a.skeletonRoot)
+
+	// 2c. Drop over-vendored protos: any .proto under protobuf/proto/ that is NOT
+	// in the transitive import closure of a generated service proto. The audit found
+	// Rust deliverables vendoring 14/26 protos that no service ever imports (e.g.
+	// cpp_features.proto, go_features.proto, java_features.proto, and many
+	// google/protobuf/* like api/type/struct/empty/wrappers/field_mask/duration/
+	// source_context, plus google/api/{client,httpbody,launch_stage}.proto). The
+	// agent over-vendors when it copies a whole well-known-type bundle instead of
+	// only the imported subset. Pruning to the exact closure means every deliverable
+	// ships precisely the protos its services import — no missing imports (2b) and no
+	// dead vendored protos (2c).
+	pruneOverVendoredProtos(merged)
+
+	// 2d. Ship buf.lock alongside buf.yaml so the deliverable's buf module can
+	// resolve its remote deps (buf.build/googleapis/googleapis,
+	// buf.build/bufbuild/protovalidate) — the google/* imports (annotations,
+	// field_behavior, descriptor, any, …) come from those deps, not from disk.
+	// Without buf.lock `buf generate`/`buf build` fails to resolve them. The skeleton
+	// filters never admit buf.lock (it is not a *.go / source file), so it is pulled
+	// here directly from the canonical protobuf/ root for every profile that ships a
+	// buf.yaml. Also strip the dangling lint-ignore entries from the shipped buf.yaml
+	// (proto/openapi-spec.proto and, when the openapiv3 dir is absent from the
+	// deliverable, proto/openapiv3) so `buf lint` does not error on missing paths.
+	shipBufLockAndCleanBufYaml(merged, a.skeletonRoot)
+
+	// 2e. Go profiles: prune platform/agent-only requires from go.mod. The
+	// monorepo go.mod declares heavy deps that ONLY the analysis/decomposition/
+	// generation workers and the platform service repositories import
+	// (github.com/docker/docker, github.com/go-git/go-git/v5,
+	// github.com/go-enry/go-enry/v2, github.com/smacker/go-tree-sitter,
+	// github.com/hibiken/asynq) — none of those trees ship in a deliverable
+	// (skipDir prunes core/cmd + core/services; core/worker is never admitted), so
+	// the deliverable imports none of these. Left in, they drag a large indirect
+	// tree (go-git's openpgp/ssh stack, docker's moby/containerd stack, asynq's
+	// go-redis/cron) that the deliverable never compiles. Drop the 5 direct
+	// requires plus the indirect deps that are reachable ONLY through them, so the
+	// assembled go.mod is `go mod tidy`-clean against the shipped + generated Go
+	// code. Only Go profiles carry a go.mod (the others exclude it).
+	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() {
+		tidyGoMod(merged)
 	}
 
 	// 3. Append config.toml.example files (per-service, always), per-service
@@ -585,7 +669,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		// config.toml.example. The auth section is identical (EdDSA tokens) in
 		// both — only the data-store config differs.
 		if a.isGoSQL() {
-			if err := generateSQLConfigExamples(merged); err != nil {
+			if err := generateSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: sql config examples: %w", err)
 			}
 			// NOTE: the mongo-driver require is NOT pruned from go.mod for Go+SQL: the
@@ -618,7 +702,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		// / DB_*, zero MONGO_*) matching the SQLAlchemy repos the generator wrote;
 		// Python + MongoDB (default) keeps the Motor .env.example.
 		if a.isPythonSQL() {
-			if err := generatePythonSQLConfigExamples(merged); err != nil {
+			if err := generatePythonSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: python sql config examples: %w", err)
 			}
 			// Drop the now-unused Motor/Mongo dependency from pyproject.toml: a Python
@@ -626,8 +710,29 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			// above) and persists via SQLAlchemy, so the motor require is a dep for a
 			// store the package never uses.
 			prunePyprojectMotorDep(merged)
+			// Drop the MongoConfig from shared/config/loader.py: a SQL deliverable has
+			// no shared/mongo_client and persists via SQLAlchemy, so the MongoConfig
+			// settings class + the BaseServiceConfig.mongo field model env (MONGO_URI/
+			// MONGO_DATABASE) for a store the package never uses. Also prune the
+			// MongoConfig assertion from the shared config test.
+			dropMongoConfigForSQL(merged)
 		} else if err := generatePythonConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: python config examples: %w", err)
+		}
+		// Prune platform leakage from the shipped Python config:
+		//   - pyproject.toml mypy `overrides` reference platform services
+		//     (services.{identity,repository,migration}.*) and shared.mongo_client.*
+		//     that DO NOT exist in a single-service deliverable. Rewrite the override
+		//     blocks to the actually-generated service(s), dropping the platform names.
+		//   - .importlinter contracts are entirely platform-service
+		//     (identity/repository/migration); regenerate them for the generated
+		//     service(s) so the architectural enforcement matches the deliverable.
+		//   - fastapi + uvicorn are only used by a FastAPI (HTTP) deliverable; for a
+		//     gRPC deliverable they are unused declared deps — drop them.
+		prunePythonMypyOverrides(merged, discoverGeneratedPythonServices(merged))
+		rewritePythonImportLinter(merged, discoverGeneratedPythonServices(merged))
+		if !a.isPythonHTTP() {
+			dropPyprojectDeps(merged, []string{"fastapi", "uvicorn"})
 		}
 	}
 
@@ -642,7 +747,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		// MONGO_*) matching the schema.prisma + @prisma/client repos the generator
 		// wrote; Node + MongoDB (default) keeps the native-`mongodb`-driver .env.example.
 		if a.isNodeSQL() {
-			if err := generateNodeSQLConfigExamples(merged); err != nil {
+			if err := generateNodeSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: node sql config examples: %w", err)
 			}
 		} else if err := generateNodeConfigExamples(merged); err != nil {
@@ -671,7 +776,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		// MONGO_*) matching the SeaORM entities/repos the generator wrote; Rust +
 		// MongoDB (default) keeps the native-`mongodb`-crate .env.example.
 		if a.isRustSQL() {
-			if err := generateRustSQLConfigExamples(merged); err != nil {
+			if err := generateRustSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: rust sql config examples: %w", err)
 			}
 		} else if err := generateRustConfigExamples(merged); err != nil {
@@ -691,7 +796,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		// entities/repos the generator wrote; Java + MongoDB (default) keeps the
 		// Spring-Data-MongoDB .env.example.
 		if a.isJavaSQL() {
-			if err := generateJavaSQLConfigExamples(merged); err != nil {
+			if err := generateJavaSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: java sql config examples: %w", err)
 			}
 		} else if err := generateJavaConfigExamples(merged); err != nil {
@@ -903,6 +1008,17 @@ func isSkeletonFile(rel string) bool {
 		if strings.HasPrefix(rel, dir) && strings.HasSuffix(rel, ".go") {
 			return true
 		}
+	}
+
+	// ── core/shared/phpclassify exclusion ────────────────────────────────────
+	// phpclassify is platform analysis/decomposition worker code (PHP module
+	// segmentation). It lives under core/shared/ so the recursive core/shared/
+	// rule below would admit it, but NO shipped deliverable file imports it — its
+	// only importers are core/worker/{analysis,decomposition}/… which skipDir
+	// prunes from every deliverable. Shipping it would leak platform worker code
+	// into a single-service deliverable for no build reason, so drop it.
+	if strings.HasPrefix(rel, "core/shared/phpclassify/") {
+		return false
 	}
 
 	// ── grpc_client_sdk exclusions ───────────────────────────────────────────
@@ -1362,6 +1478,185 @@ func relocateRustVendoredProtos(merged map[string][]byte) {
 	}
 }
 
+// javaVendoredProtoMarkers are the per-service directory names the agent uses to
+// vendor the well-known-type + google.api protos for the protobuf-maven-plugin (the
+// Alpine protoc carries no bundled includes). proto-include/ is the canonical one
+// the audit found (wired as <additionalProtoPathElement>); proto_include/ and
+// third_party/ are accepted as defence-in-depth (same convention drift the Rust
+// path handles). Any `.proto` whose java/services/<svc>/… path contains one of
+// these segments is relocated to the canonical protobuf/proto/<import-path>.
+var javaVendoredProtoMarkers = []string{"/proto-include/", "/proto_include/", "/third_party/"}
+
+// relocateJavaVendoredProtos enforces the invariant "no `.proto` under the Java
+// service source tree" on the merged file map (keys still carry the java/ source
+// root prefix — the java/→core/ rename runs later in step 3b). The agent vendors
+// the google.api / well-known-type protos into
+// java/services/<svc>/src/main/proto-include/<import-path> and wires that dir as the
+// protobuf-maven-plugin <additionalProtoPathElement>; left in place those `.proto`
+// land under core/services/<svc>/… after the rename. This relocates every such
+// vendored proto to the canonical top-level protobuf/proto/<import-path> (the suffix
+// after the vendor marker IS the protoc import string, e.g.
+// google/api/http.proto → protobuf/proto/google/api/http.proto), dedups across
+// services, drops the per-service copies, and rewrites every service pom.xml to
+// repoint its proto source/include configuration at the canonical protobuf/proto
+// tree so `mvn package` codegen still resolves. The result: 0 `.proto` under core/
+// and a pom.xml that still builds.
+func relocateJavaVendoredProtos(merged map[string][]byte) {
+	for p, content := range merged {
+		// Only act on generated Java service trees (java/services/<svc>/…).
+		if !strings.HasPrefix(p, "java/services/") {
+			continue
+		}
+		if !strings.HasSuffix(p, ".proto") {
+			continue
+		}
+		var importPath string
+		for _, marker := range javaVendoredProtoMarkers {
+			if idx := strings.Index(p, marker); idx >= 0 {
+				importPath = p[idx+len(marker):]
+				break
+			}
+		}
+		if importPath == "" {
+			// A `.proto` directly under the service tree (not in a vendor dir) — e.g.
+			// java/services/<svc>/src/main/proto/<svc>.proto. The agent occasionally
+			// keeps the service proto inside the module instead of under the canonical
+			// tree; relocate it too so NO `.proto` survives under core/. Use the path
+			// after src/main/proto/ as the import path when present; otherwise fall back
+			// to the basename so it still lands under protobuf/proto/.
+			if idx := strings.Index(p, "/src/main/proto/"); idx >= 0 {
+				importPath = p[idx+len("/src/main/proto/"):]
+			} else {
+				importPath = p[strings.LastIndex(p, "/")+1:]
+			}
+		}
+		canonical := "protobuf/proto/" + importPath
+		// Move to canonical location (first writer wins; vendored copies are
+		// byte-identical google sources, so dedup is safe).
+		if _, exists := merged[canonical]; !exists {
+			merged[canonical] = content
+		}
+		delete(merged, p)
+	}
+
+	// Rewrite each service pom.xml to repoint its proto source/include config at the
+	// canonical protobuf/proto tree now that the vendored proto-include dir is gone.
+	for p, content := range merged {
+		if !strings.HasPrefix(p, "java/") || !strings.HasSuffix(p, "pom.xml") {
+			continue
+		}
+		if rewritten, changed := rewriteJavaPomProtoPaths(string(content)); changed {
+			merged[p] = []byte(rewritten)
+		}
+	}
+}
+
+// canonicalJavaProtoPath is the relative path from a java/services/<svc>/ module to
+// the canonical top-level protobuf/proto tree (svc → services → java → repo root,
+// then into protobuf/proto). It is the SAME prefix the generated service protos
+// already resolve through, so repointing the plugin here keeps codegen working with
+// every `.proto` under protobuf/proto/ ONLY.
+const canonicalJavaProtoPath = "../../../protobuf/proto"
+
+// rewriteJavaPomProtoPaths rewrites a Java pom.xml's protobuf-maven-plugin proto
+// path configuration so it resolves protos from the canonical top-level
+// protobuf/proto tree instead of a per-service vendored proto-include directory.
+// It:
+//   - drops any <additionalProtoPathElement>…proto-include…</additionalProtoPathElement>
+//     block whose value points at a vendored include dir (the protos it referenced
+//     now live under protobuf/proto/, reachable via the protoSourceRoot/relative
+//     include the service protos already use);
+//   - repoints a <protoSourceRoot> that pointed at the module-local src/main/proto
+//     (or a vendored proto dir) at the canonical ../../../protobuf/proto path so the
+//     relocated service proto still drives codegen.
+//
+// Returns the rewritten body and whether any change was made. A pom with no proto
+// path configuration (the common case once vendoring is removed) is returned
+// unchanged.
+func rewriteJavaPomProtoPaths(body string) (string, bool) {
+	changed := false
+
+	// 1. Drop <additionalProtoPathElement> blocks that reference a vendored include
+	//    dir (proto-include / proto_include / third_party). The protos they pointed
+	//    at now live under protobuf/proto/, resolved via the protoSourceRoot's
+	//    include root, so the extra include path is dead and would break codegen
+	//    (the dir no longer exists).
+	for _, marker := range []string{"proto-include", "proto_include", "third_party"} {
+		for {
+			open := strings.Index(body, "<additionalProtoPathElement>")
+			if open < 0 {
+				break
+			}
+			closeTag := "</additionalProtoPathElement>"
+			closeIdx := strings.Index(body[open:], closeTag)
+			if closeIdx < 0 {
+				break
+			}
+			end := open + closeIdx + len(closeTag)
+			block := body[open:end]
+			if !strings.Contains(block, marker) {
+				// This block does not reference the current marker; stop scanning for
+				// THIS marker (avoid an infinite loop on a non-matching block) and move
+				// on to the next marker.
+				break
+			}
+			// Drop the block plus any trailing whitespace/newline left behind.
+			rest := body[end:]
+			rest = strings.TrimLeft(rest, " \t")
+			rest = strings.TrimPrefix(rest, "\n")
+			body = strings.TrimRight(body[:open], " \t") + "\n" + rest
+			changed = true
+		}
+	}
+
+	// 2. Repoint a module-local / vendored <protoSourceRoot> at the canonical tree so
+	//    the relocated service proto still drives codegen. Only rewrite when it does
+	//    NOT already point at the canonical protobuf/proto path.
+	const psrOpen = "<protoSourceRoot>"
+	const psrClose = "</protoSourceRoot>"
+	if open := strings.Index(body, psrOpen); open >= 0 {
+		valStart := open + len(psrOpen)
+		if closeIdx := strings.Index(body[valStart:], psrClose); closeIdx >= 0 {
+			val := body[valStart : valStart+closeIdx]
+			if !strings.Contains(val, "protobuf/proto") {
+				body = body[:valStart] + canonicalJavaProtoPath + body[valStart+closeIdx:]
+				changed = true
+			}
+		}
+	}
+
+	return body, changed
+}
+
+// relocateStraySourceProtos relocates any `.proto` under prefix that is NOT already
+// in the canonical protobuf/proto/ tree to protobuf/proto/<import-path>, deduping
+// against what already ships, and drops the in-tree copy. It is the Go/Python
+// homologue of relocateRustVendoredProtos / relocateJavaVendoredProtos and the merge
+// guard isNodeVendoredProto: the invariant is "the only protos a deliverable ships
+// live under protobuf/proto/". The import path is taken from after a `…/proto/`
+// segment (the protoc import string the agent used), falling back to the basename so
+// the proto still lands under protobuf/proto/. Keys carry their pre-3b-rename prefix
+// (core/services/ for Go — no rename; python/ for Python), which is why this runs
+// BEFORE the rename.
+func relocateStraySourceProtos(merged map[string][]byte, prefix string) {
+	for p, content := range merged {
+		if !strings.HasPrefix(p, prefix) || !strings.HasSuffix(p, ".proto") {
+			continue
+		}
+		var importPath string
+		if idx := strings.Index(p, "/proto/"); idx >= 0 {
+			importPath = p[idx+len("/proto/"):]
+		} else {
+			importPath = p[strings.LastIndex(p, "/")+1:]
+		}
+		canonical := "protobuf/proto/" + importPath
+		if _, exists := merged[canonical]; !exists {
+			merged[canonical] = content
+		}
+		delete(merged, p)
+	}
+}
+
 // rustVendorMarkerLiterals are the directory-name literals the agent uses when it
 // vendors third-party protos and feeds the dir into the tonic-build include slice.
 // They mirror the markers in relocateRustVendoredProtos but as the source-literal
@@ -1496,6 +1791,366 @@ func prunePyprojectMotorDep(merged map[string][]byte) {
 	}
 }
 
+// goModPlatformDirectDeps are the heavy direct requires the monorepo go.mod
+// declares that ONLY the analysis/decomposition/generation workers and the
+// platform service repositories import — none of which ship in a deliverable. They
+// are dropped from the assembled go.mod.
+var goModPlatformDirectDeps = []string{
+	"github.com/docker/docker",
+	"github.com/go-git/go-git/v5",
+	"github.com/go-enry/go-enry/v2",
+	"github.com/smacker/go-tree-sitter",
+	"github.com/hibiken/asynq",
+}
+
+// goModPlatformIndirectDeps are the indirect requires reachable ONLY through the
+// goModPlatformDirectDeps (the go-git openpgp/ssh stack, the docker moby/containerd
+// stack, the asynq go-redis/cron stack, and the enry oniguruma binding). They are
+// confirmed unused by every shipped Go tree (core/shared, core/internal, pkg/*),
+// so dropping them keeps the assembled go.mod tidy without removing anything the
+// deliverable compiles. Determined by module-graph reachability from the 5 platform
+// roots minus reachability from the deliverable's real deps.
+var goModPlatformIndirectDeps = []string{
+	"github.com/Microsoft/go-winio",
+	"github.com/ProtonMail/go-crypto",
+	"github.com/cloudflare/circl",
+	"github.com/containerd/log",
+	"github.com/cyphar/filepath-securejoin",
+	"github.com/dgryski/go-rendezvous",
+	"github.com/distribution/reference",
+	"github.com/docker/go-connections",
+	"github.com/docker/go-units",
+	"github.com/emirpasic/gods",
+	"github.com/go-enry/go-oniguruma",
+	"github.com/go-git/gcfg",
+	"github.com/go-git/go-billy/v5",
+	"github.com/gogo/protobuf",
+	"github.com/golang/groupcache",
+	"github.com/jbenet/go-context",
+	"github.com/kevinburke/ssh_config",
+	"github.com/moby/docker-image-spec",
+	"github.com/moby/term",
+	"github.com/morikuni/aec",
+	"github.com/opencontainers/go-digest",
+	"github.com/opencontainers/image-spec",
+	"github.com/pjbgf/sha1cd",
+	"github.com/redis/go-redis/v9",
+	"github.com/robfig/cron/v3",
+	"github.com/sergi/go-diff",
+	"github.com/skeema/knownhosts",
+	"github.com/xanzy/ssh-agent",
+}
+
+// tidyGoMod rewrites the assembled go.mod (if present) to drop the platform/agent
+// direct + indirect requires the deliverable never imports (goModPlatformDirectDeps
+// + goModPlatformIndirectDeps). A require line is matched by its module path as the
+// first whitespace-separated token after optional leading tabs, so the version and
+// any `// indirect` suffix do not affect the match. Only require lines are touched;
+// the module/go directives and every other require are preserved verbatim. No-op
+// when go.mod is absent (non-Go profiles).
+func tidyGoMod(merged map[string][]byte) {
+	const key = "go.mod"
+	content, ok := merged[key]
+	if !ok {
+		return
+	}
+	drop := make(map[string]struct{}, len(goModPlatformDirectDeps)+len(goModPlatformIndirectDeps))
+	for _, m := range goModPlatformDirectDeps {
+		drop[m] = struct{}{}
+	}
+	for _, m := range goModPlatformIndirectDeps {
+		drop[m] = struct{}{}
+	}
+	var keep []string
+	changed := false
+	for _, line := range strings.Split(string(content), "\n") {
+		trimmed := strings.TrimSpace(line)
+		// A require line is `<module> <version>[ // indirect]`. The module path is
+		// the first token. Lines like `require (`, `)`, `module …`, `go …` have a
+		// first token that never matches a module path in the drop set.
+		fields := strings.Fields(trimmed)
+		if len(fields) >= 2 {
+			if _, d := drop[fields[0]]; d {
+				changed = true
+				continue
+			}
+		}
+		keep = append(keep, line)
+	}
+	if changed {
+		merged[key] = []byte(strings.Join(keep, "\n"))
+	}
+}
+
+// pythonPlatformServices are the fixed Milton Prism PLATFORM service names. A
+// single-service deliverable never ships these (its generated service has a
+// user-chosen name like "user"/"bookstack"), so any mypy override / import-linter
+// contract / dep that names one of these is platform leakage to prune or rewrite.
+var pythonPlatformServices = []string{"identity", "repository", "migration", "analysis", "billing", "articles"}
+
+// dropPyprojectDeps removes the named top-level dependency lines from the
+// [tool.poetry.dependencies] section of python/pyproject.toml (e.g. fastapi,
+// uvicorn for a non-FastAPI deliverable). A dep line is `<name> = …`; the match is
+// on the bare name token so the version/extras spec is irrelevant. Only the
+// dependency lines are touched — mypy/ruff config that merely mentions the name is
+// inert and left as-is.
+func dropPyprojectDeps(merged map[string][]byte, deps []string) {
+	c, ok := merged["python/pyproject.toml"]
+	if !ok {
+		return
+	}
+	drop := make(map[string]struct{}, len(deps))
+	for _, d := range deps {
+		drop[d] = struct{}{}
+	}
+	var keep []string
+	changed := false
+	for _, line := range strings.Split(string(c), "\n") {
+		t := strings.TrimSpace(line)
+		if eq := strings.Index(t, "="); eq > 0 {
+			name := strings.TrimSpace(t[:eq])
+			if _, d := drop[name]; d {
+				changed = true
+				continue
+			}
+		}
+		keep = append(keep, line)
+	}
+	if changed {
+		merged["python/pyproject.toml"] = []byte(strings.Join(keep, "\n"))
+	}
+}
+
+// prunePythonMypyOverrides rewrites python/pyproject.toml so the mypy
+// `[[tool.mypy.overrides]]` module lists name only modules that exist in the
+// deliverable. It drops every `services.<platform>.…` entry (platform services the
+// deliverable does not ship) and, when no generated service is present, the
+// shared.mongo_client.* block too is left intact only if shared/mongo_client ships.
+// For each dropped `services.identity.<suffix>` entry it substitutes the equivalent
+// `services.<generated>.<suffix>` entry for every generated service, so the mypy
+// relaxations that the platform applied to its identity/repository/migration
+// handlers/repos/wire/__main__ also apply to the generated service(s). Entries that
+// are not service-scoped (shared.*, grpc.*, google.*, …) are preserved verbatim.
+func prunePythonMypyOverrides(merged map[string][]byte, generated []string) {
+	c, ok := merged["python/pyproject.toml"]
+	if !ok {
+		return
+	}
+	platform := make(map[string]struct{}, len(pythonPlatformServices))
+	for _, p := range pythonPlatformServices {
+		platform[p] = struct{}{}
+	}
+	// Map a platform-scoped module entry to its generated-service equivalents.
+	// "services.identity.infrastructure.grpc_handlers.identity_handler" with a
+	// service-named leaf is remapped structurally: the 2nd dotted segment (the
+	// service name) is swapped, and any occurrence of the old service name as a
+	// path leaf token (…/identity_handler) is swapped to the generated name.
+	expand := func(entry string) []string {
+		// entry like `    "services.identity.infrastructure...",`
+		trimmed := strings.TrimSpace(entry)
+		inner := strings.Trim(trimmed, `",`)
+		parts := strings.Split(inner, ".")
+		if len(parts) < 2 || parts[0] != "services" {
+			return []string{entry} // not a service-scoped module — keep verbatim
+		}
+		svc := parts[1]
+		if _, isPlat := platform[svc]; !isPlat {
+			return []string{entry} // already a generated/non-platform service — keep
+		}
+		var out []string
+		for _, g := range generated {
+			np := make([]string, len(parts))
+			copy(np, parts)
+			np[1] = g
+			// Swap a service-named leaf token (e.g. identity_handler → user_handler).
+			for i := range np {
+				if strings.HasPrefix(np[i], svc+"_") {
+					np[i] = g + strings.TrimPrefix(np[i], svc)
+				}
+			}
+			out = append(out, `    "`+strings.Join(np, ".")+`",`)
+		}
+		return out // empty when no generated service → entry simply removed
+	}
+
+	var outLines []string
+	changed := false
+	for _, line := range strings.Split(string(c), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, `"services.`) {
+			rep := expand(line)
+			if len(rep) != 1 || rep[0] != line {
+				changed = true
+			}
+			outLines = append(outLines, rep...)
+			continue
+		}
+		outLines = append(outLines, line)
+	}
+	if changed {
+		merged["python/pyproject.toml"] = []byte(strings.Join(outLines, "\n"))
+	}
+}
+
+// rewritePythonImportLinter regenerates python/.importlinter so its contracts cover
+// the actually-generated service(s) instead of the platform services
+// (identity/repository/migration) the skeleton ships. The platform contracts name
+// modules (services.identity.domain, …) that do not exist in a single-service
+// deliverable, so import-linter would report them as un-enforceable. This emits the
+// same three contract shapes the platform uses (domain-independence,
+// application-independence, handlers-not-import-repositories) for each generated
+// service, preserving the architectural enforcement. A no-op when the file is
+// absent or no generated service was discovered (the platform file is then left as
+// shipped rather than emptied).
+func rewritePythonImportLinter(merged map[string][]byte, generated []string) {
+	const key = "python/.importlinter"
+	if _, ok := merged[key]; !ok {
+		return
+	}
+	if len(generated) == 0 {
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString("[importlinter]\nroot_packages =\n    shared\n    services\ninclude_external_packages = True\n")
+	for _, svc := range generated {
+		fmt.Fprintf(&sb, `
+[importlinter:contract:%s-domain-independence]
+name = %s domain may not import ports, application, or infrastructure
+type = forbidden
+source_modules =
+    services.%s.domain
+forbidden_modules =
+    services.%s.ports
+    services.%s.application
+    services.%s.infrastructure
+    grpc
+
+[importlinter:contract:%s-application-independence]
+name = %s application may not import infrastructure, grpc, or motor
+type = forbidden
+source_modules =
+    services.%s.application
+forbidden_modules =
+    services.%s.infrastructure
+    grpc
+    motor
+
+[importlinter:contract:%s-handlers-not-import-repositories]
+name = %s gRPC handlers may not import repositories directly
+type = forbidden
+source_modules =
+    services.%s.infrastructure.grpc_handlers
+forbidden_modules =
+    services.%s.infrastructure.repositories
+`, svc, svc, svc, svc, svc, svc, svc, svc, svc, svc, svc, svc, svc, svc)
+	}
+	merged[key] = []byte(sb.String())
+}
+
+// dropMongoConfigForSQL rewrites python/shared/config/loader.py for a Python+SQL
+// deliverable: it removes the MongoConfig settings class and the
+// BaseServiceConfig.mongo field, so the shipped config models no Mongo env
+// (MONGO_URI/MONGO_DATABASE) for a store the SQLAlchemy deliverable never uses. The
+// SQLAlchemy session/engine config arrives via the generated artifacts. It also
+// prunes the MongoConfig usage from the shared config test so the test suite still
+// imports. No-op when loader.py is absent.
+func dropMongoConfigForSQL(merged map[string][]byte) {
+	const loaderKey = "python/shared/config/loader.py"
+	if c, ok := merged[loaderKey]; ok {
+		merged[loaderKey] = []byte(removePyMongoConfig(string(c)))
+	}
+	// Prune any MongoConfig reference from the shared config test.
+	const testKey = "python/shared/tests/test_config.py"
+	if c, ok := merged[testKey]; ok {
+		if cleaned, changed := removePyMongoConfigTest(string(c)); changed {
+			merged[testKey] = []byte(cleaned)
+		}
+	}
+	// Also handle the __init__.py re-export of MongoConfig.
+	const initKey = "python/shared/config/__init__.py"
+	if c, ok := merged[initKey]; ok {
+		var keep []string
+		changed := false
+		for _, line := range strings.Split(string(c), "\n") {
+			if strings.Contains(line, "MongoConfig") {
+				changed = true
+				continue
+			}
+			keep = append(keep, line)
+		}
+		if changed {
+			merged[initKey] = []byte(strings.Join(keep, "\n"))
+		}
+	}
+}
+
+// removePyMongoConfig removes the `class MongoConfig(...)` block (up to the next
+// top-level `class ` / EOF) and the `mongo: MongoConfig = …` field line from a
+// loader.py body. Conservative line-walk: a top-level class block is everything
+// from its `class X` line to the next line that begins at column 0 with `class `.
+func removePyMongoConfig(body string) string {
+	lines := strings.Split(body, "\n")
+	var out []string
+	skipping := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "class MongoConfig(") {
+			skipping = true
+			continue
+		}
+		if skipping {
+			// End the skip when a new top-level class/def starts.
+			if strings.HasPrefix(line, "class ") || strings.HasPrefix(line, "def ") {
+				skipping = false
+			} else {
+				continue
+			}
+		}
+		// Drop the BaseServiceConfig.mongo field referencing MongoConfig.
+		if strings.Contains(line, "MongoConfig") && strings.Contains(strings.TrimSpace(line), "mongo:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	// Collapse any run of 3+ blank lines left by the removal to 2.
+	joined := strings.Join(out, "\n")
+	for strings.Contains(joined, "\n\n\n\n") {
+		joined = strings.ReplaceAll(joined, "\n\n\n\n", "\n\n\n")
+	}
+	return joined
+}
+
+// removePyMongoConfigTest drops MongoConfig-referencing lines/blocks from the
+// shared config test so it still imports after MongoConfig is removed. Any test
+// function whose name contains "mongo" is dropped wholesale; any remaining stray
+// MongoConfig reference line is dropped. Returns the rewritten body and whether
+// anything changed.
+func removePyMongoConfigTest(body string) (string, bool) {
+	lines := strings.Split(body, "\n")
+	var out []string
+	skipping := false
+	changed := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "def test_") && strings.Contains(strings.ToLower(line), "mongo") {
+			skipping = true
+			changed = true
+			continue
+		}
+		if skipping {
+			if strings.HasPrefix(line, "def ") || (len(line) > 0 && line[0] != ' ' && line[0] != '\t') {
+				skipping = false
+			} else {
+				continue
+			}
+		}
+		if strings.Contains(line, "MongoConfig") {
+			changed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n"), changed
+}
+
 // protoImportRe matches a proto `import "<path>";` (incl. `import public "…";`
 // and `import weak "…";`), capturing the import path (the protoc include string).
 var protoImportRe = regexp.MustCompile(`(?m)^\s*import\s+(?:public\s+|weak\s+)?"([^"]+)"\s*;`)
@@ -1552,6 +2207,161 @@ func resolveProtoImportClosure(merged map[string][]byte, skeletonRoot string) {
 		merged[canonical] = data
 		enqueueImports(data) // resolve this proto's own imports too
 	}
+}
+
+// serviceProtoSeeds returns the canonical-path (protobuf/proto/…) keys of the
+// generated SERVICE protos in merged: the *_service.proto files under
+// protobuf/proto/milton_prism/services/, or, when the agent named them
+// differently, every proto under a /services/ path. These are the roots of the
+// import closure — a deliverable ships exactly the protos reachable from its own
+// service definitions. When no service proto is present (e.g. a deliverable that
+// vendors only types), every proto in merged is treated as a seed so the prune is
+// a safe no-op rather than dropping everything.
+func serviceProtoSeeds(merged map[string][]byte) []string {
+	const root = "protobuf/proto/"
+	var seeds []string
+	for p := range merged {
+		if !strings.HasPrefix(p, root) || !strings.HasSuffix(p, ".proto") {
+			continue
+		}
+		rel := strings.TrimPrefix(p, root)
+		if strings.HasPrefix(rel, "milton_prism/services/") {
+			seeds = append(seeds, p)
+		}
+	}
+	return seeds
+}
+
+// protoImportClosureSet returns the set of canonical-path (protobuf/proto/…) keys
+// that are in the transitive import closure of the given seed protos, restricted
+// to protos actually present in merged. It is the read-only companion of
+// resolveProtoImportClosure (which ADDS missing imports): this only walks what is
+// already in merged, so it must run AFTER resolveProtoImportClosure has completed
+// the tree. The seeds themselves are always included.
+func protoImportClosureSet(merged map[string][]byte, seeds []string) map[string]struct{} {
+	const root = "protobuf/proto/"
+	keep := make(map[string]struct{})
+	queue := append([]string(nil), seeds...)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if _, done := keep[cur]; done {
+			continue
+		}
+		keep[cur] = struct{}{}
+		content, ok := merged[cur]
+		if !ok {
+			continue
+		}
+		for _, m := range protoImportRe.FindAllSubmatch(content, -1) {
+			imp := root + string(m[1])
+			if _, present := merged[imp]; present {
+				if _, done := keep[imp]; !done {
+					queue = append(queue, imp)
+				}
+			}
+		}
+	}
+	return keep
+}
+
+// pruneOverVendoredProtos drops every .proto under protobuf/proto/ that is NOT in
+// the transitive import closure of a generated service proto. The agent vendors
+// well-known-type / google.api bundles wholesale, dragging in protos no service
+// imports (the audit measured 14/26 dead protos in a Rust deliverable, e.g.
+// cpp_features.proto, go_features.proto, java_features.proto, google/protobuf/{api,
+// type,struct,empty,wrappers,field_mask,duration,source_context}.proto,
+// google/api/{client,httpbody,launch_stage}.proto). Pruning to the exact closure
+// guarantees the proto set is precisely "every transitively-imported proto, nothing
+// more". It is a no-op when no service proto seeds the closure (so a types-only
+// vendor bundle is never wholesale-deleted). Runs AFTER resolveProtoImportClosure so
+// the closure it walks is already complete.
+func pruneOverVendoredProtos(merged map[string][]byte) {
+	const root = "protobuf/proto/"
+	seeds := serviceProtoSeeds(merged)
+	if len(seeds) == 0 {
+		return // no service proto to anchor the closure — do not prune
+	}
+	keep := protoImportClosureSet(merged, seeds)
+	for p := range merged {
+		if !strings.HasPrefix(p, root) || !strings.HasSuffix(p, ".proto") {
+			continue
+		}
+		if _, in := keep[p]; !in {
+			delete(merged, p)
+		}
+	}
+}
+
+// shipBufLockAndCleanBufYaml makes the shipped buf module self-consistent and
+// resolvable for every deliverable that carries a buf.yaml:
+//   - it pulls protobuf/buf.lock from the canonical skeleton root into merged so
+//     the module's remote deps (buf.build/googleapis/googleapis,
+//     buf.build/bufbuild/protovalidate) resolve — the google/* imports come from
+//     those deps, not from disk, and `buf generate`/`buf build` fail without the
+//     lock. The skeleton file filters never admit buf.lock, so it is added here.
+//   - it strips dangling lint-ignore entries from the shipped buf.yaml: the
+//     platform buf.yaml ignores proto/openapi-spec.proto (a platform-only proto
+//     that no deliverable ships) and proto/openapiv3 (only relevant when the
+//     openapiv3 dir is present). A `buf lint` over the deliverable errors on an
+//     ignore path that does not exist, so each ignore entry whose target is absent
+//     from the shipped proto tree is removed.
+func shipBufLockAndCleanBufYaml(merged map[string][]byte, skeletonRoot string) {
+	if _, hasYaml := merged["protobuf/buf.yaml"]; !hasYaml {
+		return // no buf module shipped in this deliverable
+	}
+	// Ship buf.lock so remote deps resolve.
+	if _, has := merged["protobuf/buf.lock"]; !has {
+		abs := filepath.Join(skeletonRoot, "protobuf", "buf.lock")
+		if data, err := os.ReadFile(abs); err == nil {
+			merged["protobuf/buf.lock"] = data
+		}
+	}
+	// Clean dangling ignore entries from buf.yaml.
+	if cleaned, changed := cleanBufYamlIgnores(string(merged["protobuf/buf.yaml"]), merged); changed {
+		merged["protobuf/buf.yaml"] = []byte(cleaned)
+	}
+}
+
+// cleanBufYamlIgnores removes lint `ignore:` list entries from a buf.yaml body
+// whose target path does not exist in the shipped proto tree. The buf.yaml lives
+// at protobuf/buf.yaml with module path `proto`, so an ignore value `proto/<x>`
+// refers to protobuf/proto/<x> in merged. An entry is dropped when neither
+// protobuf/proto/<x> (a file) nor any protobuf/proto/<x>/… (a dir) is present.
+// This targets the platform's stale ignores (proto/openapi-spec.proto, and
+// proto/openapiv3 when the openapiv3 dir was pruned) without touching live ones.
+// Returns the rewritten body and whether anything changed.
+func cleanBufYamlIgnores(body string, merged map[string][]byte) (string, bool) {
+	protoPathPresent := func(modulePath string) bool {
+		// modulePath like "proto/openapiv3" → on-disk-in-merged "protobuf/proto/openapiv3".
+		full := "protobuf/" + strings.TrimSpace(modulePath)
+		if _, ok := merged[full]; ok {
+			return true
+		}
+		prefix := full + "/"
+		for p := range merged {
+			if strings.HasPrefix(p, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	lines := strings.Split(body, "\n")
+	out := make([]string, 0, len(lines))
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// A lint ignore list item: "- proto/<something>".
+		if strings.HasPrefix(trimmed, "- proto/") {
+			target := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			if !protoPathPresent(target) {
+				changed = true
+				continue // drop the dangling ignore entry
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n"), changed
 }
 
 // sortFiles sorts a File slice by path for deterministic output.

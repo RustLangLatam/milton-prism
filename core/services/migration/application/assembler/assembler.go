@@ -991,7 +991,7 @@ func isSkeletonFile(rel string) bool {
 	//                                    internal tooling. The resulting
 	//                                    docs/openapi.yaml still ships as an artifact.
 	switch rel {
-	case "protobuf/buf.yaml", "protobuf/buf.go.gen.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.go.gen.yaml", "protobuf/buf.lock":
 		return true
 	}
 
@@ -1133,7 +1133,7 @@ func isSkeletonFilePython(rel string) bool {
 	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
 	// platform pipeline) are all excluded — none belong in a Python project.
 	switch rel {
-	case "protobuf/buf.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
 		return true
 	}
 
@@ -1219,7 +1219,7 @@ func isSkeletonFileNode(rel string) bool {
 	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
 	// platform pipeline) are all excluded — none belong in a Node project.
 	switch rel {
-	case "protobuf/buf.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
 		return true
 	}
 
@@ -1336,7 +1336,7 @@ func isSkeletonFileRust(rel string) bool {
 	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
 	// platform pipeline) are all excluded — none belong in a Rust project.
 	switch rel {
-	case "protobuf/buf.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
 		return true
 	}
 
@@ -1407,7 +1407,7 @@ func isSkeletonFileJava(rel string) bool {
 	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
 	// platform pipeline) are all excluded — none belong in a Java project.
 	switch rel {
-	case "protobuf/buf.yaml":
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
 		return true
 	}
 

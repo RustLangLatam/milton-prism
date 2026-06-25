@@ -156,10 +156,18 @@ func TestFrente1_PythonProtoClosure(t *testing.T) {
 // copied verbatim from the canonical skeleton's protobuf/buf.lock — without the lock
 // the deliverable's buf module cannot resolve its remote buf.build deps
 // (googleapis/googleapis, bufbuild/protovalidate) so `buf generate`/`buf build`
-// fail. The skeleton file filters never admit buf.lock (it is not a source/*.go
-// file), so shipBufLockAndCleanBufYaml is the sole mechanism; this exercises it for
-// all five language profiles, each fed a representative source-root artifact + the
-// generated service proto, against the shared proto-closure fixture.
+// fail. Two mechanisms ship the lock and BOTH are asserted here for all five
+// language profiles:
+//   - the skeleton file filter (isSkeletonFile*): walkSkeleton must admit
+//     protobuf/buf.lock so the lock present in the skeleton tree survives the filter
+//     pass. This is the LOAD-BEARING path — live downloads (where the
+//     shipBufLockAndCleanBufYaml os.ReadFile fallback does not find the lock at the
+//     running container's skeleton root) only get the lock via this filter. The
+//     subtest "<profile>/filter-admits-lock" exercises walkSkeleton DIRECTLY (no
+//     shipBufLock re-injection) and FAILS if the allow-list entry is removed.
+//   - shipBufLockAndCleanBufYaml: a belt-and-suspenders re-read that re-injects the
+//     lock into merged from the skeleton root when present. The Assemble-level
+//     assertion below covers the full pipeline output.
 func TestShipsBufLock_AllProfiles(t *testing.T) {
 	// The canonical buf.lock body the fixture lays down at protobuf/buf.lock; the
 	// shipped lock must equal it byte-for-byte (proves a real copy, not a stub).
@@ -180,6 +188,21 @@ func TestShipsBufLock_AllProfiles(t *testing.T) {
 		t.Run(tc.profile, func(t *testing.T) {
 			root := buildProtoClosureFixture(t)
 			a := New(root, false, tc.profile, "grpc", "")
+
+			// LOAD-BEARING: the skeleton filter (isSkeletonFile*) must admit
+			// protobuf/buf.lock so the lock present in the skeleton tree survives the
+			// walk. This drives walkSkeleton DIRECTLY (the real filter pass) WITHOUT the
+			// shipBufLockAndCleanBufYaml re-injection, so it fails if the allow-list
+			// entry is removed — which is exactly the bug that dropped buf.lock from
+			// live downloads even though the skeleton root carried it.
+			walked := map[string][]byte{}
+			if err := a.walkSkeleton(walked); err != nil {
+				t.Fatalf("walkSkeleton(%s): %v", tc.profile, err)
+			}
+			if _, ok := walked["protobuf/buf.lock"]; !ok {
+				t.Fatalf("%s: skeleton filter dropped protobuf/buf.lock (isSkeletonFile must admit it) — buf.lock present in skeleton root would not ship", tc.profile)
+			}
+
 			files, err := a.Assemble([]InputFile{
 				tc.artifact,
 				{Path: "protobuf/proto/milton_prism/services/user/v1/user_service.proto", Content: userServiceProtoArtifact},

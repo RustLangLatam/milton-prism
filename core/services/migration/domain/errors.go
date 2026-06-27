@@ -49,6 +49,14 @@ const (
 	// language-level holes; MIG111 only fires for a non-generable language or an
 	// unknown/unsupported database engine.
 	ErrCodeUnsupportedDatabase = "MIG111"
+	// ErrCodeUnsupportedHttpFramework: the requested (language, HTTP framework) cell
+	// is not in the HTTP-framework matrix (IsGenerableHttpFramework). The
+	// HTTP-framework sub-axis only applies when the transport is HTTP; for gRPC the
+	// field is ignored and never triggers this error. Rejected at creation so a
+	// migration never targets an HTTP framework the generator cannot emit. v1
+	// generates Go + net/http (default) and Go + Gin; any other framework (Echo,
+	// Chi, Fiber, or a framework for a language whose set is unfilled) is rejected.
+	ErrCodeUnsupportedHttpFramework = "MIG112"
 )
 
 var (
@@ -80,6 +88,11 @@ var (
 	// Python (SQLAlchemy), Node (Prisma) and Rust (SeaORM). Rejected at creation so
 	// a migration never targets a database engine the generator cannot emit.
 	ErrUnsupportedDatabase = newError(ErrCodeUnsupportedDatabase, "Failure_Unsupported_Database")
+	// ErrUnsupportedHttpFramework: the requested (language, HTTP framework)
+	// combination is not generable (see IsGenerableHttpFramework). v1 generates Go +
+	// net/http (default) and Go + Gin. Rejected at creation so a migration never
+	// targets an HTTP framework the generator cannot emit.
+	ErrUnsupportedHttpFramework = newError(ErrCodeUnsupportedHttpFramework, "Failure_Unsupported_Http_Framework")
 )
 
 // ── Domain errors (MIG2xx) ────────────────────────────────────────────────────

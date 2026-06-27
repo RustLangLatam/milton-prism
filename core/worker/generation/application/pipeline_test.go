@@ -543,14 +543,18 @@ func TestPipeline_Retry_PermanentAfterExhaustion(t *testing.T) {
 	assert.Equal(t, workerdomain.ServiceStatusFailed, rec.Status)
 }
 
-// TestPipeline_Retry_PermanentGatesFailure_NoRetry verifies that a permanent
-// gates failure (code quality, not rate-limit) is not retried.
-func TestPipeline_Retry_PermanentGatesFailure_NoRetry(t *testing.T) {
+// TestPipeline_Retry_DeterministicGateRed_RetriesThenFails verifies the Phase 3
+// contract: a deterministic-gate RED (the generated service did not compile / its
+// tests failed) is RETRIED up to maxServiceAttempts — feeding the verify failure
+// back to the agent — and only after N consecutive reds is the service marked
+// FAILED (never READY). This is the behavioural gate, not a confidence gate.
+func TestPipeline_Retry_DeterministicGateRed_RetriesThenFails(t *testing.T) {
 	t.Parallel()
 
 	inv := &mockInvoker{
 		results: map[string]ports.InvokeResult{
-			"svc": {GatesPassed: false, ExitCode: 1, FailureReason: "undefined: SomeType"},
+			"svc": {GatesPassed: false, VerifyRan: true, VerifyExitCode: 1, ExitCode: 0,
+				VerifyStderr: "undefined: SomeType", FailureReason: "deterministic gate failed: undefined: SomeType"},
 		},
 	}
 	store := newMockStore()
@@ -570,7 +574,7 @@ func TestPipeline_Retry_PermanentGatesFailure_NoRetry(t *testing.T) {
 		}
 	}
 	inv.mu.Unlock()
-	assert.Equal(t, 1, callCount, "permanent failure must not be retried — invoker called once only")
+	assert.Equal(t, 3, callCount, "deterministic-gate red must be retried up to maxServiceAttempts")
 
 	assert.Equal(t, []uint64{22}, updater.failCalls)
 	assert.Empty(t, updater.readyCalls)
@@ -579,5 +583,4 @@ func TestPipeline_Retry_PermanentGatesFailure_NoRetry(t *testing.T) {
 	rec := store.records["svc"]
 	store.mu.Unlock()
 	assert.Equal(t, workerdomain.ServiceStatusFailed, rec.Status)
-	assert.Equal(t, "undefined: SomeType", rec.FailureReason)
 }

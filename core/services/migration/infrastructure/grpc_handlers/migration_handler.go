@@ -521,6 +521,7 @@ func (h *MigrationHandler) mapError(err error) error {
 			domain.ErrCodeUnsupportedTargetLanguage,
 			domain.ErrCodeUnsupportedProtocol,
 			domain.ErrCodeUnsupportedDatabase,
+			domain.ErrCodeUnsupportedHttpFramework,
 			domain.ErrCodeMissingSourceBranch,
 			domain.ErrCodeInvalidOrderBy:
 			return coreerror.NewInvalidArgumentError(dErr.Code, dErr.Message)

@@ -273,9 +273,11 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 		GeneratorPromptRef:    spec.GeneratorPromptRef,
 		OutputProfile:         profile,
 		Protocol:              spec.Protocol,
+		HTTPFramework:         spec.HTTPFramework,
 		AuthScheme:            spec.AuthScheme,
 		AuthSignatureAlg:      spec.AuthSignatureAlg,
 		Store:                 spec.Store,
+		SourceToPort:          spec.SourceToPort,
 		APIKey:                p.apiKey,
 		SessionCredentialsDir: p.credDir,
 	}
@@ -286,16 +288,31 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 	)
 	for attempt := 1; attempt <= maxServiceAttempts; attempt++ {
 		if attempt > 1 {
-			backoff := time.Duration(attempt-1) * p.retryBackoff
-			applog.Infof("generation-worker: retry service=%s attempt=%d/%d backoff=%s",
-				spec.Name, attempt, maxServiceAttempts, backoff)
-			t := time.NewTimer(backoff)
-			select {
-			case <-ctx.Done():
-				t.Stop()
+			// Feed the PREVIOUS attempt's deterministic-gate failure back to the
+			// agent so it fixes the exact red build/tests in place instead of
+			// regenerating blind. Empty for a transient (rate-limit/infra) failure
+			// where no verify output exists.
+			req.PreviousVerifyStderr = result.VerifyStderr
+			// Long backoff only for transient throttling; a red gate (compile/test
+			// failure) is retried promptly — there is nothing to wait for.
+			backoff := time.Duration(0)
+			if isTransientError(invokeErr, result.RawFailureReason) {
+				backoff = time.Duration(attempt-1) * p.retryBackoff
+			}
+			applog.Infof("generation-worker: retry service=%s attempt=%d/%d backoff=%s gateRed=%v",
+				spec.Name, attempt, maxServiceAttempts, backoff, result.VerifyRan && !result.GatesPassed)
+			if backoff > 0 {
+				t := time.NewTimer(backoff)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					invokeErr = ctx.Err()
+					goto persist
+				case <-t.C:
+				}
+			} else if ctx.Err() != nil {
 				invokeErr = ctx.Err()
 				goto persist
-			case <-t.C:
 			}
 		}
 
@@ -303,14 +320,15 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 		result, invokeErr = p.invoker.Invoke(ctx, p.monorepoRoot, req)
 
 		if invokeErr == nil && result.GatesPassed {
-			break // success
+			break // success — deterministic gate green
 		}
-		if !isTransientError(invokeErr, result.RawFailureReason) {
-			break // permanent failure — do not retry
-		}
+		// Every non-success is retryable up to maxServiceAttempts: a transient
+		// (rate-limit/infra) failure, OR a deterministic-gate RED (the service did
+		// not compile / its tests failed). On the next attempt the agent receives
+		// the verify output and must fix it. After N reds → failed (NOT ready).
 		if attempt < maxServiceAttempts {
-			applog.Warningf("generation-worker: transient error service=%s attempt=%d/%d err=%v reason=%q — retrying",
-				spec.Name, attempt, maxServiceAttempts, invokeErr, result.FailureReason)
+			applog.Warningf("generation-worker: retryable failure service=%s attempt=%d/%d err=%v gatesPassed=%v reason=%q — retrying",
+				spec.Name, attempt, maxServiceAttempts, invokeErr, result.GatesPassed, result.FailureReason)
 		}
 	}
 

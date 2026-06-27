@@ -841,6 +841,451 @@ GRPC_PORT=%d
 %s`, name, engineLabel, driverDep, engineLabel, jdbcExample, db, port, authBlock(authEnabled))
 }
 
+// generateRubyConfigExamples appends a `.env.example` to each generated Ruby
+// service directory (the Ruby homologue of the Go config.toml.example / the
+// Python/Node/Rust/Java .env.example). It is the Mongo path: a Ruby + MongoDB
+// service persists via Mongoid, so its config carries the MONGO_URI /
+// MONGODB_DATABASE variables (Mongoid's standard connection env). It is the Ruby
+// homologue of generateJavaConfigExamples.
+//
+// MUST run on the assembled map BEFORE the ruby/ → core/ rename, so service dirs
+// are still keyed under ruby/services/<svc>/. Every value is a placeholder;
+// assertNoSecrets guards each file.
+func generateRubyConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedRubyServices(assembled)
+
+	for i, svc := range services {
+		// Ruby grpc gem GRPC::RpcServer binds whatever host:port it is given; seed
+		// sequential ports from the conventional gRPC 50051 (same scheme as Rust).
+		port := 50051 + i
+		content := rubyServiceEnvExample(svc, port, serviceUsesAuth(assembled, "ruby", svc))
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("ruby/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedRubyServices scans assembled paths for
+// ruby/services/<name>/ directories and returns sorted service name slugs
+// (e.g. "user"). Runs BEFORE the ruby/ → core/ rename, so paths are still
+// ruby/-rooted. It is the Ruby homologue of discoverGeneratedJavaServices.
+func discoverGeneratedRubyServices(assembled map[string][]byte) []string {
+	const prefix = "ruby/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under ruby/services/
+		}
+		name := rest[:slash]
+		if name == "" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// rubyServiceEnvExample returns the content of a .env.example for one generated
+// Ruby microservice (Mongoid persistence). Every value is a placeholder — never a
+// real credential. It is the Ruby homologue of javaServiceEnvExample.
+func rubyServiceEnvExample(name string, port int, authEnabled bool) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# These variables are consumed by the Mongoid config (mongoid.yml / environment)
+# plus the grpc gem GRPC::RpcServer bind.
+
+# ── MongoDB (Mongoid) ──────────────────────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g.
+#   mongodb://user:password@host:27017/%s
+MONGO_URI=<your-mongo-uri>
+MONGODB_DATABASE=%s
+
+# ── gRPC server (grpc gem) ─────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+%s`, name, db, db, port, authBlock(authEnabled))
+}
+
+// generateRubySQLConfigExamples appends a SQL `.env.example` file to each generated
+// Ruby service directory for a Ruby + SQL deliverable (ActiveRecord over PostgreSQL
+// or MySQL/MariaDB). It is the SQL homologue of generateRubyConfigExamples (the
+// Mongoid .env.example): a Ruby + SQL service persists with ActiveRecord, so its
+// config is a DATABASE_URL .env rather than the MONGO_* variables. The same .env
+// shape serves both engines (only the URL scheme differs between postgres:// and
+// mysql2:// — documented inline). Zero MONGO_* variables ever appear. It is the Ruby
+// homologue of generateJavaSQLConfigExamples.
+//
+// MUST run on the assembled map BEFORE the ruby/ → core/ rename (same as the
+// native-Mongo path), so service dirs are still keyed under ruby/services/<svc>/.
+// Every value is a placeholder; assertNoSecrets guards each file.
+func generateRubySQLConfigExamples(assembled map[string][]byte, store string) error {
+	services := discoverGeneratedRubyServices(assembled)
+
+	for i, svc := range services {
+		port := 50051 + i
+		content := rubySQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "ruby", svc))
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("ruby/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// rubySQLServiceEnvExample returns the content of a .env.example for one generated
+// Ruby + SQL (ActiveRecord) microservice. It documents the single DATABASE_URL
+// (PostgreSQL or MySQL/MariaDB form), the gRPC server bind, and the auth secret.
+// Every value is a placeholder; no MONGO_* variable is present.
+func rubySQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
+	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var urlExample, gem, engineLabel string
+	if store == "mysql" {
+		urlExample = fmt.Sprintf("mysql2://user:password@host:%d/%s", dbPort, db)
+		gem = "mysql2"
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		urlExample = fmt.Sprintf("postgres://user:password@host:%d/%s", dbPort, db)
+		gem = "pg"
+		engineLabel = "PostgreSQL"
+	}
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via ActiveRecord)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# This service persists via ActiveRecord over %s — the Gemfile bundles the %s
+# driver gem. Schema is applied by the ActiveRecord migrations. ActiveRecord reads
+# the connection from DATABASE_URL.
+
+# ── Database (ActiveRecord, %s) ───────────────────────────────────────────────
+# DATABASE_URL: full connection URL, e.g.
+#   %s
+DATABASE_URL=<your-database-url>
+DB_NAME=%s
+
+# ── gRPC server (grpc gem) ─────────────────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+%s`, name, engineLabel, gem, engineLabel, urlExample, db, port, authBlock(authEnabled))
+}
+
+// generateCSharpConfigExamples appends a `.env.example` to each generated C#
+// service directory (the C# homologue of the Go config.toml.example / the
+// Python/Node/Rust/Java/Ruby .env.example). It is the Mongo path: a C# + MongoDB
+// service persists via MongoDB.Driver, so its config carries the MONGO_URI /
+// MONGO_DATABASE variables. It is the C# homologue of generateRubyConfigExamples.
+//
+// MUST run on the assembled map BEFORE the csharp/ → core/ rename, so service dirs
+// are still keyed under csharp/services/<svc>/. Every value is a placeholder;
+// assertNoSecrets guards each file.
+func generateCSharpConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedCSharpServices(assembled)
+
+	for i, svc := range services {
+		// grpc-dotnet Kestrel binds whatever host:port it is given; seed sequential
+		// ports from the conventional gRPC 50051 (same scheme as Rust/Ruby).
+		port := 50051 + i
+		content := csharpServiceEnvExample(svc, port, serviceUsesAuth(assembled, "csharp", svc))
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("csharp/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedCSharpServices scans assembled paths for
+// csharp/services/<name>/ directories and returns sorted service name slugs
+// (e.g. "user"). Runs BEFORE the csharp/ → core/ rename, so paths are still
+// csharp/-rooted. It is the C# homologue of discoverGeneratedRubyServices.
+func discoverGeneratedCSharpServices(assembled map[string][]byte) []string {
+	const prefix = "csharp/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under csharp/services/
+		}
+		name := rest[:slash]
+		if name == "" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// csharpServiceEnvExample returns the content of a .env.example for one generated
+// C# microservice (MongoDB.Driver persistence). Every value is a placeholder —
+// never a real credential. It is the C# homologue of rubyServiceEnvExample.
+func csharpServiceEnvExample(name string, port int, authEnabled bool) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# These variables are consumed by the MongoDB.Driver config plus the grpc-dotnet
+# Kestrel bind.
+
+# ── MongoDB (MongoDB.Driver) ───────────────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g.
+#   mongodb://user:password@host:27017/%s
+MONGO_URI=<your-mongo-uri>
+MONGO_DATABASE=%s
+
+# ── gRPC server (grpc-dotnet / Kestrel) ────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+%s`, name, db, db, port, authBlock(authEnabled))
+}
+
+// generateCSharpSQLConfigExamples appends a SQL `.env.example` file to each generated
+// C# service directory for a C# + SQL deliverable (EF Core over PostgreSQL or
+// MySQL/MariaDB). It is the SQL homologue of generateCSharpConfigExamples (the
+// MongoDB.Driver .env.example): a C# + SQL service persists with EF Core, so its
+// config is a connection-string .env rather than the MONGO_* variables. Zero MONGO_*
+// variables ever appear. It is the C# homologue of generateRubySQLConfigExamples.
+//
+// MUST run on the assembled map BEFORE the csharp/ → core/ rename (same as the
+// native-Mongo path), so service dirs are still keyed under csharp/services/<svc>/.
+// Every value is a placeholder; assertNoSecrets guards each file.
+func generateCSharpSQLConfigExamples(assembled map[string][]byte, store string) error {
+	services := discoverGeneratedCSharpServices(assembled)
+
+	for i, svc := range services {
+		port := 50051 + i
+		content := csharpSQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "csharp", svc))
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("csharp/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// csharpSQLServiceEnvExample returns the content of a .env.example for one generated
+// C# + SQL (EF Core) microservice. It documents the single connection string
+// (PostgreSQL or MySQL/MariaDB form), the gRPC server bind, and the auth secret.
+// Every value is a placeholder; no MONGO_* variable is present.
+func csharpSQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
+	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var connExample, provider, engineLabel string
+	if store == "mysql" {
+		connExample = fmt.Sprintf("Server=host;Port=%d;Database=%s;User=user;Password=password", dbPort, db)
+		provider = "Pomelo.EntityFrameworkCore.MySql"
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		connExample = fmt.Sprintf("Host=host;Port=%d;Database=%s;Username=user;Password=password", dbPort, db)
+		provider = "Npgsql.EntityFrameworkCore.PostgreSQL"
+		engineLabel = "PostgreSQL"
+	}
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via Entity Framework Core)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# This service persists via EF Core over %s — the .csproj references the %s
+# provider. Schema is applied by the EF Core migrations. EF Core reads the
+# connection from the connection string below.
+
+# ── Database (EF Core, %s) ────────────────────────────────────────────────────
+# ConnectionStrings__Default: full ADO.NET connection string, e.g.
+#   %s
+ConnectionStrings__Default=<your-connection-string>
+DB_NAME=%s
+
+# ── gRPC server (grpc-dotnet / Kestrel) ────────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+%s`, name, engineLabel, provider, engineLabel, connExample, db, port, authBlock(authEnabled))
+}
+
+// generateCppConfigExamples appends a `.env.example` to each generated C++
+// service directory (the C++ homologue of the Go config.toml.example / the
+// Python/Node/Rust/Java/Ruby/C# .env.example). It is the Mongo path: a C++ + MongoDB
+// service persists via mongocxx, so its config carries the MONGO_URI / MONGO_DATABASE
+// variables. It is the C++ homologue of generateCSharpConfigExamples.
+//
+// MUST run on the assembled map BEFORE the cpp/ → core/ rename, so service dirs
+// are still keyed under cpp/services/<svc>/. Every value is a placeholder;
+// assertNoSecrets guards each file.
+func generateCppConfigExamples(assembled map[string][]byte) error {
+	services := discoverGeneratedCppServices(assembled)
+
+	for i, svc := range services {
+		// grpc++ ServerBuilder binds whatever host:port it is given; seed sequential
+		// ports from the conventional gRPC 50051 (same scheme as Rust/Ruby/C#).
+		port := 50051 + i
+		content := cppServiceEnvExample(svc, port, serviceUsesAuth(assembled, "cpp", svc))
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("cpp/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// discoverGeneratedCppServices scans assembled paths for cpp/services/<name>/
+// directories and returns sorted service name slugs (e.g. "user"). Runs BEFORE the
+// cpp/ → core/ rename, so paths are still cpp/-rooted. It is the C++ homologue of
+// discoverGeneratedCSharpServices.
+func discoverGeneratedCppServices(assembled map[string][]byte) []string {
+	const prefix = "cpp/services/"
+	seen := make(map[string]struct{})
+	for path := range assembled {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		slash := strings.Index(rest, "/")
+		if slash < 0 {
+			continue // a file directly under cpp/services/
+		}
+		name := rest[:slash]
+		if name == "" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// cppServiceEnvExample returns the content of a .env.example for one generated C++
+// microservice (mongocxx persistence). Every value is a placeholder — never a real
+// credential. It is the C++ homologue of csharpServiceEnvExample.
+func cppServiceEnvExample(name string, port int, authEnabled bool) string {
+	db := name + "_db"
+	return fmt.Sprintf(`# .env.example — %s service
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# These variables are consumed by the mongocxx config plus the grpc++ ServerBuilder
+# bind.
+
+# ── MongoDB (mongocxx) ─────────────────────────────────────────────────────
+# MONGO_URI: full MongoDB connection string, e.g.
+#   mongodb://user:password@host:27017/%s
+MONGO_URI=<your-mongo-uri>
+MONGO_DATABASE=%s
+
+# ── gRPC server (grpc++ / ServerBuilder) ───────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+%s`, name, db, db, port, authBlock(authEnabled))
+}
+
+// generateCppSQLConfigExamples appends a SQL `.env.example` file to each generated
+// C++ service directory for a C++ + SQL deliverable (artisanal parametrised SQL over
+// PostgreSQL via libpqxx or MySQL/MariaDB via mysql-connector-c++). It is the SQL
+// homologue of generateCppConfigExamples (the mongocxx .env.example): a C++ + SQL
+// service persists with hand-written parametrised SQL, so its config is a
+// connection-string .env rather than the MONGO_* variables. Zero MONGO_* variables
+// ever appear. It is the C++ homologue of generateCSharpSQLConfigExamples.
+//
+// MUST run on the assembled map BEFORE the cpp/ → core/ rename (same as the
+// native-Mongo path), so service dirs are still keyed under cpp/services/<svc>/.
+// Every value is a placeholder; assertNoSecrets guards each file.
+func generateCppSQLConfigExamples(assembled map[string][]byte, store string) error {
+	services := discoverGeneratedCppServices(assembled)
+
+	for i, svc := range services {
+		port := 50051 + i
+		content := cppSQLServiceEnvExample(svc, port, store, serviceUsesAuth(assembled, "cpp", svc))
+		if err := assertNoSecrets(content, svc+" .env"); err != nil {
+			return err
+		}
+		path := fmt.Sprintf("cpp/services/%s/.env.example", svc)
+		assembled[path] = []byte(content)
+	}
+
+	return nil
+}
+
+// cppSQLServiceEnvExample returns the content of a .env.example for one generated
+// C++ + SQL (artisanal parametrised SQL) microservice. It documents the single
+// DATABASE_URL connection string (PostgreSQL or MySQL/MariaDB form), the gRPC server
+// bind, and the auth secret. Every value is a placeholder; no MONGO_* variable is present.
+func cppSQLServiceEnvExample(name string, port int, store string, authEnabled bool) string {
+	db := name + "_db"
+	dbPort := sqlDBPort(store)
+	var connExample, clientLib, engineLabel string
+	if store == "mysql" {
+		connExample = fmt.Sprintf("mysql://user:password@host:%d/%s", dbPort, db)
+		clientLib = "mysql-connector-c++"
+		engineLabel = "MySQL/MariaDB"
+	} else {
+		connExample = fmt.Sprintf("postgres://user:password@host:%d/%s", dbPort, db)
+		clientLib = "libpqxx"
+		engineLabel = "PostgreSQL"
+	}
+	return fmt.Sprintf(`# .env.example — %s service (SQL persistence via artisanal parametrised SQL)
+# Copy this file to .env (in the source root the service is launched from, i.e.
+# the core/ directory) and fill in the placeholder values. Alternatively export
+# these as environment variables before starting the service.
+#
+# This service persists via hand-written parametrised SQL over %s — the CMakeLists
+# links the %s client library (find_package, NOT FetchContent). Schema is applied
+# from the shipped schema.sql. The repos read the connection from DATABASE_URL below.
+
+# ── Database (%s, %s) ──────────────────────────────────────────────────────────
+# DATABASE_URL: full connection string, e.g.
+#   %s
+DATABASE_URL=<your-connection-string>
+DB_NAME=%s
+
+# ── gRPC server (grpc++ / ServerBuilder) ───────────────────────────────────
+GRPC_HOST=0.0.0.0
+GRPC_PORT=%d
+%s`, name, engineLabel, clientLib, clientLib, engineLabel, connExample, db, port, authBlock(authEnabled))
+}
+
 // detectTokenRole scans the generated main.go for the service to determine
 // whether it acts as a token generator (emitter) or validator. The scan
 // matches the package-qualified constant "config.TokenRoleGenerator" as it

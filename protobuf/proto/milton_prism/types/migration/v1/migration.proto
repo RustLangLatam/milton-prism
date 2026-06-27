@@ -80,6 +80,12 @@ enum TargetLanguage {
   TARGET_LANGUAGE_NODE = 4;
   // Java — grpc-java (gRPC) / Spring Boot (HTTP); JPA for SQL.
   TARGET_LANGUAGE_JAVA = 5;
+  // Ruby — grpc gem (gRPC) / Rails API|Sinatra (HTTP); Mongoid (Mongo) / ActiveRecord (SQL).
+  TARGET_LANGUAGE_RUBY = 6;
+  // C# / .NET — grpc-dotnet (gRPC) / ASP.NET Core (HTTP); MongoDB.Driver (Mongo) / EF Core (SQL).
+  TARGET_LANGUAGE_CSHARP = 7;
+  // C++ — grpc++ (gRPC) / Drogon (HTTP); mongocxx (Mongo) / libpqxx|mysql-connector (SQL). CMake build gate.
+  TARGET_LANGUAGE_CPP = 8;
 }
 
 // TargetDatabase is the storage engine for the generated microservices.
@@ -109,6 +115,35 @@ enum Transport {
   TRANSPORT_HTTP = 2;
   // 3 was TRANSPORT_NATS — removed from the offered set (out of scope).
   reserved 3;
+}
+
+// HttpFramework is the HTTP web framework the generated service's router and
+// handlers are built on. It is a sub-axis that ONLY applies when the transport
+// is TRANSPORT_HTTP — for gRPC it is ignored (left UNSPECIFIED). The values are
+// flat and prefixed by language so the single enum can host every language's
+// frameworks without collision; a given migration may only pick a framework
+// from its own target language's set (see IsGenerableHttpFramework). When
+// UNSPECIFIED on an HTTP migration the migration service canonicalises it to the
+// language default (Go → GO_NET_HTTP, the certified HTTP cell).
+//
+// v1 state: only the Go set is declared. GO_NET_HTTP (the default, certified)
+// and GO_GIN are generable; GO_ECHO/GO_CHI/GO_FIBER are registered for selection
+// (the (language, framework) cell must be enabled in supportedHttpFrameworkByLanguage).
+// Other languages' frameworks are reserved space to be filled later.
+enum HttpFramework {
+  // Default unspecified — for an HTTP migration, canonicalised to the target
+  // language's default framework on CreateMigration; ignored for gRPC.
+  HTTP_FRAMEWORK_UNSPECIFIED = 0;
+  // Go — the standard library net/http router (the certified default HTTP cell).
+  HTTP_FRAMEWORK_GO_NET_HTTP = 1;
+  // Go — the Gin web framework (github.com/gin-gonic/gin).
+  HTTP_FRAMEWORK_GO_GIN = 2;
+  // Go — the Echo web framework (github.com/labstack/echo).
+  HTTP_FRAMEWORK_GO_ECHO = 3;
+  // Go — the chi router (github.com/go-chi/chi).
+  HTTP_FRAMEWORK_GO_CHI = 4;
+  // Go — the Fiber web framework (github.com/gofiber/fiber).
+  HTTP_FRAMEWORK_GO_FIBER = 5;
 }
 
 // TargetTopology is the architectural shape of the generated output.
@@ -352,6 +387,20 @@ message Migration {
       example: {yaml: "abc123def456"}
     }
   ];
+
+  // Number of services in the approved/proposed RestructurePlan. Derived in the
+  // read-path from plan.services.length so the migration LIST can render a
+  // services count without each client recomputing it from the full plan. Zero
+  // for early states where no plan exists yet (PENDING/ANALYZING/DESIGNING). The
+  // UI decides the LABEL ("Servicios" vs "Módulos") from the topology — this is
+  // only the number.
+  int32 service_count = 25 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {
+      description: "Number of services in the restructure plan (plan.services.length). Zero when no plan exists yet (early states)."
+      example: {yaml: "6"}
+    }
+  ];
 }
 
 // TargetConfig specifies the desired output stack for the generated microservices.
@@ -417,6 +466,17 @@ message TargetConfig {
   milton_prism.types.analysis.v1.AuthScheme target_auth_scheme = 6 [(openapi.v3.property) = {
     description: "Optional override of the auth scheme the generated service implements. UNSPECIFIED uses the detected scheme. v1 generates JWT and NONE."
     example: {yaml: "AUTH_SCHEME_UNSPECIFIED"}
+  }];
+
+  // HTTP web framework the generated service's router/handlers are built on.
+  // ONLY meaningful when inter_service_transport is TRANSPORT_HTTP; ignored for
+  // gRPC (left UNSPECIFIED). When UNSPECIFIED on an HTTP migration the service
+  // canonicalises it to the target language's default (Go → GO_NET_HTTP). The
+  // (language, framework) cell must be enabled in IsGenerableHttpFramework — v1
+  // generates Go + net/http (default) and Go + Gin.
+  HttpFramework http_framework = 7 [(openapi.v3.property) = {
+    description: "HTTP web framework for the generated router/handlers. Only used when the transport is HTTP. UNSPECIFIED uses the language default (Go → GO_NET_HTTP). v1 generates Go net/http and Go Gin."
+    example: {yaml: "HTTP_FRAMEWORK_UNSPECIFIED"}
   }];
 }
 

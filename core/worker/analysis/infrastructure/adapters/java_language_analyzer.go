@@ -151,16 +151,67 @@ func (a *JavaLanguageAnalyzer) ExtractCards(ctx context.Context, workspacePath s
 
 // javaIsSpringBoot reports whether workspacePath shows a Spring Boot marker:
 // a spring-boot dependency in a Maven/Gradle manifest, or a @SpringBootApplication
-// source annotation. Currently unused by the port surface (FrameworkProfile takes
-// no path) but retained as the deterministic detection the lead can wire when the
-// profile gains workspace awareness.
+// source annotation. Wired into FileSystemFrameworkDetector (stage 3b) so
+// Gradle-based Spring projects — which the Maven manifest parser does not see —
+// still surface their framework.
+//
+// The root-manifest substring check is the cheap fast path. When it misses (e.g.
+// a multi-module Gradle build whose root build.gradle only configures the
+// spring-dependency-management plugin without the "spring-boot" string), a bounded
+// scan for the @SpringBootApplication annotation in the workspace's .java sources
+// is the deterministic fallback. Both are pure file reads — no network, no LLM.
 func javaIsSpringBoot(workspacePath string) bool {
 	for _, manifest := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
 		if raw, err := os.ReadFile(filepath.Join(workspacePath, manifest)); err == nil {
-			if strings.Contains(string(raw), "spring-boot") {
+			s := string(raw)
+			// "spring-boot" matches starter artifacts (spring-boot-starter-web);
+			// "springframework.boot" matches the Maven groupId and the Gradle plugin
+			// id ("org.springframework.boot"), which the hyphenated form misses.
+			if strings.Contains(s, "spring-boot") || strings.Contains(s, "springframework.boot") {
 				return true
 			}
 		}
 	}
-	return false
+	return javaHasSpringBootAnnotation(workspacePath)
+}
+
+// springBootScanFileCap bounds the @SpringBootApplication source scan so a large
+// monorepo cannot make framework detection walk an unbounded number of files. The
+// annotation sits on the single application entry-point class, conventionally near
+// the package root, so a modest cap reaches it well before exhaustion.
+const springBootScanFileCap = 2000
+
+// javaHasSpringBootAnnotation reports whether any .java file under workspacePath
+// declares @SpringBootApplication. Build/output and dependency directories are
+// skipped (they hold no first-party source), and the scan stops after
+// springBootScanFileCap files to stay bounded on huge repositories.
+func javaHasSpringBootAnnotation(workspacePath string) bool {
+	scanned := 0
+	found := false
+	_ = filepath.WalkDir(workspacePath, func(path string, dEntry os.DirEntry, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if dEntry.IsDir() {
+			switch dEntry.Name() {
+			case ".git", "build", "out", "target", "bin", "node_modules", ".gradle", ".idea":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(dEntry.Name(), ".java") {
+			return nil
+		}
+		scanned++
+		if scanned > springBootScanFileCap {
+			return filepath.SkipAll
+		}
+		if raw, readErr := os.ReadFile(path); readErr == nil &&
+			strings.Contains(string(raw), "@SpringBootApplication") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }

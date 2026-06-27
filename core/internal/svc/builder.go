@@ -9,7 +9,6 @@ import (
 	coreerror "milton_prism/core/shared/error"
 	"milton_prism/core/shared/grpc_health"
 	"milton_prism/core/shared/interceptors"
-	"milton_prism/core/shared/mongo_client"
 	paniccontrol "milton_prism/core/shared/utils"
 	"milton_prism/pkg/config"
 	"milton_prism/pkg/log"
@@ -28,11 +27,25 @@ import (
 type Services struct {
 	config         *config.MicroserviceServerCfg
 	cacheClient    *cache_client.CacheClient
-	mongo          *mongo_client.MongoClient
+	// mongo holds the *mongo_client.MongoClient when the service is configured for
+	// MongoDB persistence; it is nil otherwise (e.g. a GORM/SQL deliverable). It is
+	// typed `any` so this store-agnostic builder carries NO compile-time dependency
+	// on core/shared/mongo_client: the Mongo wiring and the typed Mongo() accessor
+	// live in builder_mongo.go, which a Go+SQL deliverable prunes. The field must
+	// stay in the struct (a Go struct cannot be extended from another file) but it
+	// never names the mongo type here.
+	mongo          any
 	validatorToken auth_token.TokenValidator
 	creatorToken   auth_token.TokenManager
 	mu             sync.Mutex
 }
+
+// mongoInit wires the MongoDB client into a Services when MongoDB persistence is
+// configured. It is registered by builder_mongo.go's init() — the only file that
+// imports core/shared/mongo_client. When builder_mongo.go is absent (a pruned
+// Go+SQL deliverable) mongoInit stays nil and no Mongo client is built, keeping
+// this builder free of any compile-time mongo dependency.
+var mongoInit func(*Services) error
 
 // NewServicesFromConfig initialises the shared infrastructure (Redis, MongoDB,
 // token services) from the supplied configuration.
@@ -83,12 +96,14 @@ func (s *Services) initServices() error {
 		s.cacheClient = cache_client.NewCacheClient(poolCache)
 	}
 
-	if s.config.Mongo != nil {
-		mongo, err := mongo_client.NewClient(s.config.Mongo)
-		if err != nil {
+	// Mongo wiring is registered by builder_mongo.go's init() into mongoInit when
+	// that file ships (every Mongo deliverable + the platform monorepo). A Go+SQL
+	// deliverable prunes builder_mongo.go, so mongoInit stays nil and no Mongo
+	// client is built — this store-agnostic builder never references mongo_client.
+	if mongoInit != nil {
+		if err := mongoInit(s); err != nil {
 			return err
 		}
-		s.mongo = mongo
 	}
 
 	return nil
@@ -138,9 +153,6 @@ func (s *Services) NewGRPCServer(serverOption *config.ServerOptionCgf) (*grpc.Se
 
 // Config returns the microservice configuration.
 func (s *Services) Config() *config.MicroserviceServerCfg { return s.config }
-
-// Mongo returns the MongoDB client wrapper.
-func (s *Services) Mongo() *mongo_client.MongoClient { return s.mongo }
 
 // Cache returns the Redis cache client.
 func (s *Services) Cache() *cache_client.CacheClient { return s.cacheClient }

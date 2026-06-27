@@ -18,6 +18,7 @@ type (
 	TargetLanguage        = migrationv1.TargetLanguage
 	TargetDatabase        = migrationv1.TargetDatabase
 	Transport             = migrationv1.Transport
+	HttpFramework         = migrationv1.HttpFramework
 	OutputTarget          = migrationv1.OutputTarget
 	GenerationPackage     = migrationv1.GenerationPackage
 	ServiceGenerationSpec = migrationv1.ServiceGenerationSpec
@@ -75,6 +76,9 @@ const (
 	TargetLanguagePython             = migrationv1.TargetLanguage_TARGET_LANGUAGE_PYTHON
 	TargetLanguageNode               = migrationv1.TargetLanguage_TARGET_LANGUAGE_NODE
 	TargetLanguageJava               = migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA
+	TargetLanguageRuby               = migrationv1.TargetLanguage_TARGET_LANGUAGE_RUBY
+	TargetLanguageCSharp             = migrationv1.TargetLanguage_TARGET_LANGUAGE_CSHARP
+	TargetLanguageCpp                = migrationv1.TargetLanguage_TARGET_LANGUAGE_CPP
 	TargetDatabaseUnspecified        = migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED
 	TargetDatabaseMongoDB            = migrationv1.TargetDatabase_TARGET_DATABASE_MONGODB
 	TargetDatabasePostgres           = migrationv1.TargetDatabase_TARGET_DATABASE_POSTGRES
@@ -82,6 +86,12 @@ const (
 	TransportUnspecified             = migrationv1.Transport_TRANSPORT_UNSPECIFIED
 	TransportGRPC                    = migrationv1.Transport_TRANSPORT_GRPC
 	TransportHTTP                    = migrationv1.Transport_TRANSPORT_HTTP
+	HttpFrameworkUnspecified         = migrationv1.HttpFramework_HTTP_FRAMEWORK_UNSPECIFIED
+	HttpFrameworkGoNetHTTP           = migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_NET_HTTP
+	HttpFrameworkGoGin               = migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_GIN
+	HttpFrameworkGoEcho              = migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_ECHO
+	HttpFrameworkGoChi               = migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_CHI
+	HttpFrameworkGoFiber             = migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_FIBER
 	OutputTargetUnspecified          = migrationv1.OutputTarget_OUTPUT_TARGET_UNSPECIFIED
 	OutputTargetNewBranch            = migrationv1.OutputTarget_OUTPUT_TARGET_NEW_BRANCH
 	OutputTargetNewRepository        = migrationv1.OutputTarget_OUTPUT_TARGET_NEW_REPOSITORY
@@ -106,6 +116,9 @@ var generableTargetLanguages = map[TargetLanguage]struct{}{
 	TargetLanguageNode:   {},
 	TargetLanguageRust:   {},
 	TargetLanguageJava:   {},
+	TargetLanguageRuby:   {},
+	TargetLanguageCSharp: {},
+	TargetLanguageCpp:    {},
 }
 
 // IsGenerableLanguage reports whether lang has a code generator profile today.
@@ -145,6 +158,18 @@ var supportedProtocolByLanguage = map[TargetLanguage]map[Transport]struct{}{
 		TransportHTTP: {},
 	},
 	TargetLanguageJava: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguageRuby: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguageCSharp: {
+		TransportGRPC: {},
+		TransportHTTP: {},
+	},
+	TargetLanguageCpp: {
 		TransportGRPC: {},
 		TransportHTTP: {},
 	},
@@ -217,6 +242,21 @@ var generableDatabaseByLanguage = map[TargetLanguage]map[TargetDatabase]struct{}
 		TargetDatabasePostgres: {}, // Spring Data JPA (Hibernate) + org.postgresql:postgresql
 		TargetDatabaseMariaDB:  {}, // Spring Data JPA (Hibernate) + mariadb-java-client (MySQL/MariaDB family)
 	},
+	TargetLanguageRuby: {
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // ActiveRecord + pg
+		TargetDatabaseMariaDB:  {}, // ActiveRecord + mysql2 (MySQL/MariaDB family)
+	},
+	TargetLanguageCSharp: {
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // EF Core + Npgsql.EntityFrameworkCore.PostgreSQL
+		TargetDatabaseMariaDB:  {}, // EF Core + Pomelo.EntityFrameworkCore.MySql (MySQL/MariaDB family)
+	},
+	TargetLanguageCpp: {
+		TargetDatabaseMongoDB:  {},
+		TargetDatabasePostgres: {}, // artisanal parametrised SQL via libpqxx
+		TargetDatabaseMariaDB:  {}, // artisanal parametrised SQL via mysql-connector-c++ (MySQL/MariaDB family)
+	},
 }
 
 // IsGenerableDatabase reports whether the generator can emit lang's persistence
@@ -230,5 +270,89 @@ func IsGenerableDatabase(lang TargetLanguage, db TargetDatabase) bool {
 		return false
 	}
 	_, ok = databases[db]
+	return ok
+}
+
+// defaultHttpFrameworkByLanguage is the single source of truth for the default
+// HTTP framework each language uses when the migration declares HTTP transport
+// but leaves http_framework UNSPECIFIED. The default is the already-certified
+// HTTP cell for the language (Go → net/http: the HTTP-native router the Go HTTP
+// skeleton emits today). It is the framework homologue of how transport defaults
+// to gRPC and database defaults to Mongo. Only consulted for HTTP migrations;
+// gRPC migrations leave http_framework UNSPECIFIED and ignore this map.
+var defaultHttpFrameworkByLanguage = map[TargetLanguage]HttpFramework{
+	TargetLanguageGo: HttpFrameworkGoNetHTTP,
+}
+
+// supportedHttpFrameworkByLanguage is the single source of truth for the
+// (language, HTTP framework) generation matrix — the HTTP-FRAMEWORK sub-axis,
+// which ONLY applies when the transport is HTTP. A cell present here means the
+// generator can emit that language's HTTP router/handlers on that framework
+// (frameworkSection prompt block + assembler behaviour exist). It MUST stay in
+// lockstep with the worker's frameworkSection.
+//
+// v1 state: only Go is filled. Go + net/http (the default, certified cell) and
+// Go + Gin are generable; Echo/Chi/Fiber are declared for selection but are NOT
+// in this set yet (no frameworkSection prompt block), so a migration targeting
+// them is rejected rather than silently emitting net/http. Each new cell must be
+// added here AND given a frameworkSection block in lockstep.
+var supportedHttpFrameworkByLanguage = map[TargetLanguage]map[HttpFramework]struct{}{
+	TargetLanguageGo: {
+		HttpFrameworkGoNetHTTP: {},
+		HttpFrameworkGoGin:     {},
+	},
+}
+
+// DefaultHttpFrameworkFor returns the default HTTP framework for lang (the cell
+// used when an HTTP migration leaves http_framework UNSPECIFIED). Languages with
+// no entry fall back to UNSPECIFIED (no canonicalisation — the worker then keeps
+// the language's native HTTP default).
+func DefaultHttpFrameworkFor(lang TargetLanguage) HttpFramework {
+	if fw, ok := defaultHttpFrameworkByLanguage[lang]; ok {
+		return fw
+	}
+	return HttpFrameworkUnspecified
+}
+
+// CanonicalHttpFramework canonicalises the requested HTTP framework for a
+// (language, transport) pair, mirroring how topology/transport/database are
+// canonicalised at creation:
+//   - transport != HTTP            → UNSPECIFIED (the field is ignored for gRPC).
+//   - transport == HTTP, UNSPECIFIED → the language default (Go → GO_NET_HTTP).
+//   - transport == HTTP, concrete  → returned as-is (validated separately).
+//
+// So the persisted/derived framework is always explicit for an HTTP migration
+// and always UNSPECIFIED for a gRPC one.
+func CanonicalHttpFramework(lang TargetLanguage, transport Transport, fw HttpFramework) HttpFramework {
+	if transport != TransportHTTP {
+		return HttpFrameworkUnspecified
+	}
+	if fw == HttpFrameworkUnspecified {
+		return DefaultHttpFrameworkFor(lang)
+	}
+	return fw
+}
+
+// IsGenerableHttpFramework reports whether the generator can emit lang's HTTP
+// router/handlers on framework fw for the given transport. The HTTP-framework
+// sub-axis only applies to HTTP:
+//   - transport != HTTP        → true (the field is ignored for gRPC).
+//   - transport == HTTP, UNSPECIFIED → true (it canonicalises to the language default).
+//   - transport == HTTP, concrete → true only when (lang, fw) is in the matrix.
+//
+// A non-generable language has no HTTP framework cell, so any concrete framework
+// for it returns false.
+func IsGenerableHttpFramework(lang TargetLanguage, transport Transport, fw HttpFramework) bool {
+	if transport != TransportHTTP {
+		return true
+	}
+	if fw == HttpFrameworkUnspecified {
+		return true
+	}
+	frameworks, ok := supportedHttpFrameworkByLanguage[lang]
+	if !ok {
+		return false
+	}
+	_, ok = frameworks[fw]
 	return ok
 }

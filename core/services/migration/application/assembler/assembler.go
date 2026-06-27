@@ -357,6 +357,209 @@ func isJavaGRPCArtifact(path, content string) bool {
 	return false
 }
 
+// isRuby reports whether this Assembler targets the Ruby profile.
+func (a *Assembler) isRuby() bool { return a.profile == "ruby" }
+
+// isRubySQL reports whether this Assembler targets a Ruby + SQL deliverable
+// (ActiveRecord): the store is "postgres" or "mysql", so the .env.example is a
+// DATABASE_URL file (zero MONGO_*) matching the ActiveRecord models/repos the
+// generator wrote. It is the Ruby homologue of isGoSQL / isJavaSQL. Ruby+Mongo
+// (the default) keeps Mongoid, NOT ActiveRecord.
+func (a *Assembler) isRubySQL() bool {
+	return a.isRuby() && (a.store == "postgres" || a.store == "mysql")
+}
+
+// isRubyHTTP reports whether this Assembler targets the Ruby HTTP-native (Rails
+// API / Sinatra) deliverable (Ruby profile + HTTP transport). The grpc gem service
+// bootstrap (GRPC::RpcServer) and the grpc generated service stubs (*_services_pb.rb)
+// are excluded for this cell — the Rails/Sinatra app is the sole entrypoint and the
+// messages are modelled with POROs (the *_pb.rb message classes may be kept), so no
+// grpc server bootstrap and no generated grpc service stub belong in the package. The
+// grpc-api-gateway is already excluded for HTTP by the download path.
+func (a *Assembler) isRubyHTTP() bool {
+	return a.isRuby() && a.protocol == "http"
+}
+
+// isRubyBuildArtifact reports whether p is Ruby/Bundler build output or vendored
+// dependencies — none of which belong in a Ruby deliverable: the vendor/bundle/ and
+// .bundle/ trees (bundled gems + config), the tmp/ scratch tree, packaged *.gem
+// archives, and the coverage/ report tree. It is the Ruby homologue of
+// isMavenBuildArtifact / isCargoBuildArtifact: defence in depth so a stray build
+// artifact persisted by the agent never lands in the package.
+func isRubyBuildArtifact(p string) bool {
+	p = strings.TrimPrefix(p, "ruby/")
+	if strings.HasSuffix(p, ".gem") {
+		return true
+	}
+	// Directory prefixes (at the root or nested at any depth).
+	for _, dir := range []string{"vendor/bundle", ".bundle", "tmp", "coverage"} {
+		if p == dir || strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isRubyGRPCArtifact reports whether a generated artifact is grpc-gem-specific and
+// therefore must NOT ship in a Ruby HTTP-native (Rails/Sinatra) deliverable. Two cases:
+//   - any `*_services_pb.rb` — the grpc gem generated-service stub (the gRPC service
+//     base), replaced by the Rails/Sinatra controllers for the HTTP cell. The
+//     `*_pb.rb` MESSAGE classes are NOT matched (they may back the POROs) and ship.
+//   - any .rb whose body bootstraps a grpc server: `GRPC::RpcServer` (the server) or a
+//     `GRPC::GenericService`-based service registration — the gRPC server
+//     bootstrap/entrypoint, which the Rails/Sinatra app replaces.
+func isRubyGRPCArtifact(path, content string) bool {
+	if !strings.HasSuffix(path, ".rb") {
+		return false
+	}
+	if strings.HasSuffix(path, "_services_pb.rb") {
+		return true
+	}
+	if strings.Contains(content, "GRPC::RpcServer") || strings.Contains(content, "GRPC::GenericService") {
+		return true
+	}
+	return false
+}
+
+// isCSharp reports whether this Assembler targets the C# / .NET profile.
+func (a *Assembler) isCSharp() bool { return a.profile == "csharp" }
+
+// isCSharpSQL reports whether this Assembler targets a C# + SQL deliverable (EF
+// Core): the store is "postgres" or "mysql", so the .env.example is a connection
+// string file (zero MONGO_*) matching the EF Core DbContext/entities the generator
+// wrote. It is the C# homologue of isGoSQL / isJavaSQL / isRubySQL. C#+Mongo (the
+// default) keeps MongoDB.Driver, NOT EF Core.
+func (a *Assembler) isCSharpSQL() bool {
+	return a.isCSharp() && (a.store == "postgres" || a.store == "mysql")
+}
+
+// isCSharpHTTP reports whether this Assembler targets the C# HTTP-native (ASP.NET
+// Core Minimal API) deliverable (C# profile + HTTP transport). The grpc-dotnet
+// server bootstrap (AddGrpc / MapGrpcService) and the generated gRPC service stub
+// (the *.*Base service base from Grpc.Tools with GrpcServices=Server) are excluded
+// for this cell — the ASP.NET Core app is the sole entrypoint and the messages are
+// modelled with the proto-generated message classes, so no gRPC server bootstrap and
+// no generated gRPC service base belong in the package.
+func (a *Assembler) isCSharpHTTP() bool {
+	return a.isCSharp() && a.protocol == "http"
+}
+
+// isDotnetBuildArtifact reports whether p is .NET/MSBuild build output — none of
+// which belongs in a C# deliverable: the per-project bin/ and obj/ trees (compiled
+// assemblies, intermediate objects, the restore graph) and any stray compiled
+// artifact (*.dll, *.pdb, *.nupkg). It is the C# homologue of isMavenBuildArtifact /
+// isCargoBuildArtifact / isRubyBuildArtifact: defence in depth so a stray build
+// artifact persisted by the agent never lands in the package.
+func isDotnetBuildArtifact(p string) bool {
+	p = strings.TrimPrefix(p, "csharp/")
+	if strings.HasSuffix(p, ".dll") || strings.HasSuffix(p, ".pdb") || strings.HasSuffix(p, ".nupkg") {
+		return true
+	}
+	// Directory prefixes (at the root or nested at any depth).
+	for _, dir := range []string{"bin", "obj"} {
+		if p == dir || strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isCSharpGRPCArtifact reports whether a generated artifact is grpc-dotnet-specific
+// and therefore must NOT ship in a C# HTTP-native (ASP.NET Core) deliverable. Two
+// cases:
+//   - any generated gRPC service-base file `*Grpc.cs` — the grpc_csharp_plugin
+//     service stub (the gRPC `*.*Base`), replaced by the ASP.NET Core endpoints for
+//     the HTTP cell. (The `*.cs` MESSAGE classes are NOT matched and ship.)
+//   - any .cs whose body bootstraps a grpc-dotnet server: `AddGrpc(` (the service
+//     registration) or `MapGrpcService` (the endpoint mapping) — the gRPC server
+//     bootstrap/entrypoint, which the ASP.NET Core app replaces.
+func isCSharpGRPCArtifact(path, content string) bool {
+	if !strings.HasSuffix(path, ".cs") {
+		return false
+	}
+	if strings.HasSuffix(path, "Grpc.cs") {
+		return true
+	}
+	if strings.Contains(content, "AddGrpc(") || strings.Contains(content, "MapGrpcService") {
+		return true
+	}
+	return false
+}
+
+// isCpp reports whether this Assembler targets the C++ profile.
+func (a *Assembler) isCpp() bool { return a.profile == "cpp" }
+
+// isCppSQL reports whether this Assembler targets a C++ + SQL deliverable
+// (artisanal parametrised SQL via libpqxx / mysql-connector-c++): the store is
+// "postgres" or "mysql", so the .env.example is a connection-string file (zero
+// MONGO_*) matching the hand-written SQL repos the generator wrote. It is the C++
+// homologue of isGoSQL / isCSharpSQL. C++ + Mongo (the default) keeps mongocxx.
+func (a *Assembler) isCppSQL() bool {
+	return a.isCpp() && (a.store == "postgres" || a.store == "mysql")
+}
+
+// isCppHTTP reports whether this Assembler targets the C++ HTTP-native (Drogon)
+// deliverable (C++ profile + HTTP transport). The grpc++ server bootstrap
+// (grpc::ServerBuilder / grpc::Server) and the generated gRPC service base
+// (*.grpc.pb.cc/.grpc.pb.h from grpc_cpp_plugin) are excluded for this cell — the
+// Drogon app is the sole entrypoint and the messages are modelled with the
+// protoc-generated *.pb.h classes, so no gRPC server bootstrap and no generated
+// gRPC service base belong in the package.
+func (a *Assembler) isCppHTTP() bool {
+	return a.isCpp() && a.protocol == "http"
+}
+
+// isCMakeBuildArtifact reports whether p is CMake/compiler build output — none of
+// which belongs in a C++ deliverable: the build/ tree, the CMakeFiles/ intermediate
+// dir, CMakeCache.txt, and any compiled object/archive/shared-library (*.o, *.a,
+// *.so). It is the C++ homologue of isMavenBuildArtifact / isDotnetBuildArtifact:
+// defence in depth so a stray build artifact persisted by the agent never lands in
+// the package.
+func isCMakeBuildArtifact(p string) bool {
+	p = strings.TrimPrefix(p, "cpp/")
+	if strings.HasSuffix(p, ".o") || strings.HasSuffix(p, ".a") || strings.HasSuffix(p, ".so") ||
+		strings.HasSuffix(p, ".obj") {
+		return true
+	}
+	base := p
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		base = p[i+1:]
+	}
+	if base == "CMakeCache.txt" {
+		return true
+	}
+	// Directory prefixes (at the root or nested at any depth).
+	for _, dir := range []string{"build", "CMakeFiles"} {
+		if p == dir || strings.HasPrefix(p, dir+"/") || strings.Contains(p, "/"+dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isCppGRPCArtifact reports whether a generated artifact is grpc++-specific and
+// therefore must NOT ship in a C++ HTTP-native (Drogon) deliverable. Two cases:
+//   - any generated gRPC service-base file `*.grpc.pb.cc` / `*.grpc.pb.h` — the
+//     grpc_cpp_plugin service stub (the `*::Service` base), replaced by the Drogon
+//     controllers for the HTTP cell. (The `*.pb.cc`/`*.pb.h` MESSAGE classes are NOT
+//     matched and ship.)
+//   - any .cc/.cpp/.cxx whose body bootstraps a grpc++ server: `grpc::ServerBuilder`
+//     (the server builder) or a `BuildAndStart(` call — the gRPC server
+//     bootstrap/entrypoint, which the Drogon app replaces.
+func isCppGRPCArtifact(path, content string) bool {
+	if strings.HasSuffix(path, ".grpc.pb.cc") || strings.HasSuffix(path, ".grpc.pb.h") {
+		return true
+	}
+	if !strings.HasSuffix(path, ".cc") && !strings.HasSuffix(path, ".cpp") &&
+		!strings.HasSuffix(path, ".cxx") {
+		return false
+	}
+	if strings.Contains(content, "grpc::ServerBuilder") || strings.Contains(content, "BuildAndStart(") {
+		return true
+	}
+	return false
+}
+
 // isInternalBufTemplate reports whether path is a platform-INTERNAL buf template
 // that must never ship in a user deliverable, no matter the profile or source:
 //   - protobuf/buf.docs.gen.yaml         — generates the PLATFORM panel openapi via
@@ -389,6 +592,12 @@ func (a *Assembler) sourceRoot() string {
 		return "rust"
 	case "java":
 		return "java"
+	case "ruby":
+		return "ruby"
+	case "csharp":
+		return "csharp"
+	case "cpp":
+		return "cpp"
 	default:
 		return ""
 	}
@@ -527,6 +736,100 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		if a.isJavaHTTP() && isJavaGRPCArtifact(f.Path, f.Content) {
 			continue
 		}
+		// Profile guard: a Ruby (Rails/Sinatra or grpc-gem) deliverable must never
+		// carry Go, Python, Node, Rust or Java artifacts. Same rationale as the others
+		// — defend here so a stray .go/.py/.ts/.rs/.java (or a foreign manifest) can
+		// never leak into a Ruby package. Ruby/Bundler build output (vendor/bundle/,
+		// .bundle/, tmp/, *.gem, coverage/) is also dropped as defence-in-depth.
+		if a.isRuby() && (strings.HasSuffix(f.Path, ".go") ||
+			strings.HasSuffix(f.Path, ".py") ||
+			strings.HasSuffix(f.Path, ".ts") ||
+			strings.HasSuffix(f.Path, ".rs") ||
+			strings.HasSuffix(f.Path, ".java") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile" ||
+			strings.HasSuffix(f.Path, "/package.json") || f.Path == "package.json" ||
+			strings.HasSuffix(f.Path, "/package-lock.json") || f.Path == "package-lock.json" ||
+			strings.HasSuffix(f.Path, "/Cargo.toml") || f.Path == "Cargo.toml" ||
+			strings.HasSuffix(f.Path, "/Cargo.lock") || f.Path == "Cargo.lock" ||
+			strings.HasSuffix(f.Path, "/pom.xml") || f.Path == "pom.xml" ||
+			isRubyBuildArtifact(f.Path)) {
+			continue
+		}
+		// Profile+protocol guard: a Ruby HTTP-native (Rails/Sinatra) deliverable is its
+		// own entry point and models messages with POROs, so the grpc gem server
+		// bootstrap (GRPC::RpcServer / GRPC::GenericService) and the generated grpc
+		// service stubs (*_services_pb.rb) must not ship — only the Rails/Sinatra app
+		// and its support code. The *_pb.rb message classes are kept; only grpc-bootstrap
+		// .rb files and *_services_pb.rb stubs are dropped.
+		if a.isRubyHTTP() && isRubyGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
+		// Profile guard: a C# (.NET) deliverable must never carry Go, Python, Node,
+		// Rust, Java or Ruby artifacts. Same rationale as the others — defend here so a
+		// stray .go/.py/.ts/.rs/.java/.rb (or a foreign manifest) can never leak into a
+		// C# package. .NET/MSBuild build output (bin/, obj/, *.dll, *.pdb, *.nupkg) is
+		// also dropped as defence-in-depth.
+		if a.isCSharp() && (strings.HasSuffix(f.Path, ".go") ||
+			strings.HasSuffix(f.Path, ".py") ||
+			strings.HasSuffix(f.Path, ".ts") ||
+			strings.HasSuffix(f.Path, ".rs") ||
+			strings.HasSuffix(f.Path, ".java") ||
+			strings.HasSuffix(f.Path, ".rb") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile" ||
+			strings.HasSuffix(f.Path, "/package.json") || f.Path == "package.json" ||
+			strings.HasSuffix(f.Path, "/package-lock.json") || f.Path == "package-lock.json" ||
+			strings.HasSuffix(f.Path, "/Cargo.toml") || f.Path == "Cargo.toml" ||
+			strings.HasSuffix(f.Path, "/Cargo.lock") || f.Path == "Cargo.lock" ||
+			strings.HasSuffix(f.Path, "/pom.xml") || f.Path == "pom.xml" ||
+			strings.HasSuffix(f.Path, "/Gemfile") || f.Path == "Gemfile" ||
+			strings.HasSuffix(f.Path, "/Gemfile.lock") || f.Path == "Gemfile.lock" ||
+			isDotnetBuildArtifact(f.Path)) {
+			continue
+		}
+		// Profile+protocol guard: a C# HTTP-native (ASP.NET Core) deliverable is its
+		// own entry point and models messages with the proto-generated classes, so the
+		// grpc-dotnet server bootstrap (AddGrpc / MapGrpcService) and the generated gRPC
+		// service base (*Grpc.cs) must not ship — only the ASP.NET Core app and its
+		// support code. The message *.cs classes are kept; only grpc-bootstrap .cs files
+		// and *Grpc.cs service stubs are dropped.
+		if a.isCSharpHTTP() && isCSharpGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
+		// Profile guard: a C++ deliverable must never carry Go, Python, Node, Rust,
+		// Java, Ruby or C# artifacts. Same rationale as the others — defend here so a
+		// stray .go/.py/.ts/.rs/.java/.rb/.cs (or a foreign manifest) can never leak
+		// into a C++ package. CMake/compiler build output (build/, CMakeFiles/,
+		// CMakeCache.txt, *.o/.a/.so) is also dropped as defence-in-depth. NOTE: the
+		// generated protobuf C++ stubs are *.pb.cc/.pb.h/.grpc.pb.cc/.grpc.pb.h —
+		// those carry a .cc/.h suffix, not the foreign suffixes matched here, so they
+		// ship (they are the deliverable's own code, regenerated by protoc at build).
+		if a.isCpp() && (strings.HasSuffix(f.Path, ".go") ||
+			strings.HasSuffix(f.Path, ".py") ||
+			strings.HasSuffix(f.Path, ".ts") ||
+			strings.HasSuffix(f.Path, ".rs") ||
+			strings.HasSuffix(f.Path, ".java") ||
+			strings.HasSuffix(f.Path, ".rb") ||
+			strings.HasSuffix(f.Path, ".cs") ||
+			f.Path == "go.mod" || f.Path == "go.sum" || f.Path == "Makefile" ||
+			strings.HasSuffix(f.Path, "/package.json") || f.Path == "package.json" ||
+			strings.HasSuffix(f.Path, "/package-lock.json") || f.Path == "package-lock.json" ||
+			strings.HasSuffix(f.Path, "/Cargo.toml") || f.Path == "Cargo.toml" ||
+			strings.HasSuffix(f.Path, "/Cargo.lock") || f.Path == "Cargo.lock" ||
+			strings.HasSuffix(f.Path, "/pom.xml") || f.Path == "pom.xml" ||
+			strings.HasSuffix(f.Path, "/Gemfile") || f.Path == "Gemfile" ||
+			strings.HasSuffix(f.Path, "/Gemfile.lock") || f.Path == "Gemfile.lock" ||
+			isCMakeBuildArtifact(f.Path)) {
+			continue
+		}
+		// Profile+protocol guard: a C++ HTTP-native (Drogon) deliverable is its own
+		// entry point and models messages with the protoc-generated *.pb.h classes, so
+		// the grpc++ server bootstrap (grpc::ServerBuilder / grpc::Server) and the
+		// generated gRPC service base (*.grpc.pb.cc/.grpc.pb.h) must not ship — only
+		// the Drogon app and its support code. The message *.pb.cc/.pb.h classes are
+		// kept; only grpc-bootstrap .cc/.cpp files and *.grpc.pb.* service stubs are dropped.
+		if a.isCppHTTP() && isCppGRPCArtifact(f.Path, f.Content) {
+			continue
+		}
 		// Profile guard: a Go HTTP-native deliverable is its own entry point and
 		// never wires the gRPC gateway, so the grpc-gateway transcoder
 		// (*.pb.gw.go) and the gRPC server stub (*_grpc.pb.go) must not ship —
@@ -588,11 +891,20 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// is the protoc import string; absent that, the basename is used as a safe
 	// fallback. Go/Python codegen (buf generate / scripts/gen_proto.py) already
 	// resolves protos from protobuf/proto/, so the relocation keeps codegen working.
-	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() {
+	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() && !a.isRuby() && !a.isCSharp() && !a.isCpp() {
 		relocateStraySourceProtos(merged, "core/services/")
 	}
 	if a.isPython() {
 		relocateStraySourceProtos(merged, "python/")
+	}
+	if a.isRuby() {
+		relocateStraySourceProtos(merged, "ruby/")
+	}
+	if a.isCSharp() {
+		relocateStraySourceProtos(merged, "csharp/")
+	}
+	if a.isCpp() {
+		relocateStraySourceProtos(merged, "cpp/")
 	}
 
 	// 2b. Proto import-closure resolution (ALL profiles). Every deliverable ships
@@ -651,7 +963,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// requires plus the indirect deps that are reachable ONLY through them, so the
 	// assembled go.mod is `go mod tidy`-clean against the shipped + generated Go
 	// code. Only Go profiles carry a go.mod (the others exclude it).
-	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() {
+	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() && !a.isRuby() && !a.isCSharp() && !a.isCpp() {
 		tidyGoMod(merged)
 	}
 
@@ -664,7 +976,7 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 	// Go gateway main.go). They are skipped for the Python and Node profiles,
 	// which must contain zero Go scaffolding; the language-appropriate extras
 	// arrive via the generated artifacts list plus the per-profile .env.example.
-	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() {
+	if !a.isPython() && !a.isNode() && !a.isRust() && !a.isJava() && !a.isRuby() && !a.isCSharp() && !a.isCpp() {
 		// Persistence-config variant: Go + SQL (PostgreSQL or MySQL/MariaDB) emits
 		// a per-service SQL .env.example (DATABASE_URL / DB_*) matching the GORM
 		// repos the generator wrote; Go + MongoDB (default) keeps the Mongo
@@ -674,10 +986,12 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			if err := generateSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: sql config examples: %w", err)
 			}
-			// NOTE: the mongo-driver require is NOT pruned from go.mod for Go+SQL: the
-			// shipped platform scaffold core/internal/svc/builder.go imports
-			// core/shared/mongo_client unconditionally (see isSkeletonFile), so the
-			// driver is a real build dependency of every Go cell, SQL or Mongo.
+			// Drop the mongo-driver require (+ its mongo-only indirect deps) from
+			// go.mod: a Go+SQL (GORM) deliverable prunes builder_mongo.go and the
+			// shared mongo_client package (see isSkeletonFile), so no shipped Go code
+			// imports the mongo driver. The require is dead weight; removing it keeps
+			// the assembled go.mod `go mod tidy`-clean and the deliverable mongo-free.
+			pruneGoModMongoDriver(merged)
 		} else {
 			if err := generateConfigExamples(merged); err != nil {
 				return nil, fmt.Errorf("assembler: config examples: %w", err)
@@ -718,6 +1032,18 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			// MONGO_DATABASE) for a store the package never uses. Also prune the
 			// MongoConfig assertion from the shared config test.
 			dropMongoConfigForSQL(merged)
+			// Prune the lockfile + mypy config of the Mongo stack the SQL deliverable
+			// never installs. The agent ships poetry.lock with the platform's full
+			// resolution, which still pins motor/pymongo (+ pymongo's dnspython) even
+			// though the SQL pyproject no longer declares motor — a desynced lock that
+			// re-installs the Mongo driver for a store the package never uses. And the
+			// platform mypy overrides relax motor.*/mongomock_motor.*/shared.mongo_client.*
+			// modules that a SQL deliverable does not ship (shared/mongo_client/ is
+			// excluded above). Both are the Python homologue of pruneGoModMongoDriver:
+			// drop ONLY the demonstrably-unused Mongo entries (guarded by a source-import
+			// check, so nothing the deliverable imports is ever removed).
+			prunePoetryLockMongo(merged)
+			prunePythonMongoMypyOverrides(merged)
 		} else if err := generatePythonConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: python config examples: %w", err)
 		}
@@ -752,6 +1078,14 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			if err := generateNodeSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: node sql config examples: %w", err)
 			}
+			// Drop the native Mongo drivers (mongodb/mongoose + their @types) from every
+			// package.json of a Node + SQL (Prisma) deliverable. The agent persists via
+			// @prisma/client, so a leftover mongodb/mongoose dependency declares a store
+			// the package never imports. Node homologue of pruneGoModMongoDriver: each
+			// driver is removed ONLY when no shipped .ts/.js import/require references it
+			// (so an actually-used driver is never dropped) — a no-op on the common case
+			// where the agent already emitted a Mongo-free SQL package.json.
+			pruneNodeMongoDeps(merged)
 		} else if err := generateNodeConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: node config examples: %w", err)
 		}
@@ -781,6 +1115,14 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 			if err := generateRustSQLConfigExamples(merged, a.store); err != nil {
 				return nil, fmt.Errorf("assembler: rust sql config examples: %w", err)
 			}
+			// Drop the `mongodb` crate from every Cargo.toml (workspace declaration +
+			// each member's `mongodb.workspace = true`) of a Rust + SQL (SeaORM)
+			// deliverable. The agent persists via sea-orm, so a leftover mongodb crate is
+			// a store-mismatched dependency the workspace never compiles. Rust homologue
+			// of pruneGoModMongoDriver: removed ONLY when no shipped .rs uses the crate
+			// (`use mongodb` / `mongodb::` / `extern crate mongodb`) — a no-op on the
+			// common case where the agent already emitted a Mongo-free SQL Cargo.toml.
+			pruneCargoMongoDeps(merged)
 		} else if err := generateRustConfigExamples(merged); err != nil {
 			return nil, fmt.Errorf("assembler: rust config examples: %w", err)
 		}
@@ -806,7 +1148,65 @@ func (a *Assembler) Assemble(artifacts []InputFile) ([]File, error) {
 		}
 	}
 
-	// 3b. Python/Node/Rust/Java profile: rename the source-root dir (python/, node/, rust/ or java/) →
+	// 3a-ruby. Ruby profile: append a per-service .env.example (the Ruby homologue
+	// of the Go config.toml.example / Python / Node / Rust / Java .env.example)
+	// BEFORE the ruby/ → core/ rename, so service dirs are still keyed under
+	// ruby/services/<svc>/. The emitted .env.example paths are rewritten to
+	// core/services/<svc>/.env.example by the rename step below.
+	if a.isRuby() {
+		// Persistence-config variant: Ruby + SQL (PostgreSQL or MySQL/MariaDB, both
+		// via ActiveRecord) emits a per-service SQL .env.example (DATABASE_URL, zero
+		// MONGO_*) matching the ActiveRecord models/repos the generator wrote; Ruby +
+		// MongoDB (default) keeps the Mongoid .env.example (MONGO_URI/MONGODB_DATABASE).
+		if a.isRubySQL() {
+			if err := generateRubySQLConfigExamples(merged, a.store); err != nil {
+				return nil, fmt.Errorf("assembler: ruby sql config examples: %w", err)
+			}
+		} else if err := generateRubyConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: ruby config examples: %w", err)
+		}
+	}
+
+	// 3a-csharp. C# profile: append a per-service .env.example (the C# homologue of
+	// the Go config.toml.example / Python / Node / Rust / Java / Ruby .env.example)
+	// BEFORE the csharp/ → core/ rename, so service dirs are still keyed under
+	// csharp/services/<svc>/. The emitted .env.example paths are rewritten to
+	// core/services/<svc>/.env.example by the rename step below.
+	if a.isCSharp() {
+		// Persistence-config variant: C# + SQL (PostgreSQL or MySQL/MariaDB, both via
+		// EF Core) emits a per-service SQL .env.example (connection string, zero
+		// MONGO_*) matching the EF Core DbContext/entities the generator wrote; C# +
+		// MongoDB (default) keeps the MongoDB.Driver .env.example (MONGO_URI/MONGO_DATABASE).
+		if a.isCSharpSQL() {
+			if err := generateCSharpSQLConfigExamples(merged, a.store); err != nil {
+				return nil, fmt.Errorf("assembler: csharp sql config examples: %w", err)
+			}
+		} else if err := generateCSharpConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: csharp config examples: %w", err)
+		}
+	}
+
+	// 3a-cpp. C++ profile: append a per-service .env.example (the C++ homologue of
+	// the Go config.toml.example / the other profiles' .env.example) BEFORE the
+	// cpp/ → core/ rename, so service dirs are still keyed under cpp/services/<svc>/.
+	// The emitted .env.example paths are rewritten to core/services/<svc>/.env.example
+	// by the rename step below.
+	if a.isCpp() {
+		// Persistence-config variant: C++ + SQL (PostgreSQL or MySQL/MariaDB, both via
+		// hand-written parametrised SQL — libpqxx / mysql-connector-c++) emits a
+		// per-service SQL .env.example (connection string, zero MONGO_*) matching the
+		// artisanal SQL repos the generator wrote; C++ + MongoDB (default) keeps the
+		// mongocxx .env.example (MONGO_URI/MONGO_DATABASE).
+		if a.isCppSQL() {
+			if err := generateCppSQLConfigExamples(merged, a.store); err != nil {
+				return nil, fmt.Errorf("assembler: cpp sql config examples: %w", err)
+			}
+		} else if err := generateCppConfigExamples(merged); err != nil {
+			return nil, fmt.Errorf("assembler: cpp config examples: %w", err)
+		}
+	}
+
+	// 3b. Python/Node/Rust/Java/Ruby/C#/C++ profile: rename the source-root dir (python/, node/, rust/, java/, ruby/, csharp/ or cpp/) →
 	// core/ to homologate with the Go deliverable layout (Go uses core/). The
 	// Python imports are top-level packages relative to the source root and the
 	// Node imports are relative paths within the source root, so renaming the
@@ -890,6 +1290,15 @@ func (a *Assembler) skipDir(rel string) bool {
 	if a.isJava() {
 		return skipDirJava(rel)
 	}
+	if a.isRuby() {
+		return skipDirRuby(rel)
+	}
+	if a.isCSharp() {
+		return skipDirCSharp(rel)
+	}
+	if a.isCpp() {
+		return skipDirCpp(rel)
+	}
 	return skipDir(rel)
 }
 
@@ -920,6 +1329,15 @@ func (a *Assembler) isSkeletonFile(rel string) bool {
 	if a.isJava() {
 		return isSkeletonFileJava(rel)
 	}
+	if a.isRuby() {
+		return isSkeletonFileRuby(rel)
+	}
+	if a.isCSharp() {
+		return isSkeletonFileCSharp(rel)
+	}
+	if a.isCpp() {
+		return isSkeletonFileCpp(rel)
+	}
 	// Go HTTP-native: exclude the whole pkg/gateway/ subtree EXCEPT
 	// pkg/gateway/common/error/ (pure error maps the REST handlers reuse). The
 	// HTTP service is its own entry point and never wires the gRPC gateway, so the
@@ -936,14 +1354,19 @@ func (a *Assembler) isSkeletonFile(rel string) bool {
 	if a.isGoHTTP() && rel == "core/internal/svc/build_server_group.go" {
 		return false
 	}
-	// NOTE: the Mongo shared client (core/shared/mongo_client/) is NOT dropped for a
-	// Go + SQL (GORM) cell, even though the GORM repos do not use it. The shipped
-	// platform scaffold core/internal/svc/builder.go imports mongo_client and
-	// constructs a *mongo_client.MongoClient unconditionally (the Services builder is
-	// store-agnostic), so removing the package would break `go build` with "package
-	// milton_prism/core/shared/mongo_client is not in std". Pruning it would require
-	// also making builder.go's Mongo wiring conditional — a core change beyond
-	// deliverable repackaging. The mongo-driver require therefore stays in go.mod too.
+	// Go + SQL (GORM): drop the Mongo footprint. The store-agnostic Services builder
+	// no longer hard-imports mongo_client — the Mongo wiring + the typed Mongo()
+	// accessor live in core/internal/svc/builder_mongo.go, the ONLY file that imports
+	// core/shared/mongo_client. A GORM deliverable persists via its own gorm_client
+	// and never calls Mongo(), so pruning builder_mongo.go AND the shared mongo_client
+	// package leaves builder.go (and the whole deliverable) referencing no mongo type
+	// — `go build` is clean with zero mongo footprint. The matching mongo-driver
+	// go.mod require is dropped by pruneGoModMongoDriver in the Go+SQL config step.
+	if a.isGoSQL() &&
+		(strings.HasPrefix(rel, "core/shared/mongo_client/") ||
+			rel == "core/internal/svc/builder_mongo.go") {
+		return false
+	}
 	return isSkeletonFile(rel)
 }
 
@@ -1427,6 +1850,222 @@ func isSkeletonFileJava(rel string) bool {
 	return false
 }
 
+// ── Ruby (Rails/Sinatra + grpc gem) profile skeleton filters ──────────────────
+
+// skipDirRuby returns true for directories that should be skipped entirely when
+// assembling a Ruby deliverable. The monorepo has NO ruby/ skeleton tree: a Ruby
+// deliverable is built entirely from generated artifacts (the agent writes a
+// complete bundler workspace under ruby/) plus the neutral buf configs at protobuf/
+// root. So this prunes the whole Go monorepo (core/, pkg/, api-gateway/), the
+// whole Python tree (python/), all proto source trees, and repo-wide noise. It is
+// the Ruby homologue of skipDirJava.
+func skipDirRuby(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a Ruby deliverable.
+		"core", "pkg", "api-gateway",
+		// Entire Python tree — never in a Ruby deliverable.
+		"python",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFileRuby.
+		"protobuf/proto",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any Ruby/Bundler build/cache dir at any depth (defensive).
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "vendor", ".bundle", "tmp", "coverage", "node_modules":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFileRuby returns true when the file at rel belongs in the Ruby
+// deliverable skeleton. It admits ONLY the neutral buf configs at protobuf/
+// root — there is no ruby/ source skeleton in the monorepo. No Go, Python, Node,
+// Rust or Java file can pass this filter: every admitted path is an explicit
+// non-code buf config. All Ruby source, Gemfile, and protos arrive via the
+// generated artifacts list, never from the repo skeleton. It is the Ruby
+// homologue of isSkeletonFileJava.
+func isSkeletonFileRuby(rel string) bool {
+	// Hard exclude: never emit Go, Python, Node, Rust or Java files in a Ruby deliverable.
+	if strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, ".py") ||
+		strings.HasSuffix(rel, ".pyc") || strings.HasSuffix(rel, ".ts") ||
+		strings.HasSuffix(rel, ".rs") || strings.HasSuffix(rel, ".java") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a Ruby user
+	// can regenerate their stubs against the shipped protos with their own gen
+	// template. The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL
+	// templates (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml →
+	// platform pipeline) are all excluded — none belong in a Ruby project.
+	switch rel {
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
+		return true
+	}
+
+	return false
+}
+
+// ── C# (.NET / grpc-dotnet + ASP.NET Core) profile skeleton filters ───────────
+
+// skipDirCSharp returns true for directories that should be skipped entirely when
+// assembling a C# deliverable. The monorepo has NO csharp/ skeleton tree: a C#
+// deliverable is built entirely from generated artifacts (the agent writes a
+// complete .NET workspace under csharp/) plus the neutral buf configs at protobuf/
+// root. So this prunes the whole Go monorepo (core/, pkg/, api-gateway/), the whole
+// Python tree (python/), all proto source trees, and repo-wide noise (including the
+// .NET/MSBuild build dirs bin/ and obj/). It is the C# homologue of skipDirRuby.
+func skipDirCSharp(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a C# deliverable.
+		"core", "pkg", "api-gateway",
+		// Entire Python tree — never in a C# deliverable.
+		"python",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFileCSharp.
+		"protobuf/proto",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any .NET/MSBuild build dir at any depth (defensive).
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "bin", "obj", "node_modules":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFileCSharp returns true when the file at rel belongs in the C#
+// deliverable skeleton. It admits ONLY the neutral buf configs at protobuf/ root —
+// there is no csharp/ source skeleton in the monorepo. No Go, Python, Node, Rust,
+// Java or Ruby file can pass this filter: every admitted path is an explicit
+// non-code buf config. All C# source, .csproj, and protos arrive via the generated
+// artifacts list, never from the repo skeleton. It is the C# homologue of
+// isSkeletonFileRuby.
+func isSkeletonFileCSharp(rel string) bool {
+	// Hard exclude: never emit Go, Python, Node, Rust, Java or Ruby files in a C# deliverable.
+	if strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, ".py") ||
+		strings.HasSuffix(rel, ".pyc") || strings.HasSuffix(rel, ".ts") ||
+		strings.HasSuffix(rel, ".rs") || strings.HasSuffix(rel, ".java") ||
+		strings.HasSuffix(rel, ".rb") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a C# user can
+	// regenerate their stubs against the shipped protos with their own gen template.
+	// The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL templates
+	// (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml → platform
+	// pipeline) are all excluded — none belong in a C# project.
+	switch rel {
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
+		return true
+	}
+
+	return false
+}
+
+// ── C++ (grpc++ + CMake / Drogon) profile skeleton filters ────────────────────
+
+// skipDirCpp returns true for directories that should be skipped entirely when
+// assembling a C++ deliverable. The monorepo has NO cpp/ skeleton tree: a C++
+// deliverable is built entirely from generated artifacts (the agent writes a
+// complete CMake workspace under cpp/) plus the neutral buf configs at protobuf/
+// root. So this prunes the whole Go monorepo (core/, pkg/, api-gateway/), the whole
+// Python tree (python/), all proto source trees, and repo-wide noise (including the
+// CMake/compiler build dirs build/ and CMakeFiles/). It is the C++ homologue of
+// skipDirCSharp.
+func skipDirCpp(rel string) bool {
+	skip := []string{
+		// Repo-wide noise.
+		".git", "infra", "docs", "bin", "node_modules", "milton-prism-panel",
+		// Entire Go monorepo — never in a C++ deliverable.
+		"core", "pkg", "api-gateway",
+		// Entire Python tree — never in a C++ deliverable.
+		"python",
+		// protobuf source trees for platform services; the neutral buf configs
+		// at protobuf/ root are included as exact files in isSkeletonFileCpp.
+		"protobuf/proto",
+	}
+	for _, s := range skip {
+		if rel == s || strings.HasPrefix(rel, s+"/") {
+			return true
+		}
+	}
+	// Prune any CMake/compiler build dir at any depth (defensive).
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
+	}
+	switch base {
+	case "build", "CMakeFiles", "node_modules":
+		return true
+	}
+	return false
+}
+
+// isSkeletonFileCpp returns true when the file at rel belongs in the C++
+// deliverable skeleton. It admits ONLY the neutral buf configs at protobuf/ root —
+// there is no cpp/ source skeleton in the monorepo. No Go, Python, Node, Rust,
+// Java, Ruby or C# file can pass this filter: every admitted path is an explicit
+// non-code buf config. All C++ source, CMakeLists.txt, and protos arrive via the
+// generated artifacts list, never from the repo skeleton. It is the C++ homologue
+// of isSkeletonFileCSharp.
+func isSkeletonFileCpp(rel string) bool {
+	// Hard exclude: never emit Go, Python, Node, Rust, Java, Ruby or C# files in a C++ deliverable.
+	if strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, ".py") ||
+		strings.HasSuffix(rel, ".pyc") || strings.HasSuffix(rel, ".ts") ||
+		strings.HasSuffix(rel, ".rs") || strings.HasSuffix(rel, ".java") ||
+		strings.HasSuffix(rel, ".rb") || strings.HasSuffix(rel, ".cs") {
+		return false
+	}
+	switch rel {
+	case "go.mod", "go.sum", "Makefile":
+		return false
+	}
+
+	// ── User-facing buf module config ────────────────────────────────────────
+	// Only buf.yaml (the proto module: lint/breaking/deps) ships, so a C++ user can
+	// regenerate their stubs against the shipped protos with their own gen template.
+	// The Go gen config (buf.go.gen.yaml) and the two platform-INTERNAL templates
+	// (buf.docs.gen.yaml → panel symlink, buf.deliverable.openapi.yaml → platform
+	// pipeline) are all excluded — none belong in a C++ project.
+	switch rel {
+	case "protobuf/buf.yaml", "protobuf/buf.lock":
+		return true
+	}
+
+	return false
+}
+
 // relocateRustVendoredProtos enforces the invariant "no `.proto` under the Rust
 // service source tree" on the merged file map (keys still carry the rust/ source
 // root prefix — the rust/→core/ rename runs later in step 3b). The agent image's
@@ -1804,6 +2443,508 @@ func prunePyprojectMotorDep(merged map[string][]byte) {
 	}
 }
 
+// ── Mongo-stack pruning for Python / Node / Rust SQL deliverables ────────────
+// These are the per-language homologues of pruneGoModMongoDriver: when the store
+// is SQL (≠ mongo) they drop the demonstrably-unused Mongo dependencies from the
+// shipped manifests/locks, mirroring what the Go path already does. Every removal
+// is guarded by a source-import check so a dependency the deliverable's code
+// actually imports is NEVER removed — making the prune safe by construction (it
+// can only remove dead, non-imported, store-mismatched entries).
+
+// pythonModuleImported reports whether any shipped Python source file in merged
+// imports the given top-level module (e.g. "motor", "pymongo"). Matches both
+// `import <mod>[...]` and `from <mod>[...] import …` with a word boundary so
+// `import motorway` does not match `motor`. It is the safety belt for
+// prunePoetryLockMongo: a package is dropped from poetry.lock only when no shipped
+// .py imports it, so the lock prune can never remove a dependency the code uses.
+func pythonModuleImported(merged map[string][]byte, module string) bool {
+	impPrefix := "import " + module
+	fromPrefix := "from " + module
+	boundary := func(rest string) bool {
+		return rest == "" || rest[0] == ' ' || rest[0] == '.' || rest[0] == ',' || rest[0] == '\t'
+	}
+	for p, c := range merged {
+		if !strings.HasSuffix(p, ".py") {
+			continue
+		}
+		for _, line := range strings.Split(string(c), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, impPrefix) && boundary(t[len(impPrefix):]) {
+				return true
+			}
+			if strings.HasPrefix(t, fromPrefix) {
+				rest := t[len(fromPrefix):]
+				if rest != "" && (rest[0] == ' ' || rest[0] == '.' || rest[0] == '\t') {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// pythonMongoLockPackages are the Mongo-stack packages a Python+SQL deliverable
+// never installs: the async/sync drivers and the in-memory mongo test doubles.
+// dnspython is handled separately (dropped only when it becomes an orphan once
+// pymongo — its sole dependent in the lock — is removed). The poetry package name
+// maps 1:1 to its import module except mongomock-motor → mongomock_motor.
+var pythonMongoLockPackages = []string{"motor", "pymongo", "mongomock", "mongomock-motor"}
+
+// lockNameToModule maps a poetry package name to its import module name (the only
+// non-identity case is the PyPI dash vs import underscore for mongomock-motor).
+func lockNameToModule(pkg string) string {
+	if pkg == "mongomock-motor" {
+		return "mongomock_motor"
+	}
+	return pkg
+}
+
+// prunePoetryLockMongo removes the Mongo-stack [[package]] blocks from
+// python/poetry.lock for a Python+SQL deliverable. The lock is parsed into its
+// preamble, the ordered list of [[package]] blocks, and the trailing [metadata]
+// table; a block is dropped when its name is in pythonMongoLockPackages (and no
+// shipped .py imports it). dnspython is dropped as a transitive orphan: only when
+// no KEPT package still lists it under [package.dependencies] (its sole lock
+// dependent is pymongo, which we remove) and no shipped .py imports `dns`. This is
+// closure-correct (exactly like the Go indirect-dep prune): pymongo is required
+// only by motor and dnspython only by pymongo, so removing motor orphans both. The
+// [metadata] content-hash is intentionally left as-is (it was already stale once
+// prunePyprojectMotorDep dropped the motor dep from pyproject.toml; recomputing
+// poetry's hash is out of scope — the goal is zero Mongo footprint, not lock
+// re-validation). No-op when the lock is absent.
+func prunePoetryLockMongo(merged map[string][]byte) {
+	const key = "python/poetry.lock"
+	content, ok := merged[key]
+	if !ok {
+		return
+	}
+	lines := strings.Split(string(content), "\n")
+
+	type block struct {
+		name  string
+		lines []string
+	}
+	var preamble []string
+	var blocks []block
+	var tail []string
+
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) != "[[package]]" {
+		preamble = append(preamble, lines[i])
+		i++
+	}
+	for i < len(lines) {
+		if strings.TrimSpace(lines[i]) == "[metadata]" {
+			tail = append(tail, lines[i:]...)
+			break
+		}
+		// lines[i] is a "[[package]]" header.
+		b := block{lines: []string{lines[i]}}
+		i++
+		for i < len(lines) {
+			tt := strings.TrimSpace(lines[i])
+			if tt == "[[package]]" || tt == "[metadata]" {
+				break
+			}
+			if b.name == "" && strings.HasPrefix(tt, `name = "`) {
+				b.name = strings.TrimSuffix(strings.TrimPrefix(tt, `name = "`), `"`)
+			}
+			b.lines = append(b.lines, lines[i])
+			i++
+		}
+		blocks = append(blocks, b)
+	}
+
+	remove := make(map[string]bool)
+	for _, pkg := range pythonMongoLockPackages {
+		if pythonModuleImported(merged, lockNameToModule(pkg)) {
+			continue // shipped source imports it — keep (safety belt)
+		}
+		remove[pkg] = true
+	}
+	// dnspython: drop only when it becomes an orphan (no kept package depends on
+	// it) and the deliverable does not import the `dns` module directly.
+	dnsDependedByKept := false
+	for _, b := range blocks {
+		if b.name == "dnspython" || remove[b.name] {
+			continue
+		}
+		for _, l := range b.lines {
+			if strings.HasPrefix(strings.TrimSpace(l), "dnspython = ") {
+				dnsDependedByKept = true
+			}
+		}
+	}
+	if !dnsDependedByKept && !pythonModuleImported(merged, "dns") {
+		remove["dnspython"] = true
+	}
+
+	changed := false
+	out := append([]string(nil), preamble...)
+	for _, b := range blocks {
+		if remove[b.name] {
+			changed = true
+			continue
+		}
+		out = append(out, b.lines...)
+	}
+	out = append(out, tail...)
+	if changed {
+		merged[key] = []byte(strings.Join(out, "\n"))
+	}
+}
+
+// pythonMongoMypyTokens are the substrings that mark a mypy `module` override
+// entry as a Mongo-stack module a Python+SQL deliverable does not ship (the
+// motor/mongomock stubs and the excluded shared.mongo_client package).
+var pythonMongoMypyTokens = []string{"motor", "mongomock", "mongo_client", "pymongo"}
+
+// prunePythonMongoMypyOverrides rewrites python/pyproject.toml so no
+// `[[tool.mypy.overrides]]` entry references a Mongo module that a Python+SQL
+// deliverable does not ship. Each Mongo-token `"…"` module entry is dropped from
+// its list; when a list is emptied by that removal (or a single-line
+// `module = "<mongo>"` is itself Mongo), the whole override block — plus the
+// contiguous leading `#` comment introducing it — is removed so no stale Mongo
+// reference (not even in a comment like "# Motor stubs …") survives. Non-Mongo
+// entries and non-override config are preserved verbatim. No-op when the file is
+// absent or carries no Mongo override.
+func prunePythonMongoMypyOverrides(merged map[string][]byte) {
+	const key = "python/pyproject.toml"
+	content, ok := merged[key]
+	if !ok {
+		return
+	}
+	lines := strings.Split(string(content), "\n")
+
+	isMongoEntry := func(t string) bool {
+		if !strings.HasPrefix(t, `"`) {
+			return false
+		}
+		low := strings.ToLower(t)
+		for _, tok := range pythonMongoMypyTokens {
+			if strings.Contains(low, tok) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var out []string
+	changed := false
+	i := 0
+	for i < len(lines) {
+		if strings.TrimSpace(lines[i]) != "[[tool.mypy.overrides]]" {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+		// Gather the override block: header until the next table header `[` or EOF.
+		blk := []string{lines[i]}
+		j := i + 1
+		for j < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[j]), "[") {
+			blk = append(blk, lines[j])
+			j++
+		}
+		// Do not absorb the blank/comment lines that introduce the NEXT block.
+		for len(blk) > 1 {
+			last := strings.TrimSpace(blk[len(blk)-1])
+			if last == "" || strings.HasPrefix(last, "#") {
+				blk = blk[:len(blk)-1]
+				j--
+				continue
+			}
+			break
+		}
+
+		cleaned, removedAny, moduleEmpty := cleanMypyOverrideBlock(blk, isMongoEntry)
+		if removedAny {
+			changed = true
+		}
+		if moduleEmpty {
+			// Drop the whole block + the contiguous leading comment(s) (and the one
+			// blank line above them) already emitted into out.
+			for len(out) > 0 && strings.HasPrefix(strings.TrimSpace(out[len(out)-1]), "#") {
+				out = out[:len(out)-1]
+			}
+			if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+				out = out[:len(out)-1]
+			}
+			changed = true
+		} else {
+			out = append(out, cleaned...)
+		}
+		i = j
+	}
+	if changed {
+		merged[key] = []byte(strings.Join(out, "\n"))
+	}
+}
+
+// cleanMypyOverrideBlock removes Mongo module entries from a single
+// `[[tool.mypy.overrides]]` block. It returns the cleaned block, whether any entry
+// was removed, and whether the block's `module` list ended up empty (multi-line
+// list with zero remaining quoted entries, or a single-line `module = "<mongo>"`)
+// — the signal to the caller to drop the block wholesale.
+func cleanMypyOverrideBlock(blk []string, isMongoEntry func(string) bool) (out []string, removedAny, moduleEmpty bool) {
+	inList := false
+	listSeen := false
+	entriesAfter := 0
+	for _, l := range blk {
+		t := strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(t, "module = ["):
+			listSeen = true
+			inList = !strings.Contains(t, "]")
+			out = append(out, l)
+		case strings.HasPrefix(t, `module = "`):
+			if isMongoEntry(strings.TrimSpace(strings.TrimPrefix(t, "module = "))) {
+				removedAny = true
+				moduleEmpty = true
+				continue // drop the single-line module line
+			}
+			out = append(out, l)
+		case inList:
+			if t == "]" {
+				inList = false
+				out = append(out, l)
+				continue
+			}
+			entry := strings.TrimSuffix(t, ",")
+			if isMongoEntry(entry) {
+				removedAny = true
+				continue
+			}
+			if strings.HasPrefix(t, `"`) {
+				entriesAfter++
+			}
+			out = append(out, l)
+		default:
+			out = append(out, l)
+		}
+	}
+	if listSeen && entriesAfter == 0 {
+		moduleEmpty = true
+	}
+	return out, removedAny, moduleEmpty
+}
+
+// nodeMongoDrivers are the native Mongo drivers a Node+SQL (Prisma) deliverable
+// never imports; their @types stubs are dropped alongside the dropped driver.
+var nodeMongoDrivers = []string{"mongodb", "mongoose"}
+
+// nodeModuleImported reports whether any shipped .ts/.js source in merged imports
+// the given npm package (bare specifier or a subpath like "mongodb/lib") via an
+// ES `import … "pkg"` / `from "pkg"` or a CommonJS `require("pkg")`. Safety belt
+// for pruneNodeMongoDeps: a driver is dropped only when nothing imports it.
+func nodeModuleImported(merged map[string][]byte, pkg string) bool {
+	needles := []string{
+		`"` + pkg + `"`, `'` + pkg + `'`, // bare specifier
+		`"` + pkg + `/`, `'` + pkg + `/`, // subpath import
+	}
+	for p, c := range merged {
+		if !(strings.HasSuffix(p, ".ts") || strings.HasSuffix(p, ".js") ||
+			strings.HasSuffix(p, ".mts") || strings.HasSuffix(p, ".cts")) {
+			continue
+		}
+		s := string(c)
+		for _, line := range strings.Split(s, "\n") {
+			t := strings.TrimSpace(line)
+			if !strings.Contains(t, "import") && !strings.Contains(t, "require") &&
+				!strings.Contains(t, "from") {
+				continue
+			}
+			for _, n := range needles {
+				if strings.Contains(t, n) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// pruneNodeMongoDeps removes the Mongo drivers (mongodb/mongoose) and their
+// @types stubs from every package.json of a Node+SQL deliverable, ONLY for the
+// drivers that no shipped .ts/.js imports. JSON validity is preserved: dependency
+// lines are removed by name and any trailing comma left dangling before a closing
+// `}` is stripped. No-op when the package.json is already Mongo-free.
+func pruneNodeMongoDeps(merged map[string][]byte) {
+	// Resolve, once, which drivers are safe to drop (not imported anywhere).
+	var drop []string
+	for _, d := range nodeMongoDrivers {
+		if nodeModuleImported(merged, d) {
+			continue
+		}
+		drop = append(drop, d, "@types/"+d)
+	}
+	if len(drop) == 0 {
+		return
+	}
+	dropSet := make(map[string]bool, len(drop))
+	for _, d := range drop {
+		dropSet[d] = true
+	}
+	for p, c := range merged {
+		if !(p == "node/package.json" || (strings.HasPrefix(p, "node/") && strings.HasSuffix(p, "/package.json"))) {
+			continue
+		}
+		if cleaned, changed := dropJSONDepLines(string(c), dropSet); changed {
+			merged[p] = []byte(cleaned)
+		}
+	}
+}
+
+// dropJSONDepLines removes any `"name": …` line whose key is in drop from a
+// package.json body, then strips a now-dangling trailing comma before a closing
+// `}`/`},` so the JSON stays valid. Line-based to preserve the file's exact key
+// order and formatting (encoding/json would reorder + reflow). Returns the
+// rewritten body and whether anything changed.
+func dropJSONDepLines(body string, drop map[string]bool) (string, bool) {
+	lines := strings.Split(body, "\n")
+	var kept []string
+	changed := false
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		dropped := false
+		for name := range drop {
+			if strings.HasPrefix(t, `"`+name+`"`) {
+				rest := strings.TrimSpace(strings.TrimPrefix(t, `"`+name+`"`))
+				if strings.HasPrefix(rest, ":") {
+					dropped = true
+					break
+				}
+			}
+		}
+		if dropped {
+			changed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !changed {
+		return body, false
+	}
+	// Strip a trailing comma left on the last entry of an object whose following
+	// non-blank line closes the object.
+	for idx := 0; idx < len(kept); idx++ {
+		t := strings.TrimRight(kept[idx], " \t")
+		if !strings.HasSuffix(t, ",") {
+			continue
+		}
+		k := idx + 1
+		for k < len(kept) && strings.TrimSpace(kept[k]) == "" {
+			k++
+		}
+		if k < len(kept) {
+			nt := strings.TrimSpace(kept[k])
+			if nt == "}" || nt == "}," || strings.HasPrefix(nt, "}") {
+				kept[idx] = strings.TrimSuffix(t, ",")
+			}
+		}
+	}
+	return strings.Join(kept, "\n"), true
+}
+
+// rustCrateImported reports whether any shipped .rs source in merged uses the
+// given crate (`use <crate>` / `<crate>::` / `extern crate <crate>`). Safety belt
+// for pruneCargoMongoDeps: the crate is dropped from Cargo.toml only when no Rust
+// source references it.
+func rustCrateImported(merged map[string][]byte, crate string) bool {
+	usePrefix := "use " + crate
+	externDecl := "extern crate " + crate
+	pathRef := crate + "::"
+	boundary := func(rest string) bool {
+		return rest == "" || rest[0] == ' ' || rest[0] == ';' || rest[0] == ':' || rest[0] == '\t' || rest[0] == '{'
+	}
+	for p, c := range merged {
+		if !strings.HasSuffix(p, ".rs") {
+			continue
+		}
+		s := string(c)
+		if strings.Contains(s, pathRef) || strings.Contains(s, externDecl) {
+			return true
+		}
+		for _, line := range strings.Split(s, "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, usePrefix) && boundary(t[len(usePrefix):]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pruneCargoMongoDeps removes the `mongodb` crate from every Cargo.toml of a
+// Rust+SQL (SeaORM) deliverable — both the `[workspace.dependencies]` declaration
+// (`mongodb = "3"` / `mongodb = { … }`, including a multi-line inline table) and
+// each member's `mongodb.workspace = true` line. It runs only when no shipped .rs
+// uses the crate (checked once, workspace-wide: a workspace dep must stay if ANY
+// member uses it), so dropping it cannot break compilation. No-op when no
+// Cargo.toml declares the crate.
+func pruneCargoMongoDeps(merged map[string][]byte) {
+	if rustCrateImported(merged, "mongodb") {
+		return // a shipped .rs uses the crate — keep it everywhere
+	}
+	for p, c := range merged {
+		if !(p == "rust/Cargo.toml" || (strings.HasPrefix(p, "rust/") && strings.HasSuffix(p, "/Cargo.toml"))) {
+			continue
+		}
+		lines := strings.Split(string(c), "\n")
+		var keep []string
+		changed := false
+		for k := 0; k < len(lines); k++ {
+			if cargoDepKey(lines[k]) != "mongodb" {
+				keep = append(keep, lines[k])
+				continue
+			}
+			changed = true
+			// Consume any continuation lines of a multi-line inline table
+			// `mongodb = { … }` spanning multiple lines (balance { } and [ ]).
+			bal := bracketBalance(lines[k])
+			for bal > 0 && k+1 < len(lines) {
+				k++
+				bal += bracketBalance(lines[k])
+			}
+		}
+		if changed {
+			merged[p] = []byte(strings.Join(keep, "\n"))
+		}
+	}
+}
+
+// cargoDepKey returns the dependency key of a Cargo.toml line — the token before
+// the first space, '=' or '.' — or "" for blanks, comments and table headers. So
+// `mongodb = "3"`, `mongodb = { … }` and `mongodb.workspace = true` all key to
+// "mongodb", while `sea-orm.workspace = true` keys to "sea-orm".
+func cargoDepKey(line string) string {
+	t := strings.TrimSpace(line)
+	if t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "[") {
+		return ""
+	}
+	for idx := 0; idx < len(t); idx++ {
+		switch t[idx] {
+		case ' ', '=', '.', '\t':
+			return t[:idx]
+		}
+	}
+	return t
+}
+
+// bracketBalance returns the net count of opening minus closing braces/brackets in
+// s, used to walk a multi-line inline `{ … }` (or `[ … ]`) Cargo dependency table.
+func bracketBalance(s string) int {
+	bal := 0
+	for _, r := range s {
+		switch r {
+		case '{', '[':
+			bal++
+		case '}', ']':
+			bal--
+		}
+	}
+	return bal
+}
+
 // goModPlatformDirectDeps are the heavy direct requires the monorepo go.mod
 // declares that ONLY the analysis/decomposition/generation workers and the
 // platform service repositories import — none of which ship in a deliverable. They
@@ -1882,6 +3023,58 @@ func tidyGoMod(merged map[string][]byte) {
 		// the first token. Lines like `require (`, `)`, `module …`, `go …` have a
 		// first token that never matches a module path in the drop set.
 		fields := strings.Fields(trimmed)
+		if len(fields) >= 2 {
+			if _, d := drop[fields[0]]; d {
+				changed = true
+				continue
+			}
+		}
+		keep = append(keep, line)
+	}
+	if changed {
+		merged[key] = []byte(strings.Join(keep, "\n"))
+	}
+}
+
+// goModMongoDriverDeps are the go.mongodb.org/mongo-driver require plus the
+// indirect requires reachable ONLY through it (its bson/x509 SASL/compression
+// stack). A Go+SQL (GORM) deliverable prunes builder_mongo.go and the shared
+// mongo_client package, so no shipped Go code imports the mongo driver; these
+// requires are then dead weight. They are confirmed mongo-exclusive in this
+// monorepo (shared by no other shipped dep), so dropping them keeps the assembled
+// go.mod `go mod tidy`-clean for the Go+SQL cell. klauspost/compress is NOT listed:
+// it is reachable from other deps too, so it is left intact (a harmless unused
+// indirect, never a mongo-leak the cert greps for).
+var goModMongoDriverDeps = []string{
+	"go.mongodb.org/mongo-driver",
+	"github.com/golang/snappy",
+	"github.com/montanaflynn/stats",
+	"github.com/xdg-go/pbkdf2",
+	"github.com/xdg-go/scram",
+	"github.com/xdg-go/stringprep",
+	"github.com/youmark/pkcs8",
+}
+
+// pruneGoModMongoDriver rewrites the assembled go.mod (if present) to drop the
+// mongo-driver require and its mongo-only indirect deps (goModMongoDriverDeps). It
+// is the Go+SQL homologue of tidyGoMod: same line-matching (the module path is the
+// first whitespace-separated token, version + `// indirect` suffix ignored). It runs
+// ONLY for a Go+SQL deliverable, where builder_mongo.go + core/shared/mongo_client/
+// are pruned so nothing imports the driver. No-op when go.mod is absent.
+func pruneGoModMongoDriver(merged map[string][]byte) {
+	const key = "go.mod"
+	content, ok := merged[key]
+	if !ok {
+		return
+	}
+	drop := make(map[string]struct{}, len(goModMongoDriverDeps))
+	for _, m := range goModMongoDriverDeps {
+		drop[m] = struct{}{}
+	}
+	var keep []string
+	changed := false
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) >= 2 {
 			if _, d := drop[fields[0]]; d {
 				changed = true

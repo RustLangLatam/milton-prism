@@ -359,6 +359,39 @@ type ServiceArtifact struct {
 	// for incomplete artifacts without human review.
 	Incomplete       bool
 	IncompleteReason string
+	// SourceFiles is the bounded, per-service source captured from the LIVE
+	// workspace during stage 7b (before the clone is cleaned up). It lets the
+	// generation stage PORT the logic — not just regenerate from the contract.
+	// It carries both the domain files (models/views/serializers that own the
+	// service resources) and the input test files for the service (the behaviour
+	// oracle for a future generation gate). This is internal decomposition→
+	// generation data persisted in design_artifacts; it is NOT part of the
+	// migration proto.
+	SourceFiles []SourceFile
+	// Truncated is true when the per-service source cap (bytes or file count)
+	// was hit and one or more files were dropped. OmittedCount records how many.
+	Truncated    bool
+	OmittedCount int
+}
+
+// SourceFile is one bounded source file captured for a service. Content is read
+// from the live workspace during decomposition stage 7b, before cleanup. Symbols
+// holds the classes+functions declared in the module (from the analysis card).
+type SourceFile struct {
+	// Path is the workspace-relative path (e.g. "conduit/articles/models.py").
+	Path string
+	// Lang is the inferred language label (e.g. "python", "php").
+	Lang string
+	// Role is "domain" (a service-owned source file) or "test" (an input test
+	// file that exercises the service — the behaviour oracle).
+	Role string
+	// Content is the full file text, capped by maxSourceFileBytes; oversized
+	// files are dropped (and counted in the artifact's OmittedCount) rather than
+	// silently truncated mid-file.
+	Content string
+	// Symbols are the classes and functions declared in the module, taken from
+	// the analysis ModuleCard. Empty when no card is available for the module.
+	Symbols []string
 }
 
 // normalizeStore canonicalises the persistence engine label written to the

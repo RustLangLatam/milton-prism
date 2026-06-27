@@ -106,6 +106,24 @@ func (d *FileSystemFrameworkDetector) Detect(_ context.Context, workspacePath st
 			alreadyFound[rule.displayName] = true
 		}
 	}
+
+	// Spring Boot (Java) by manifest content. The Maven manifest parser already
+	// emits Spring from an org.springframework groupID, but GRADLE projects
+	// (build.gradle/.kts) are not parsed for framework dependencies, so a
+	// Gradle-based Spring Boot service would otherwise show no framework. Detect it
+	// structurally via javaIsSpringBoot (reads pom.xml/build.gradle/.kts for the
+	// spring-boot marker, plus a @SpringBootApplication source annotation). Skipped
+	// when a manifest framework already covers Spring, so Maven projects already
+	// detected by groupID are never double-counted.
+	if !alreadyFound["Spring"] && !coversByManifest(existing, "Spring") && javaIsSpringBoot(workspacePath) {
+		result = append(result, &analysisdomain.Technology{
+			Name:     "Spring",
+			Category: "framework",
+			Slug:     frameworkSlugForDisplay("Spring"),
+		})
+		alreadyFound["Spring"] = true
+	}
+
 	return result, nil
 }
 

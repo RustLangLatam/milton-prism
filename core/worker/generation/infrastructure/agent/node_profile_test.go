@@ -61,7 +61,7 @@ func TestWriteCombinedPrompt_NodeReferencesNodeDoc(t *testing.T) {
 	path, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-node.md",
-		"user", "USR", "node", "grpc", "none", "", "",
+		"user", "USR", "node", "grpc", "", "none", "", "",
 		"service: user\nstore: mongodb\n",
 		"syntax = \"proto3\";\n",
 	)
@@ -115,7 +115,7 @@ func TestWriteCombinedPrompt_GoHTTPInjectsTransportSection(t *testing.T) {
 	path, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-go-http.md",
-		"user", "USR", "go", "http", "none", "", "",
+		"user", "USR", "go", "http", "", "none", "", "",
 		"service: user\nstore: mongodb\n",
 		"syntax = \"proto3\";\n",
 	)
@@ -143,7 +143,7 @@ func TestWriteCombinedPrompt_GoHTTPInjectsTransportSection(t *testing.T) {
 	grpcPath, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt.md",
-		"user", "USR", "go", "grpc", "none", "", "",
+		"user", "USR", "go", "grpc", "", "none", "", "",
 		"service: user\n", "syntax = \"proto3\";\n",
 	)
 	if err != nil {
@@ -187,7 +187,7 @@ func TestWriteCombinedPrompt_PythonHTTPInjectsTransportSection(t *testing.T) {
 	path, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-python-http.md",
-		"user", "USR", "python", "http", "none", "", "",
+		"user", "USR", "python", "http", "", "none", "", "",
 		"service: user\nstore: mongodb\n",
 		"syntax = \"proto3\";\n",
 	)
@@ -219,7 +219,7 @@ func TestWriteCombinedPrompt_PythonHTTPInjectsTransportSection(t *testing.T) {
 	grpcPath, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-python.md",
-		"user", "USR", "python", "grpc", "none", "", "",
+		"user", "USR", "python", "grpc", "", "none", "", "",
 		"service: user\n", "syntax = \"proto3\";\n",
 	)
 	if err != nil {
@@ -263,7 +263,7 @@ func TestWriteCombinedPrompt_NodeHTTPInjectsTransportSection(t *testing.T) {
 	path, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-node-http.md",
-		"user", "USR", "node", "http", "none", "", "",
+		"user", "USR", "node", "http", "", "none", "", "",
 		"service: user\nstore: mongodb\n",
 		"syntax = \"proto3\";\n",
 	)
@@ -295,7 +295,7 @@ func TestWriteCombinedPrompt_NodeHTTPInjectsTransportSection(t *testing.T) {
 	grpcPath, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-node.md",
-		"user", "USR", "node", "grpc", "none", "", "",
+		"user", "USR", "node", "grpc", "", "none", "", "",
 		"service: user\n", "syntax = \"proto3\";\n",
 	)
 	if err != nil {
@@ -339,7 +339,7 @@ func TestWriteCombinedPrompt_RustHTTPInjectsTransportSection(t *testing.T) {
 	path, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-rust-http.md",
-		"user", "USR", "rust", "http", "none", "", "",
+		"user", "USR", "rust", "http", "", "none", "", "",
 		"service: user\nstore: mongodb\n",
 		"syntax = \"proto3\";\n",
 	)
@@ -371,7 +371,7 @@ func TestWriteCombinedPrompt_RustHTTPInjectsTransportSection(t *testing.T) {
 	grpcPath, err := agent.WriteCombinedPrompt(
 		dir,
 		"docs/prism/milton-prism-service-generator-prompt-rust.md",
-		"user", "USR", "rust", "grpc", "none", "", "",
+		"user", "USR", "rust", "grpc", "", "none", "", "",
 		"service: user\n", "syntax = \"proto3\";\n",
 	)
 	if err != nil {

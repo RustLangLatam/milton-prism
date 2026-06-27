@@ -619,3 +619,103 @@ func TestFrente3_NoAuthOmitsJWTBlock(t *testing.T) {
 		t.Errorf("auth service .env.example missing JWT_SECRET:\n%s", withauthEnv)
 	}
 }
+
+// TestFrente_GoSQL_PrunesMongoFootprint proves item (e) of the DB-axis backlog: a
+// Go + SQL (GORM) deliverable carries ZERO mongo footprint, while Go + MongoDB (the
+// default) is unchanged. The store-agnostic core/internal/svc/builder.go no longer
+// imports mongo_client; the Mongo wiring lives in builder_mongo.go (the only file
+// importing core/shared/mongo_client). For a SQL cell the assembler prunes
+// builder_mongo.go + core/shared/mongo_client/ and drops the mongo-driver require
+// (and its mongo-only indirects) from go.mod — leaving builder.go and a clean,
+// mongo-free go.mod. For a Mongo cell both files ship and the require stays.
+func TestFrente_GoSQL_PrunesMongoFootprint(t *testing.T) {
+	newRoot := func(t *testing.T) string {
+		root := t.TempDir()
+		gomod := "module milton_prism\n\ngo 1.23\n\nrequire (\n" +
+			"\tgorm.io/gorm v1.25.0\n" +
+			"\tgorm.io/driver/postgres v1.5.0\n" +
+			"\tgo.mongodb.org/mongo-driver v1.17.9\n" +
+			")\n\nrequire (\n" +
+			"\tgithub.com/golang/snappy v1.0.0 // indirect\n" +
+			"\tgithub.com/montanaflynn/stats v0.9.0 // indirect\n" +
+			"\tgithub.com/xdg-go/pbkdf2 v1.0.0 // indirect\n" +
+			"\tgithub.com/xdg-go/scram v1.2.0 // indirect\n" +
+			"\tgithub.com/xdg-go/stringprep v1.0.4 // indirect\n" +
+			"\tgithub.com/youmark/pkcs8 v0.0.0-20240726163527 // indirect\n" +
+			"\tgithub.com/klauspost/compress v1.18.6 // indirect\n" +
+			")\n"
+		writeFixture(t, root, "go.mod", gomod)
+		writeFixture(t, root, "go.sum", "h1:abc\n")
+		writeFixture(t, root, "core/internal/svc/builder.go", "package services\n")
+		writeFixture(t, root, "core/internal/svc/builder_mongo.go",
+			"package services\n\nimport \"milton_prism/core/shared/mongo_client\"\n\nvar _ = mongo_client.NewClient\n")
+		writeFixture(t, root, "core/shared/mongo_client/builder.go", "package mongo_client\n\nfunc NewClient() {}\n")
+		writeFixture(t, root, "core/shared/auth_token/token.go", "package auth_token\n")
+		writeFixture(t, root, "protobuf/buf.yaml", "version: v1\n")
+		return root
+	}
+	art := InputFile{Path: "core/cmd/user-services/main.go", Content: "package main\n\nfunc main() {}\n"}
+	contentOf := func(files []File, path string) string {
+		for _, f := range files {
+			if f.Path == path {
+				return string(f.Content)
+			}
+		}
+		return ""
+	}
+
+	// Go + MongoDB (default store): the mongo footprint SHIPS and the require stays.
+	t.Run("go_mongo_keeps_footprint", func(t *testing.T) {
+		root := newRoot(t)
+		files, err := New(root, false, "go", "grpc", "").Assemble([]InputFile{art})
+		if err != nil {
+			t.Fatalf("mongo Assemble: %v", err)
+		}
+		set := pathSet(files)
+		if !set["core/internal/svc/builder_mongo.go"] {
+			t.Error("Go+Mongo deliverable dropped builder_mongo.go (mongo wiring)")
+		}
+		if !set["core/shared/mongo_client/builder.go"] {
+			t.Error("Go+Mongo deliverable dropped core/shared/mongo_client")
+		}
+		if gm := contentOf(files, "go.mod"); !strings.Contains(gm, "go.mongodb.org/mongo-driver") {
+			t.Errorf("Go+Mongo go.mod dropped mongo-driver require:\n%s", gm)
+		}
+	})
+
+	// Go + Postgres (GORM): the mongo footprint is PRUNED; builder.go stays.
+	t.Run("go_postgres_prunes_footprint", func(t *testing.T) {
+		root := newRoot(t)
+		files, err := New(root, false, "go", "grpc", "postgres").Assemble([]InputFile{art})
+		if err != nil {
+			t.Fatalf("postgres Assemble: %v", err)
+		}
+		set := pathSet(files)
+		if set["core/internal/svc/builder_mongo.go"] {
+			t.Error("Go+SQL deliverable shipped builder_mongo.go (mongo wiring leaked)")
+		}
+		if set["core/shared/mongo_client/builder.go"] {
+			t.Error("Go+SQL deliverable shipped core/shared/mongo_client (mongo leaked)")
+		}
+		if !set["core/internal/svc/builder.go"] {
+			t.Error("Go+SQL deliverable dropped the store-agnostic builder.go")
+		}
+		gm := contentOf(files, "go.mod")
+		for _, m := range []string{
+			"go.mongodb.org/mongo-driver",
+			"github.com/golang/snappy",
+			"github.com/montanaflynn/stats",
+			"github.com/xdg-go/pbkdf2",
+			"github.com/xdg-go/scram",
+			"github.com/xdg-go/stringprep",
+			"github.com/youmark/pkcs8",
+		} {
+			if strings.Contains(gm, m) {
+				t.Errorf("Go+SQL go.mod still references mongo dep %q:\n%s", m, gm)
+			}
+		}
+		if !strings.Contains(gm, "gorm.io/gorm") || !strings.Contains(gm, "gorm.io/driver/postgres") {
+			t.Errorf("Go+SQL go.mod dropped a GORM require:\n%s", gm)
+		}
+	})
+}

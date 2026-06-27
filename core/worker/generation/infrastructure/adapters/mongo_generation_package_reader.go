@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"milton_prism/core/worker/generation/ports"
 	applog "milton_prism/pkg/log"
@@ -60,11 +61,23 @@ type analysisSummaryDatabaseDoc struct {
 }
 
 type artifactDocMinimal struct {
-	ServiceName      string `bson:"service_name"`
-	ProtoContent     string `bson:"proto_content"`
-	BoundarySpec     string `bson:"boundary_spec"`
-	Incomplete       bool   `bson:"incomplete"`
-	IncompleteReason string `bson:"incomplete_reason"`
+	ServiceName      string              `bson:"service_name"`
+	ProtoContent     string              `bson:"proto_content"`
+	BoundarySpec     string              `bson:"boundary_spec"`
+	Incomplete       bool                `bson:"incomplete"`
+	IncompleteReason string              `bson:"incomplete_reason"`
+	SourceFiles      []sourceFileDoc     `bson:"source_files,omitempty"`
+}
+
+// sourceFileDoc decodes one captured original source file persisted by the
+// decomposition stage in the design_artifact (source_files). It is mapped to a
+// ports.SourceFile so the generation prompt can carry the logic to port.
+type sourceFileDoc struct {
+	Path    string   `bson:"path"`
+	Lang    string   `bson:"lang"`
+	Role    string   `bson:"role"`
+	Content string   `bson:"content"`
+	Symbols []string `bson:"symbols,omitempty"`
 }
 
 func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migrationID uint64) (*ports.GenerationPackage, error) {
@@ -94,6 +107,7 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 	transport := migrationv1.Transport_TRANSPORT_UNSPECIFIED
 	authOverride := analysisv1.AuthScheme_AUTH_SCHEME_UNSPECIFIED
 	dbOverride := migrationv1.TargetDatabase_TARGET_DATABASE_UNSPECIFIED
+	httpFramework := migrationv1.HttpFramework_HTTP_FRAMEWORK_UNSPECIFIED
 	if len(migDoc.TargetBytes) > 0 {
 		var tc migrationv1.TargetConfig
 		if err := proto.Unmarshal(migDoc.TargetBytes, &tc); err == nil {
@@ -101,10 +115,21 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 			transport = tc.GetInterServiceTransport()
 			authOverride = tc.GetTargetAuthScheme()
 			dbOverride = tc.GetDatabase()
+			httpFramework = tc.GetHttpFramework()
 		}
 	}
 	protocol := protocolLabel(transport)
 	profile, promptRef := profileAndPromptForLanguage(lang, transport)
+
+	// Derive the effective HTTP framework the generated router/handlers are built
+	// on. The sub-axis only applies to HTTP — for gRPC it is the empty string and
+	// the frameworkSection prompt block is omitted. For HTTP it is the canonicalised
+	// framework token (an unset/legacy migration degrades to the language default
+	// "net_http", a no-op block — no regression). Read from the persisted (already
+	// canonicalised at creation) TargetConfig.http_framework.
+	framework := frameworkLabel(transport, httpFramework)
+	applog.Infof("generation-worker: generation package framework migration_id=%d protocol=%s framework=%s",
+		migrationID, protocol, framework)
 
 	// Resolve the effective persistence engine the generated services must target:
 	// the per-migration override (TargetConfig.database) wins; otherwise — for Auto
@@ -140,6 +165,28 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 
 	services := make([]ports.ServiceSpec, len(artDocs))
 	for i, a := range artDocs {
+		sourceToPort := make([]ports.SourceFile, 0, len(a.SourceFiles))
+		var domainN, testN int
+		for _, sf := range a.SourceFiles {
+			if strings.TrimSpace(sf.Content) == "" {
+				continue
+			}
+			sourceToPort = append(sourceToPort, ports.SourceFile{
+				Path:    sf.Path,
+				Lang:    sf.Lang,
+				Role:    sf.Role,
+				Content: sf.Content,
+				Symbols: sf.Symbols,
+			})
+			switch sf.Role {
+			case "test":
+				testN++
+			default:
+				domainN++
+			}
+		}
+		applog.Infof("generation-worker: generation package source_to_port migration_id=%d service=%s domain=%d test=%d",
+			migrationID, a.ServiceName, domainN, testN)
 		services[i] = ports.ServiceSpec{
 			Name:               a.ServiceName,
 			ErrorPrefix:        prefixByName[a.ServiceName],
@@ -149,9 +196,11 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 			IncompleteReason:   a.IncompleteReason,
 			GeneratorPromptRef: promptRef,
 			Protocol:           protocol,
+			HTTPFramework:      framework,
 			AuthScheme:         authScheme,
 			AuthSignatureAlg:   authSigAlg,
 			Store:              store,
+			SourceToPort:       sourceToPort,
 		}
 	}
 
@@ -159,6 +208,7 @@ func (r *MongoGenerationPackageReader) ReadPackage(ctx context.Context, migratio
 		MigrationID:   migrationID,
 		OutputProfile: profile,
 		Protocol:      protocol,
+		HTTPFramework: framework,
 		Store:         store,
 		Services:      services,
 	}, nil
@@ -305,6 +355,32 @@ func protocolLabel(t migrationv1.Transport) string {
 	}
 }
 
+// frameworkLabel maps a (Transport, HttpFramework) to the worker-side HTTP
+// framework token consumed by workspace.frameworkSection. The sub-axis only
+// applies to HTTP: for gRPC it returns "" (the field is ignored and no framework
+// block is injected). For HTTP it maps the enum to its token; NET_HTTP and (a
+// legacy/unset) UNSPECIFIED both canonicalise to "net_http" — the Go HTTP default,
+// which frameworkSection treats as a no-op so the established net/http behaviour
+// is unchanged. MUST stay in lockstep with frameworkSection and the domain
+// supportedHttpFrameworkByLanguage matrix.
+func frameworkLabel(t migrationv1.Transport, fw migrationv1.HttpFramework) string {
+	if t != migrationv1.Transport_TRANSPORT_HTTP {
+		return ""
+	}
+	switch fw {
+	case migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_GIN:
+		return "gin"
+	case migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_ECHO:
+		return "echo"
+	case migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_CHI:
+		return "chi"
+	case migrationv1.HttpFramework_HTTP_FRAMEWORK_GO_FIBER:
+		return "fiber"
+	default: // NET_HTTP or UNSPECIFIED → the Go HTTP-native default (no-op block)
+		return "net_http"
+	}
+}
+
 // profileAndPromptForLanguage maps a migration's (TargetLanguage, Transport) to
 // the output profile label and generator prompt the generation worker must use.
 // It is the worker-side counterpart of the migration application's
@@ -337,6 +413,21 @@ func profileAndPromptForLanguage(lang migrationv1.TargetLanguage, transport migr
 			return "java", "docs/prism/milton-prism-service-generator-prompt-java-http.md"
 		}
 		return "java", "docs/prism/milton-prism-service-generator-prompt-java.md"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_RUBY:
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "ruby", "docs/prism/milton-prism-service-generator-prompt-ruby-http.md"
+		}
+		return "ruby", "docs/prism/milton-prism-service-generator-prompt-ruby.md"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_CSHARP:
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "csharp", "docs/prism/milton-prism-service-generator-prompt-csharp-http.md"
+		}
+		return "csharp", "docs/prism/milton-prism-service-generator-prompt-csharp.md"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_CPP:
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "cpp", "docs/prism/milton-prism-service-generator-prompt-cpp-http.md"
+		}
+		return "cpp", "docs/prism/milton-prism-service-generator-prompt-cpp.md"
 	default:
 		if transport == migrationv1.Transport_TRANSPORT_HTTP {
 			return "go", "docs/prism/milton-prism-service-generator-prompt-go-http.md"

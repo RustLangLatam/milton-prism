@@ -102,6 +102,14 @@ type mongoMigrationDoc struct {
 	// {language × protocol × topology} certifies distinct cells of the same repo/branch.
 	Language                int32               `bson:"language"`
 	Protocol                int32               `bson:"protocol"`
+	// HTTPFramework is denormalized from target.http_framework (canonicalized at
+	// creation: HTTP + UNSPECIFIED ⇒ the language default, e.g. GO_NET_HTTP=1; gRPC
+	// ⇒ UNSPECIFIED=0) so it participates in the uniqueness index alongside
+	// topology/language/protocol: two HTTP migrations of the same
+	// (repo, branch, commit, topology, language, protocol) are allowed only when
+	// their HTTP framework differs — Go+HTTP+net/http and Go+HTTP+Gin are distinct
+	// cells of the {language × protocol × http_framework × topology} matrix.
+	HTTPFramework           int32               `bson:"http_framework"`
 	State                   int32               `bson:"state"`
 	TargetBytes             []byte              `bson:"target_bytes,omitempty"`
 	AnalysisSummaryID       uint64              `bson:"analysis_summary_id,omitempty"`
@@ -135,6 +143,12 @@ func NewMongoMigrationRepository(db *mongo.Database) *MongoMigrationRepository {
 	// "index not found" case (fresh DB or already migrated).
 	if _, err := r.coll.Indexes().DropOne(context.Background(), "uniq_repo_branch_commit_topology"); err != nil {
 		applog.Infof("mongo: drop legacy index uniq_repo_branch_commit_topology on %s (ok if absent): %v", migrationsCollName, err)
+	}
+	// The 6-dimension index (… topology, language, protocol) is in turn superseded
+	// by the 7-dimension index below that adds http_framework as a cell axis. Drop
+	// it idempotently so the new index can be created; ignore "index not found".
+	if _, err := r.coll.Indexes().DropOne(context.Background(), "uniq_repo_branch_commit_topology_language_protocol"); err != nil {
+		applog.Infof("mongo: drop legacy index uniq_repo_branch_commit_topology_language_protocol on %s (ok if absent): %v", migrationsCollName, err)
 	}
 	if _, err := r.coll.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
 		{Keys: bson.D{{Key: "identifier", Value: 1}}, Options: options.Index().SetUnique(true)},
@@ -171,9 +185,10 @@ func NewMongoMigrationRepository(db *mongo.Database) *MongoMigrationRepository {
 			{Key: "topology", Value: 1},
 			{Key: "language", Value: 1},
 			{Key: "protocol", Value: 1},
+			{Key: "http_framework", Value: 1},
 		}, Options: options.Index().
 			SetUnique(true).
-			SetName("uniq_repo_branch_commit_topology_language_protocol").
+			SetName("uniq_repo_branch_commit_topology_language_protocol_framework").
 			SetPartialFilterExpression(bson.M{"commit_sha": bson.M{"$exists": true, "$gt": ""}})},
 	}); err != nil {
 		applog.Warningf("mongo: create indexes on %s: error=%v", migrationsCollName, err)
@@ -502,6 +517,7 @@ func migrationToDoc(m *domain.Migration) (*mongoMigrationDoc, error) {
 		Topology:                int32(m.GetTarget().GetTopology()),
 		Language:                int32(m.GetTarget().GetLanguage()),
 		Protocol:                int32(m.GetTarget().GetInterServiceTransport()),
+		HTTPFramework:           int32(m.GetTarget().GetHttpFramework()),
 	}
 	if m.GetTarget() != nil {
 		b, err := proto.Marshal(m.GetTarget())
@@ -585,6 +601,10 @@ func migrationDocToDomain(d *mongoMigrationDoc) (*domain.Migration, error) {
 		}
 		out.Plan = plan
 	}
+	// Derive the OUTPUT_ONLY service_count from the hydrated plan so both List
+	// and GetByID expose a services count without each client recomputing it.
+	// Zero when no plan exists yet (early states: PENDING/ANALYZING/DESIGNING).
+	out.ServiceCount = int32(len(out.GetPlan().GetServices()))
 	if len(d.OutputBytes) > 0 {
 		output := &migrationv1.MigrationOutput{}
 		if err := proto.Unmarshal(d.OutputBytes, output); err != nil {

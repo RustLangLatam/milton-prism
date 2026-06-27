@@ -206,3 +206,80 @@ func TestFileSystemFrameworkDetector_MultipleFrameworks(t *testing.T) {
 	assert.True(t, names["Laravel"], "Laravel must be detected")
 	assert.True(t, names["Symfony"], "Symfony must be detected")
 }
+
+// writeFile writes content to dir/rel, creating parent dirs.
+func writeFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	full := filepath.Join(dir, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0755))
+	require.NoError(t, os.WriteFile(full, []byte(content), 0644))
+}
+
+// ── Spring Boot (Java / Gradle) ───────────────────────────────────────────────
+
+func TestFileSystemFrameworkDetector_DetectsSpring_ViaGradle(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Gradle Spring Boot project: the Maven manifest parser never sees this, so the
+	// structural detector is the only thing that can surface the framework.
+	writeFile(t, dir, "build.gradle", "plugins {\n  id 'org.springframework.boot' version '3.2.0'\n}\n")
+
+	techs, err := newFrameworkDetector().Detect(context.Background(), dir, nil)
+	require.NoError(t, err)
+	require.Len(t, techs, 1)
+	assert.Equal(t, "Spring", techs[0].GetName())
+	assert.Equal(t, "framework", techs[0].GetCategory())
+	assert.Equal(t, "spring", techs[0].GetSlug())
+}
+
+func TestFileSystemFrameworkDetector_DetectsSpring_ViaGradleKts(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, dir, "build.gradle.kts", `dependencies { implementation("org.springframework.boot:spring-boot-starter-web") }`)
+
+	techs, err := newFrameworkDetector().Detect(context.Background(), dir, nil)
+	require.NoError(t, err)
+	require.Len(t, techs, 1)
+	assert.Equal(t, "Spring", techs[0].GetName())
+}
+
+func TestFileSystemFrameworkDetector_DetectsSpring_ViaAnnotationOnly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// A Gradle multi-module build whose root manifest omits the literal marker, but
+	// an application class carries @SpringBootApplication — the annotation fallback.
+	writeFile(t, dir, "build.gradle", "plugins { id 'java' }\n")
+	writeFile(t, dir, "src/main/java/com/example/App.java",
+		"package com.example;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication\npublic class App {}\n")
+
+	techs, err := newFrameworkDetector().Detect(context.Background(), dir, nil)
+	require.NoError(t, err)
+	require.Len(t, techs, 1)
+	assert.Equal(t, "Spring", techs[0].GetName())
+}
+
+func TestFileSystemFrameworkDetector_Spring_SkipsWhenManifestAlreadyDetected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Maven project: the manifest parser already emitted Spring from the groupID, so
+	// the structural detector must not add a duplicate.
+	writeFile(t, dir, "build.gradle", "id 'org.springframework.boot'\n")
+	existing := []*analysisdomain.Technology{
+		{Name: "Spring", Category: "framework"},
+	}
+
+	techs, err := newFrameworkDetector().Detect(context.Background(), dir, existing)
+	require.NoError(t, err)
+	assert.Empty(t, techs, "Spring already in existing must prevent a duplicate entry")
+}
+
+func TestFileSystemFrameworkDetector_Spring_NoFalsePositiveOnPlainGradle(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// A plain (non-Spring) Gradle project must NOT be labelled Spring.
+	writeFile(t, dir, "build.gradle", "plugins { id 'java' }\ndependencies { implementation 'com.google.guava:guava:33.0.0-jre' }\n")
+
+	techs, err := newFrameworkDetector().Detect(context.Background(), dir, nil)
+	require.NoError(t, err)
+	assert.Empty(t, techs, "a non-Spring Gradle project must not be detected as Spring")
+}

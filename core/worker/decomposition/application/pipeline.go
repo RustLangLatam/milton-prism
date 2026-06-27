@@ -278,12 +278,16 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// cards loaded from MongoDB. Non-fatal: a missing summaryLoader or load
 	// failure skips the digest and assessor without blocking the pipeline.
 	var digest *workerdomain.AnalysisDigest
+	// summaryCards is retained at function scope so stage 7b can resolve each
+	// module to its source file path + symbols when capturing source_files.
+	var summaryCards *workerdomain.SummaryCards
 	if p.summaryLoader != nil {
 		summaryData, loadErr := p.summaryLoader.LoadCards(ctx, job.SummaryID)
 		if loadErr != nil {
 			applog.Warningf("decomposition-worker: stage 3b load cards failed summary_id=%d: %v",
 				job.SummaryID, loadErr)
 		} else {
+			summaryCards = summaryData
 			digest = Distill(graph, cls, clusterResult, summaryData, 0)
 			logDigest(digest, job.SummaryID)
 		}
@@ -484,6 +488,10 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// from the in-memory contracts — not from the filesystem.
 	if p.artifactStore != nil {
 		artifacts := buildArtifacts(plan, contracts, ownership, candidates, monolith, store)
+		// Capture bounded per-service source from the LIVE workspace before the
+		// deferred cleanupWS() runs. Non-fatal: failures leave SourceFiles empty
+		// but the contract/boundary artifacts still persist.
+		attachSourceFiles(artifacts, monolith, workspacePath, clusterResult.Clusters, cls.Tests, graph, summaryCards)
 		if err := p.artifactStore.UpsertArtifacts(ctx, job.MigrationID, artifacts); err != nil {
 			// Non-fatal: log but do not block the AWAITING_APPROVAL transition.
 			applog.Warningf("decomposition-worker: artifact persistence skipped migration_id=%d: %v",
@@ -1141,6 +1149,325 @@ func buildMonolithArtifacts(
 		Incomplete:       incomplete,
 		IncompleteReason: strings.Join(reasons, "; "),
 	}}
+}
+
+// Source-capture caps. maxSourceFileBytes mirrors the agent workspace cap in the
+// generation tree; it is duplicated here (not imported) so the decomposition
+// package never depends on the generation package. The per-service caps bound the
+// total source persisted so a pathological monolith cannot bloat design_artifacts.
+const (
+	maxSourceFileBytes    = 512 * 1024 // 512 KiB — a single file over this is dropped
+	maxServiceSourceBytes = 200 * 1024 // 200 KiB — total persisted source per service
+	maxServiceSourceFiles = 40         // max number of source files per service
+)
+
+// attachSourceFiles reads the bounded per-service source from the live workspace
+// and populates artifact.SourceFiles in place. It MUST be called while the stage 5
+// workspace is still acquired (before the deferred cleanupWS runs). cards may be
+// nil (no analysis card data); in that case file paths are resolved deterministically
+// and Symbols are left empty. The function never errors — missing/unresolvable
+// modules are skipped and reflected in Truncated/OmittedCount where applicable.
+func attachSourceFiles(
+	artifacts []workerdomain.ServiceArtifact,
+	monolith bool,
+	workspacePath string,
+	clusters []workerdomain.Cluster,
+	tests []workerdomain.Module,
+	graph *workerdomain.Graph,
+	cards *workerdomain.SummaryCards,
+) {
+	if workspacePath == "" || len(artifacts) == 0 {
+		return
+	}
+
+	cardByModule := make(map[string]workerdomain.SummaryModuleCard)
+	if cards != nil {
+		for _, c := range cards.ModuleCards {
+			cardByModule[c.Module] = c
+		}
+	}
+
+	// Fan-in (in-degree) per module from the full graph — the truncation priority.
+	fanIn := make(map[string]int)
+	if graph != nil {
+		for _, e := range graph.Edges {
+			fanIn[string(e.To)]++
+		}
+	}
+
+	// Index clusters by service name and assign each input test to a service.
+	clusterBySvc := make(map[string]workerdomain.Cluster, len(clusters))
+	for _, c := range clusters {
+		clusterBySvc[serviceNameFromBlueprint(c.BlueprintGroup)] = c
+	}
+	testsByService := assignTestsToServices(tests, clusters, graph)
+
+	for i := range artifacts {
+		svc := artifacts[i].ServiceName
+
+		var domainModules []workerdomain.Module
+		var svcTests []workerdomain.Module
+		if monolith {
+			// Single service owns every domain module and every input test.
+			for _, c := range clusters {
+				domainModules = append(domainModules, c.Modules...)
+			}
+			svcTests = tests
+		} else {
+			if c, ok := clusterBySvc[svc]; ok {
+				domainModules = c.Modules
+			}
+			svcTests = testsByService[svc]
+		}
+
+		files, truncated, omitted := collectServiceSourceFiles(
+			workspacePath, domainModules, svcTests, cardByModule, fanIn)
+		artifacts[i].SourceFiles = files
+		artifacts[i].Truncated = truncated
+		artifacts[i].OmittedCount = omitted
+
+		applog.Infof("decomposition-worker: stage 7b source_files service=%s files=%d truncated=%v omitted=%d",
+			svc, len(files), truncated, omitted)
+	}
+}
+
+// collectServiceSourceFiles reads and bounds the source for a single service.
+// domainModules are persisted with role="domain"; testModules with role="test".
+// Files are de-duplicated by path, capped per-file and per-service (ordered by
+// fan-in descending so the most-depended-on files survive truncation), then
+// returned in a deterministic order (domain before test, then by path).
+func collectServiceSourceFiles(
+	workspacePath string,
+	domainModules []workerdomain.Module,
+	testModules []workerdomain.Module,
+	cardByModule map[string]workerdomain.SummaryModuleCard,
+	fanIn map[string]int,
+) (files []workerdomain.SourceFile, truncated bool, omitted int) {
+	type candidate struct {
+		sf    workerdomain.SourceFile
+		fanIn int
+	}
+	var cands []candidate
+	seenPath := make(map[string]bool)
+
+	add := func(mod workerdomain.Module, role string) {
+		m := string(mod)
+		card, hasCard := cardByModule[m]
+		relPath := ""
+		if hasCard && card.File != "" {
+			relPath = filepath.ToSlash(card.File)
+		} else {
+			relPath = resolveModuleSourcePath(workspacePath, m)
+		}
+		if relPath == "" || seenPath[relPath] {
+			return
+		}
+		full := filepath.Join(workspacePath, filepath.FromSlash(relPath))
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			return
+		}
+		if info.Size() > maxSourceFileBytes {
+			// Oversized: drop honestly rather than persist a half file.
+			truncated = true
+			omitted++
+			return
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return
+		}
+		seenPath[relPath] = true
+		var symbols []string
+		symbols = append(symbols, card.Classes...)
+		symbols = append(symbols, card.Functions...)
+		cands = append(cands, candidate{
+			sf: workerdomain.SourceFile{
+				Path:    relPath,
+				Lang:    langForFile(relPath),
+				Role:    role,
+				Content: string(data),
+				Symbols: symbols,
+			},
+			fanIn: fanIn[m],
+		})
+	}
+
+	for _, m := range domainModules {
+		add(m, "domain")
+	}
+	for _, m := range testModules {
+		add(m, "test")
+	}
+
+	// Truncation priority: highest fan-in survives.
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].fanIn > cands[j].fanIn })
+
+	var totalBytes int
+	for _, c := range cands {
+		if len(files) >= maxServiceSourceFiles || totalBytes+len(c.sf.Content) > maxServiceSourceBytes {
+			truncated = true
+			omitted++
+			continue
+		}
+		totalBytes += len(c.sf.Content)
+		files = append(files, c.sf)
+	}
+
+	// Deterministic output order: domain ("domain" < "test") then path.
+	sort.SliceStable(files, func(i, j int) bool {
+		if files[i].Role != files[j].Role {
+			return files[i].Role < files[j].Role
+		}
+		return files[i].Path < files[j].Path
+	})
+	return files, truncated, omitted
+}
+
+// assignTestsToServices maps each input test module to at most one service.
+// Primary signal: the service name appears as a substring of the test module's
+// last segment (e.g. "tests.test_articles" → "articles"). When the name signal is
+// ambiguous (zero or multiple service names match), it falls back to the test's
+// import edges into a service's domain modules, choosing the strict maximum.
+// Ambiguous/unresolvable tests are left unassigned (honest: better dropped than
+// attached to the wrong service).
+func assignTestsToServices(
+	tests []workerdomain.Module,
+	clusters []workerdomain.Cluster,
+	graph *workerdomain.Graph,
+) map[string][]workerdomain.Module {
+	out := make(map[string][]workerdomain.Module)
+	if len(tests) == 0 {
+		return out
+	}
+
+	moduleService := make(map[workerdomain.Module]string)
+	var svcNames []string
+	for _, c := range clusters {
+		s := serviceNameFromBlueprint(c.BlueprintGroup)
+		svcNames = append(svcNames, s)
+		for _, m := range c.Modules {
+			moduleService[m] = s
+		}
+	}
+
+	testSet := make(map[workerdomain.Module]bool, len(tests))
+	for _, t := range tests {
+		testSet[t] = true
+	}
+
+	// Edge counts: test → owning service of the imported domain module.
+	edge := make(map[workerdomain.Module]map[string]int)
+	if graph != nil {
+		for _, e := range graph.Edges {
+			if !testSet[e.From] {
+				continue
+			}
+			if s, ok := moduleService[e.To]; ok {
+				if edge[e.From] == nil {
+					edge[e.From] = make(map[string]int)
+				}
+				edge[e.From][s]++
+			}
+		}
+	}
+
+	for _, t := range tests {
+		base := strings.ToLower(lastSegment(string(t)))
+
+		nameHits := make(map[string]bool)
+		for _, s := range svcNames {
+			if s != "" && strings.Contains(base, s) {
+				nameHits[s] = true
+			}
+		}
+
+		chosen := ""
+		if len(nameHits) == 1 {
+			for s := range nameHits {
+				chosen = s
+			}
+		} else {
+			best, bestN, tie := "", 0, false
+			for s, n := range edge[t] {
+				switch {
+				case n > bestN:
+					best, bestN, tie = s, n, false
+				case n == bestN:
+					tie = true
+				}
+			}
+			if best != "" && !tie {
+				chosen = best
+			}
+		}
+		if chosen != "" {
+			out[chosen] = append(out[chosen], t)
+		}
+	}
+	return out
+}
+
+// lastSegment returns the final dot/slash/backslash-separated segment of a module
+// FQN, dropping a file extension if present (e.g. "tests.test_articles" →
+// "test_articles", "tests/test_articles.py" → "test_articles").
+func lastSegment(module string) string {
+	s := module
+	for _, sep := range []string{`\`, "/", "."} {
+		if i := strings.LastIndex(s, sep); i >= 0 {
+			// Keep splitting on each separator family; "." last so it also strips
+			// the extension on path-like inputs.
+			s = s[i+1:]
+		}
+	}
+	return s
+}
+
+// resolveModuleSourcePath resolves a module FQN to a workspace-relative source
+// path when no analysis card carries the File. Python: dotted name → slash path +
+// ".py". PHP: PSR-4 resolution via composer.json. Returns "" when no file exists.
+func resolveModuleSourcePath(workspacePath, module string) string {
+	if strings.Contains(module, `\`) {
+		psr4 := loadComposerPSR4(workspacePath)
+		if p, ok := resolveLaravelClassPath(workspacePath, module, psr4); ok {
+			if rel, err := filepath.Rel(workspacePath, p); err == nil {
+				return filepath.ToSlash(rel)
+			}
+		}
+		return ""
+	}
+	parts := strings.Split(module, ".")
+	rel := filepath.Join(parts...) + ".py"
+	if info, err := os.Stat(filepath.Join(workspacePath, rel)); err == nil && !info.IsDir() {
+		return filepath.ToSlash(rel)
+	}
+	return ""
+}
+
+// langForFile maps a file extension to a language label for SourceFile.Lang.
+func langForFile(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".py":
+		return "python"
+	case ".php":
+		return "php"
+	case ".java":
+		return "java"
+	case ".cs":
+		return "csharp"
+	case ".go":
+		return "go"
+	case ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".h":
+		return "cpp"
+	case ".js", ".jsx":
+		return "javascript"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".rb":
+		return "ruby"
+	default:
+		return ""
+	}
 }
 
 // ApplyCoherenceGuardrail applies the structural-fallback low-confidence flag and

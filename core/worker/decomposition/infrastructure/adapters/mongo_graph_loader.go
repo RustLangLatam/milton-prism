@@ -162,6 +162,17 @@ func (l *MongoGraphLoader) LoadCards(ctx context.Context, summaryID uint64) (*wo
 		}
 		for _, t := range wrapper.GetTechnologies() {
 			result.Technologies = append(result.Technologies, t.GetName())
+			// First framework-category technology wins. This is ecosystem-agnostic
+			// by design: it trusts the upstream technologies list to be coherent.
+			// That trust is now upheld at write time — injectInferredFramework
+			// (analysis pipeline) gates inferred frameworks on the PRIMARY language,
+			// so a polyglot repo no longer carries a secondary language's framework
+			// (e.g. the "GO·Flask" false positive). Selecting the framework whose
+			// ecosystem matches the primary language is NOT done here: this loader
+			// only sees flattened technology NAMES (language and framework entries
+			// are indistinguishable once appended), so it has no primary-language
+			// context. True ecosystem-matching for display is the caller/panel's
+			// responsibility.
 			if t.GetCategory() == "framework" && result.Framework == "" {
 				result.Framework = t.GetName()
 			}

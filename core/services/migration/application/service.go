@@ -147,6 +147,25 @@ func (s *Service) CreateMigration(ctx context.Context, m *domain.Migration) (*do
 	if !domain.IsGenerableProtocol(m.GetTarget().GetLanguage(), m.GetTarget().GetInterServiceTransport()) {
 		return nil, domain.ErrUnsupportedProtocol
 	}
+	// Canonicalise and guard the HTTP-FRAMEWORK sub-axis. It only applies when the
+	// transport is HTTP; for gRPC the field is forced back to UNSPECIFIED (ignored)
+	// and never rejected. For HTTP, UNSPECIFIED canonicalises to the language
+	// default (Go → GO_NET_HTTP) so the persisted TargetConfig is explicit and the
+	// generation worker never has to infer the framework. A concrete framework
+	// outside the (language, framework) matrix is rejected at creation so a
+	// migration never targets an HTTP framework the generator cannot emit (MIG112).
+	if !domain.IsGenerableHttpFramework(
+		m.GetTarget().GetLanguage(),
+		m.GetTarget().GetInterServiceTransport(),
+		m.GetTarget().GetHttpFramework(),
+	) {
+		return nil, domain.ErrUnsupportedHttpFramework
+	}
+	m.Target.HttpFramework = domain.CanonicalHttpFramework(
+		m.GetTarget().GetLanguage(),
+		m.GetTarget().GetInterServiceTransport(),
+		m.GetTarget().GetHttpFramework(),
+	)
 	// Reject (language, database) cells the generator cannot emit. The DATABASE axis
 	// is orthogonal to language/protocol/topology. The axis is COMPLETE: all four
 	// generable languages support {MongoDB, PostgreSQL, MariaDB} — Go (GORM), Python
@@ -286,8 +305,9 @@ func (s *Service) GetMigration(ctx context.Context, identifier uint64) (*domain.
 // Cost: the real agent-reported total_cost_usd is used when present (apikey
 // mode); otherwise the cost is estimated by token using the billing price sheet
 // (subscription mode, where total_cost_usd is 0). The estimated case is marked
-// in the log; a structured cost_estimated flag on UsageRecord is PENDING (needs
-// a proto change, deferred).
+// both in the log and structurally via UsageSpend.CostEstimated, which billing
+// persists on the UsageRecord (cost_estimated) so the UI can label estimated
+// spend instead of presenting it as a billed dollar amount.
 func (s *Service) finalizeGenerationBilling(ctx context.Context, m *domain.Migration) {
 	if s.billing == nil || s.generationResultReader == nil {
 		return
@@ -1006,6 +1026,12 @@ func profileSourceRoot(profile string) string {
 		return "rust"
 	case "java":
 		return "java"
+	case "ruby":
+		return "ruby"
+	case "csharp":
+		return "csharp"
+	case "cpp":
+		return "cpp"
 	default:
 		return ""
 	}
@@ -1042,6 +1068,12 @@ func outputProfileLabel(tc *migrationv1.TargetConfig) string {
 		return "rust"
 	case migrationv1.TargetLanguage_TARGET_LANGUAGE_JAVA:
 		return "java"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_RUBY:
+		return "ruby"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_CSHARP:
+		return "csharp"
+	case migrationv1.TargetLanguage_TARGET_LANGUAGE_CPP:
+		return "cpp"
 	default:
 		return "go"
 	}
@@ -1131,6 +1163,21 @@ func generatorPromptRef(profile string, transport migrationv1.Transport) string 
 			return "docs/prism/milton-prism-service-generator-prompt-java-http.md"
 		}
 		return "docs/prism/milton-prism-service-generator-prompt-java.md"
+	case "ruby":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-ruby-http.md"
+		}
+		return "docs/prism/milton-prism-service-generator-prompt-ruby.md"
+	case "csharp":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-csharp-http.md"
+		}
+		return "docs/prism/milton-prism-service-generator-prompt-csharp.md"
+	case "cpp":
+		if transport == migrationv1.Transport_TRANSPORT_HTTP {
+			return "docs/prism/milton-prism-service-generator-prompt-cpp-http.md"
+		}
+		return "docs/prism/milton-prism-service-generator-prompt-cpp.md"
 	default:
 		if transport == migrationv1.Transport_TRANSPORT_HTTP {
 			return "docs/prism/milton-prism-service-generator-prompt-go-http.md"

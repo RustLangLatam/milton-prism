@@ -746,8 +746,14 @@ func (p *Pipeline) Run(ctx context.Context, job workerdomain.JobPayload) error {
 	// the repo root), derive the framework from code-level structural signals and
 	// inject it into technologies before persisting. Fixing the data at write time
 	// means every reader (GetAnalysisSummary, StackDetector, exports) benefits
-	// without each needing its own inference pass.
-	technologies = injectInferredFramework(technologies, blueprints)
+	// without each needing its own inference pass. The inference is gated on the
+	// PRIMARY backend language (same resolver the intake gate uses) so a polyglot
+	// repo is never mislabelled with a secondary language's framework.
+	primaryLanguage := primaryBackendLanguage(intakeInput{
+		detectedLangs:      detectedLangs,
+		supportedLanguages: p.supportedLanguages,
+	})
+	technologies = injectInferredFramework(technologies, blueprints, primaryLanguage)
 
 	// Stage 6e — canonical hub enrichment. Compute weighted fan-in/fan-out from
 	// the dependency graph (same formula the scorer/distiller use) and set them
@@ -1189,25 +1195,29 @@ func boostManifestLanguage(technologies []*analysisdomain.Technology, deps []wor
 //     type is reused by the Java and C# analyzers to model Spring/ASP.NET
 //     controllers (the cross-language analogue of a Flask blueprint), so a bare
 //     "blueprints exist" check would false-positive Flask on Spring/ASP.NET
-//     repos. Only treat blueprints as a Flask signal when Python is among the
-//     detected languages.
+//     repos. The gate is on the PRIMARY language being Python, not merely Python
+//     being present: a Go-primary (or Java/C#-primary) repo that happens to carry
+//     some Python tooling must not be labelled Flask. primaryLanguage is the
+//     backend language resolved by primaryBackendLanguage (the same value the
+//     intake gate and the panel's stack label use).
 //
 // To add a rule (e.g. FastAPI @app.get router decorators, Django apps.py):
 // add a block below following the same pattern — check blueprints or cards,
-// gate on the relevant language, return the canonical Technology entry, and
+// gate on the PRIMARY language, return the canonical Technology entry, and
 // document the exclusive signal.
-func injectInferredFramework(technologies []*analysisdomain.Technology, blueprints []*analysisdomain.BlueprintInfo) []*analysisdomain.Technology {
+func injectInferredFramework(technologies []*analysisdomain.Technology, blueprints []*analysisdomain.BlueprintInfo, primaryLanguage string) []*analysisdomain.Technology {
 	for _, t := range technologies {
 		if t.GetCategory() == "framework" {
 			return technologies // manifest detection wins
 		}
 	}
 	// Flask: Blueprint registrations are a Flask-exclusive structural signal, but
-	// only within a Python codebase. The BlueprintInfo type is shared across
-	// language analyzers (Spring/ASP.NET controllers also produce blueprints), so
-	// the inference must be gated to Python evidence to avoid claiming Flask on a
-	// Spring (Java) or ASP.NET Core (C#) repository.
-	if len(blueprints) > 0 && hasLanguage(technologies, "Python") {
+	// only when Python is the PRIMARY language. The BlueprintInfo type is shared
+	// across language analyzers (Spring/ASP.NET controllers also produce
+	// blueprints), and a polyglot repo can detect Python without being a Python
+	// app, so gating on "Python present" (hasLanguage) false-positives Flask on
+	// Go/Java/C#-primary repos (the "GO·Flask" bug). Gate on the primary language.
+	if len(blueprints) > 0 && strings.EqualFold(primaryLanguage, "Python") {
 		return append(technologies, &analysisdomain.Technology{
 			Name:     "Flask",
 			Category: "framework",
@@ -1215,18 +1225,6 @@ func injectInferredFramework(technologies []*analysisdomain.Technology, blueprin
 		})
 	}
 	return technologies
-}
-
-// hasLanguage reports whether technologies contains a language entry whose name
-// matches the given language (case-insensitive). Language entries are produced
-// by inventoryTechnologies from go-enry detection (Category == "language").
-func hasLanguage(technologies []*analysisdomain.Technology, language string) bool {
-	for _, t := range technologies {
-		if t.GetCategory() == "language" && strings.EqualFold(t.GetName(), language) {
-			return true
-		}
-	}
-	return false
 }
 
 // manifestTechnologies converts ManifestParser output to Technology entries.

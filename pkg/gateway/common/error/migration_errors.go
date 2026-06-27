@@ -12,6 +12,7 @@ var migrationErrorMessages = map[string]string{
 	"MIG108": "A source branch is required to start a migration.",
 	"MIG109": "The selected protocol is not yet supported for this target language.",
 	"MIG111": "The selected database is not supported. Go, Python, Node, and Rust all support PostgreSQL, MariaDB/MySQL, or MongoDB.",
+	"MIG112": "The selected HTTP framework is not yet supported for this target language. Go supports net/http (default) or Gin.",
 
 	// Domain errors (MIG2xx)
 	"MIG201": "The requested migration was not found.",

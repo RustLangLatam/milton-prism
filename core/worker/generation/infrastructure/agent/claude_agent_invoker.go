@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"milton_prism/core/worker/generation/ports"
@@ -25,19 +26,22 @@ const (
 	// single service in subscription runs.
 	defaultAgentTimeout = 60 * time.Minute
 
-	// Rust (Tonic) profile resource limits. Compiling a Tonic/Prost service plus
-	// its crate graph is far heavier in RAM and wall-clock than Go/Node/Python:
-	// the default 1 GiB / 50% CPU cannot finish a `cargo build` (rustc + LLVM
-	// codegen of tonic/prost/tokio/mongodb regularly peaks well above 1 GiB).
-	// These limits apply only to the rust profile; every other profile keeps the
-	// defaults above. The agent image pre-warms the Cargo registry + a compiled
-	// dependency cache so the bulk of the crate compile is already done.
-	rustAgentCPUQuota = 200_000        // up to 2 CPUs for parallel codegen
-	rustAgentMemory   = int64(4) << 30 // 4 GiB — headroom for rustc/LLVM peaks
-	// Container lifetime covers the whole run (agent reasoning + every cargo
-	// build/test iteration). Rust builds are slow even with a warm cache, so the
-	// rust container gets a longer budget than the 60-min default.
-	rustAgentTimeout = 90 * time.Minute
+	// Heavy-tier resource limits (GAP #6e). Profiles that compile native/JVM
+	// artifacts inside the container (rust, java) are far heavier in RAM, CPU and
+	// wall-clock than the interpreted/fast-linking defaults above: the default
+	// 1 GiB / 50% CPU cannot finish a Tonic/Prost `cargo build` (rustc + LLVM
+	// codegen) nor a JVM+Maven build with its large heap. The agent image
+	// pre-warms each toolchain's dependency cache so most of the dependency
+	// compile is already done. See heavyProfiles / resourceTierFor for the
+	// profile→tier mapping; only the named heavy profiles get these limits.
+	heavyAgentCPUQuota = 200_000        // up to 2 CPUs for parallel codegen
+	heavyAgentMemory   = int64(4) << 30 // 4 GiB — headroom for rustc/LLVM / JVM peaks
+	// Container lifetime covers the whole run (agent reasoning + every build/test
+	// iteration). Heavy builds are slow even with a warm cache, so the heavy
+	// container gets a longer budget than the 60-min default. Kept in lockstep
+	// with perServiceBudget in the jobs package so the per-service task budget
+	// never truncates a heavy container mid-build.
+	heavyAgentTimeout = 90 * time.Minute
 
 	// maxArtifactBytes is the upper size bound for a file to be captured as a
 	// generation artifact. Generated Go source and proto files are always well
@@ -47,6 +51,66 @@ const (
 	// per-document limit in UpsertArtifacts.
 	maxArtifactBytes = 1 << 20 // 1 MiB
 )
+
+// resourceTier bundles the container resource limits applied to one class of
+// output profiles. Named tiers keep the selector extensible: adding a profile
+// to an existing tier is a one-line map entry (not a new if-branch), and a new
+// tier (e.g. an "xheavy" for cpp LTO builds) is one more var + map.
+type resourceTier struct {
+	cpuQuota    int64
+	memoryBytes int64
+	timeout     time.Duration
+}
+
+var (
+	// defaultResourceTier mirrors the invoker's configured defaults and is the
+	// safe fallback for every unrecognised profile.
+	defaultResourceTier = resourceTier{
+		cpuQuota:    defaultAgentCPUQuota,
+		memoryBytes: defaultAgentMemory,
+		timeout:     defaultAgentTimeout,
+	}
+	// heavyResourceTier is for profiles that compile native/JVM artifacts.
+	heavyResourceTier = resourceTier{
+		cpuQuota:    heavyAgentCPUQuota,
+		memoryBytes: heavyAgentMemory,
+		timeout:     heavyAgentTimeout,
+	}
+)
+
+// heavyProfiles are the output profiles that compile heavy native or JVM
+// artifacts inside the container and therefore run on heavyResourceTier:
+//   - rust: rustc + LLVM codegen of the Tonic/Prost crate graph.
+//   - java: JVM + Maven build with a large heap and long wall-clock. The commit
+//     that claimed 4 GiB for Java never wired it (audit #6e); this is that wiring,
+//     bringing Java up to the same tier as rust.
+//   - csharp: Roslyn + `dotnet build` (NuGet restore graph + analyzers + Grpc.Tools
+//     protoc/grpc_csharp_plugin codegen) peaks well above 1 GiB.
+//   - cpp: g++/CMake compile + link of the grpc++/mongocxx C++ object graph (and
+//     protoc/grpc_cpp_plugin codegen) is memory- and CPU-heavy. The grpc++/protobuf/
+//     mongocxx libraries are PREINSTALLED (find_package, not FetchContent), so only
+//     the service's own code is compiled — but the C++ link step still peaks >1 GiB.
+//
+// Go/Python/Node/Ruby intentionally stay on the default tier: Go links fast,
+// Python/Node do not compile native code, and Ruby's native-extension gems are
+// pre-built into the warmed GEM_HOME — so the 1 GiB / 50% CPU / 60-min defaults
+// are sufficient.
+var heavyProfiles = map[string]bool{
+	"rust":   true,
+	"java":   true,
+	"csharp": true,
+	"cpp":    true,
+}
+
+// resourceTierFor selects the resource tier for an output profile and reports
+// whether a non-default (heavy) tier applies. Unknown, empty, or odd-cased
+// profiles fall back to the safe default tier.
+func resourceTierFor(profile string) (resourceTier, bool) {
+	if heavyProfiles[strings.ToLower(strings.TrimSpace(profile))] {
+		return heavyResourceTier, true
+	}
+	return defaultResourceTier, false
+}
 
 var _ ports.AgentInvoker = (*ClaudeAgentInvoker)(nil)
 
@@ -135,11 +199,14 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 		req.ErrorPrefix,
 		req.OutputProfile,
 		req.Protocol,
+		req.HTTPFramework,
 		req.AuthScheme,
 		req.AuthSignatureAlg,
 		req.Store,
 		req.BoundarySpec,
 		req.ProtoContent,
+		req.SourceToPort,
+		req.PreviousVerifyStderr,
 	); err != nil {
 		return ports.InvokeResult{}, fmt.Errorf("agent invoker: write prompt: %w", err)
 	}
@@ -171,7 +238,6 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 	out := ports.InvokeResult{
 		ExitCode:       runResult.ExitCode,
 		Success:        runResult.ExitCode == 0,
-		GatesPassed:    runResult.ExitCode == 0,
 		GeneratedFiles: generated,
 		FileArtifacts:  artifacts,
 	}
@@ -187,19 +253,62 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 		out.Model = parsed.DominantModel()
 	}
 
-	if !out.Success {
-		raw := extractFailureReason(runResult.Stdout + runResult.Stderr)
-		out.RawFailureReason = raw
-		out.FailureReason = SanitizeFailureReason(raw)
-		// Log the full raw blob server-side for diagnosis; never expose it to the
-		// user-visible FailureReason field.
-		applog.Warningf("agent invoker: service=%s gate failure (raw, server-only): %s",
-			req.ServiceName, raw)
+	// Capture the agent run's own failure signal up-front: it classifies transient
+	// (rate-limit/infra) retries and is the fallback gate for profiles whose
+	// deterministic verify is not wired yet.
+	agentRaw := extractFailureReason(runResult.Stdout + runResult.Stderr)
+
+	// DETERMINISTIC GATE (the spine): instead of trusting Claude's exit code, run a
+	// SECOND pass — verifyCmd — in the SAME image/workspace and derive GatesPassed
+	// from ITS exit. The generated service must actually COMPILE and its tests must
+	// PASS. The verify stderr is captured so a retry can inject the exact failures.
+	verifyCmd, verifyWired := verifyCommandFor(req.OutputProfile, req.Protocol, req.ServiceName)
+	switch {
+	case runErr != nil:
+		// Container/infra failure for the agent run itself — verify is meaningless.
+		// Transient by classification; let the pipeline retry.
+		out.GatesPassed = false
+		out.RawFailureReason = agentRaw
+		out.FailureReason = SanitizeFailureReason(agentRaw)
+		applog.Warningf("agent invoker: service=%s agent container error (raw, server-only): %s", req.ServiceName, agentRaw)
+	case runResult.ExitCode != 0 && isRateLimited(agentRaw):
+		// The agent itself was rate-limited/overloaded before producing a result;
+		// running verify would just fail on missing files. Surface it as transient.
+		out.GatesPassed = false
+		out.RawFailureReason = agentRaw
+		out.FailureReason = SanitizeFailureReason(agentRaw)
+		applog.Warningf("agent invoker: service=%s agent rate-limited (raw, server-only): %s", req.ServiceName, agentRaw)
+	case !verifyWired:
+		// Deterministic gate not certified for this profile's layout yet: preserve
+		// the prior behaviour (GatesPassed from the agent's own exit) so this change
+		// never regresses an uncertified language.
+		out.GatesPassed = runResult.ExitCode == 0
+		if !out.Success {
+			out.RawFailureReason = agentRaw
+			out.FailureReason = SanitizeFailureReason(agentRaw)
+		}
+		applog.Infof("agent invoker: service=%s profile=%s deterministic verify NOT wired — gate from agent exit=%d",
+			req.ServiceName, req.OutputProfile, runResult.ExitCode)
+	default:
+		// The real behavioural gate: compile + tests in the same container.
+		verifyRes, verifyErr := a.runVerify(ctx, workspaceDir, req, verifyCmd)
+		out.VerifyRan = true
+		out.VerifyExitCode = verifyRes.ExitCode
+		out.GatesPassed = verifyErr == nil && verifyRes.ExitCode == 0
+		applog.Infof("agent invoker: service=%s deterministic verify ran cmd=%q exitCode=%d gatesPassed=%v err=%v",
+			req.ServiceName, verifyCmd, verifyRes.ExitCode, out.GatesPassed, verifyErr)
+		if !out.GatesPassed {
+			tail := verifyFailureTail(verifyRes.Stdout, verifyRes.Stderr, verifyErr)
+			out.VerifyStderr = tail
+			out.RawFailureReason = tail
+			out.FailureReason = SanitizeFailureReason("deterministic gate failed: " + tail)
+			applog.Warningf("agent invoker: service=%s deterministic gate RED (server-only tail): %s", req.ServiceName, tail)
+		}
 	}
 
-	applog.Infof("agent invoker: done service=%s exitCode=%d gatesPassed=%v cost=%.4f "+
+	applog.Infof("agent invoker: done service=%s agentExit=%d verifyRan=%v verifyExit=%d gatesPassed=%v cost=%.4f "+
 		"tokens(in=%d cacheCreate=%d cacheRead=%d out=%d) generatedFiles=%d",
-		req.ServiceName, out.ExitCode, out.GatesPassed, out.TotalCostUSD,
+		req.ServiceName, out.ExitCode, out.VerifyRan, out.VerifyExitCode, out.GatesPassed, out.TotalCostUSD,
 		out.InputTokens, out.CacheCreationInputTokens, out.CacheReadInputTokens,
 		out.OutputTokens, len(generated))
 
@@ -207,6 +316,78 @@ func (a *ClaudeAgentInvoker) Invoke(ctx context.Context, workspaceBase string, r
 		return out, fmt.Errorf("agent invoker: container: %w", runErr)
 	}
 	return out, nil
+}
+
+// rateLimitKeywords mirrors the pipeline's transient classification so the invoker
+// can short-circuit the deterministic verify when the agent itself was throttled
+// (running verify on a workspace with no generated files would only produce noise).
+var rateLimitKeywords = []string{
+	"rate limit", "rate_limit", "too many requests",
+	"429", "overloaded", "server temporarily unavailable",
+}
+
+func isRateLimited(raw string) bool {
+	lower := strings.ToLower(raw)
+	for _, kw := range rateLimitKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyFailureTail builds a bounded, log-only snippet from the verify command's
+// output for retry feedback. go build/test write diagnostics to stderr (and tests
+// to stdout); both are included, stderr last so the compiler/test errors are the
+// freshest text the next prompt sees.
+func verifyFailureTail(stdout, stderr string, verifyErr error) string {
+	var b strings.Builder
+	if s := strings.TrimSpace(stdout); s != "" {
+		b.WriteString(s)
+		b.WriteString("\n")
+	}
+	if s := strings.TrimSpace(stderr); s != "" {
+		b.WriteString(s)
+		b.WriteString("\n")
+	}
+	if verifyErr != nil {
+		b.WriteString("verify runner error: ")
+		b.WriteString(verifyErr.Error())
+	}
+	out := strings.TrimSpace(b.String())
+	const max = 8000
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	if out == "" {
+		out = "verify command exited non-zero with no captured output"
+	}
+	return out
+}
+
+// runVerify runs the deterministic gate command in a fresh container over the SAME
+// workspace the agent just wrote (bind-mounted), with the same Go module cache and
+// the heavy/default resource tier for the profile. No model credential and no
+// ~/.claude mount: this pass only compiles and tests — it never calls the model.
+func (a *ClaudeAgentInvoker) runVerify(ctx context.Context, workspaceDir string, req ports.InvokeRequest, verifyCmd string) (ports.RunResult, error) {
+	mounts := []string{workspaceDir + ":/workspace:rw"}
+	if a.goModCache != "" {
+		mounts = append(mounts, a.goModCache+":/go/pkg/mod:ro")
+	}
+	cpuQuota, memoryBytes, timeout := a.cpuQuota, a.memoryBytes, a.timeout
+	if tier, heavy := resourceTierFor(req.OutputProfile); heavy {
+		cpuQuota, memoryBytes, timeout = tier.cpuQuota, tier.memoryBytes, tier.timeout
+	}
+	return a.runner.Run(ctx, ports.RunRequest{
+		Image:       a.image,
+		Command:     []string{"sh", "-c", verifyCmd},
+		WorkDir:     "/workspace",
+		BindMounts:  mounts,
+		CPUQuota:    cpuQuota,
+		MemoryBytes: memoryBytes,
+		NetworkName: a.networkName,
+		Timeout:     timeout,
+	})
 }
 
 // buildRunRequest assembles the RunRequest for the given auth strategy.
@@ -231,12 +412,14 @@ func (a *ClaudeAgentInvoker) buildRunRequest(workspaceDir string, req ports.Invo
 	var env []string
 	var claudeCmd string
 
-	// Profile-aware resource limits: the rust profile needs more RAM/CPU/time to
-	// run `cargo build` inside the container (Tonic/Prost compile is heavy). All
-	// other profiles keep the invoker's configured defaults.
+	// Profile-aware resource limits (#6e): heavy profiles (rust, java) need more
+	// RAM/CPU/time for their native/JVM build inside the container; every other
+	// profile keeps the invoker's configured defaults. See resourceTierFor.
 	cpuQuota, memoryBytes, timeout := a.cpuQuota, a.memoryBytes, a.timeout
-	if req.OutputProfile == "rust" {
-		cpuQuota, memoryBytes, timeout = rustAgentCPUQuota, rustAgentMemory, rustAgentTimeout
+	if tier, heavy := resourceTierFor(req.OutputProfile); heavy {
+		cpuQuota, memoryBytes, timeout = tier.cpuQuota, tier.memoryBytes, tier.timeout
+		applog.Infof("agent invoker: service=%s profile=%s heavy resource tier (cpuQuota=%d memoryBytes=%d timeout=%s)",
+			req.ServiceName, req.OutputProfile, cpuQuota, memoryBytes, timeout)
 	}
 
 	if a.goModCache != "" {

@@ -27,6 +27,12 @@ type InvokeRequest struct {
 	// protocol) and the transport section injected into the combined prompt.
 	// Empty is treated as "grpc".
 	Protocol string
+	// HTTPFramework is the HTTP web framework the generated router/handlers are built
+	// on ("net_http" | "gin" | …), resolved by the reader from TargetConfig.http_framework
+	// (canonicalised: HTTP + UNSPECIFIED → the language default). Only meaningful when
+	// Protocol == "http"; empty/"net_http" keeps the language's native HTTP default
+	// (no prompt block). Drives the HTTP-framework section injected into the prompt.
+	HTTPFramework string
 	// AuthScheme is the effective authentication scheme the generated service must
 	// implement ("jwt"/"none"/"oauth2"/"session_cookie"/"api_key"/"basic"),
 	// resolved by the migration service (override ?? detected). v1 generates "jwt"
@@ -48,6 +54,17 @@ type InvokeRequest struct {
 	// gorm.io/driver/mysql by store, AutoMigrate, gorm.DeletedAt soft-delete). Empty
 	// is treated as "mongodb".
 	Store string
+	// SourceToPort is the ORIGINAL per-service source the generator must PORT
+	// (translate faithfully, not invent). Domain files carry the business logic;
+	// test files are the behaviour oracle. The invoker injects them into the
+	// combined prompt under "## Source to Port". Empty degrades to contract-only
+	// generation (the old behaviour).
+	SourceToPort []SourceFile
+	// PreviousVerifyStderr carries the stderr of the PREVIOUS attempt's
+	// deterministic verify command (compile/test failure). On a retry it is
+	// injected into the prompt so the agent fixes the exact failing build/tests
+	// instead of regenerating blind. Empty on the first attempt.
+	PreviousVerifyStderr string
 	// APIKey is ANTHROPIC_API_KEY for production use (sk-ant-api03-…).
 	// Passed to the container as an env var with --bare mode.
 	// Callers MUST NOT log this field — it carries a runtime secret (A.7).
@@ -77,10 +94,25 @@ type InvokeResult struct {
 	ExitCode int
 	// RawResult is the "result" field from Claude Code's JSON output.
 	RawResult string
-	// GatesPassed is true when the self-verification loop inside the agent
-	// confirmed all gates green (buf lint, go build, go vet, go test).
-	// Derived from ExitCode == 0 per the generator prompt contract.
+	// GatesPassed is true when the DETERMINISTIC verify command (the second run:
+	// compile + tests) exited 0 in the same image/workspace. It is NO LONGER
+	// derived from Claude's exit code — Claude exiting 0 is treated as "claimed
+	// done", and the verify run is the ground truth that the generated service
+	// actually compiles and its tests pass.
 	GatesPassed bool
+	// VerifyRan is true when the deterministic verify command was executed (the
+	// agent run produced files and was not a transient/infra failure). When false,
+	// GatesPassed reflects only that verify never got to run (e.g. rate-limited
+	// agent), and the failure is classified from the agent run instead.
+	VerifyRan bool
+	// VerifyExitCode is the exit code of the deterministic verify command. 0 ==
+	// gates green. Meaningful only when VerifyRan is true.
+	VerifyExitCode int
+	// VerifyStderr is the (bounded) stderr+stdout tail of the deterministic verify
+	// command when it failed. It is fed back into the next attempt's prompt
+	// (PreviousVerifyStderr) so the agent fixes the exact failing build/tests.
+	// Server-only; never a user-visible field.
+	VerifyStderr string
 	// GeneratedFiles is the list of file paths created or modified in the
 	// workspace during the agent run (relative to the workspace root).
 	GeneratedFiles []string

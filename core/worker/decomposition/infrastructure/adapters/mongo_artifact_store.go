@@ -44,14 +44,31 @@ func (s *MongoArtifactStore) UpsertArtifacts(
 			"migration_id": migrationID,
 			"service_name": a.ServiceName,
 		}
+		sourceFiles := make(bson.A, 0, len(a.SourceFiles))
+		for _, sf := range a.SourceFiles {
+			symbols := sf.Symbols
+			if symbols == nil {
+				symbols = []string{}
+			}
+			sourceFiles = append(sourceFiles, bson.M{
+				"path":    sf.Path,
+				"lang":    sf.Lang,
+				"role":    sf.Role,
+				"content": sf.Content,
+				"symbols": symbols,
+			})
+		}
 		update := bson.M{"$set": bson.M{
-			"migration_id":      migrationID,
-			"service_name":      a.ServiceName,
-			"proto_content":     a.ProtoContent,
-			"boundary_spec":     a.BoundarySpec,
-			"incomplete":        a.Incomplete,
-			"incomplete_reason": a.IncompleteReason,
-			"update_time":       now,
+			"migration_id":         migrationID,
+			"service_name":         a.ServiceName,
+			"proto_content":        a.ProtoContent,
+			"boundary_spec":        a.BoundarySpec,
+			"incomplete":           a.Incomplete,
+			"incomplete_reason":    a.IncompleteReason,
+			"source_files":         sourceFiles,
+			"source_truncated":     a.Truncated,
+			"source_omitted_count": a.OmittedCount,
+			"update_time":          now,
 		}}
 		if _, err := s.coll.UpdateOne(ctx, filter, update, &opts); err != nil {
 			return fmt.Errorf("artifact-store: upsert service=%s migration=%d: %w",

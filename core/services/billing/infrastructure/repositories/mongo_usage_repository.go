@@ -32,6 +32,7 @@ type mongoUsageDoc struct {
 	UserID        uint64             `bson:"user_id"`
 	AnalysisID    uint64             `bson:"analysis_id,omitempty"`
 	MigrationID   uint64             `bson:"migration_id,omitempty"`
+	ServiceName   string             `bson:"service_name,omitempty"`
 	Operation     int32              `bson:"operation"`
 	TokensIn      int64              `bson:"tokens_in"`
 	TokensOut     int64              `bson:"tokens_out"`
@@ -73,6 +74,7 @@ func (r *MongoUsageRepository) Record(ctx context.Context, rec *domain.UsageReco
 		UserID:        rec.GetUserId(),
 		AnalysisID:    rec.GetAnalysisId(),
 		MigrationID:   rec.GetMigrationId(),
+		ServiceName:   rec.GetServiceName(),
 		Operation:     int32(rec.GetOperation()),
 		TokensIn:      rec.GetTokensIn(),
 		TokensOut:     rec.GetTokensOut(),
@@ -193,6 +195,7 @@ func usageDocToDomain(d *mongoUsageDoc) *domain.UsageRecord {
 		UserId:        d.UserID,
 		AnalysisId:    d.AnalysisID,
 		MigrationId:   d.MigrationID,
+		ServiceName:   d.ServiceName,
 		Operation:     billingv1.UsageOperation(d.Operation),
 		TokensIn:      d.TokensIn,
 		TokensOut:     d.TokensOut,

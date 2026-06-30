@@ -392,8 +392,28 @@ func promptProfileBindings(outputProfile, protocol string) (langLabel, profileDo
 // ok is false for profiles whose deliverable layout inside the workspace has not
 // been certified for the deterministic gate yet; the invoker then preserves the
 // prior behaviour (GatesPassed from the agent's own exit) for that profile so this
-// change never regresses an uncertified language. Go (gRPC and HTTP) is certified.
+// change never regresses an uncertified language.
+//
+// All eight output profiles are now wired (each command was derived from a real
+// certified deliverable layout and the per-language build/test gate stated in the
+// profile docs and in transportSection): Go (core/services/<svc>), Python
+// (python/, Poetry), Node (node/, npm + tsc + vitest), Rust (rust/, Cargo
+// workspace member), Java (java/, Maven reactor module), Ruby (ruby/, Bundler +
+// RSpec), C# (csharp/services/<svc>, dotnet test) and C++ (cpp/, CMake + ctest).
+// protocol (grpc|http) does NOT change the command: only the generated code
+// differs between transports, the toolchain build+test invocation is identical,
+// so the same per-profile command verifies both cells.
+//
+// The toolchain each command needs is present in the generation-agent image: Go
+// is in the base; Rust/Java/Ruby/C#/C++ resolve from the image's warmed offline
+// caches (CARGO_HOME, /usr/local/m2, /usr/local/bundle, /usr/local/nuget) or the
+// preinstalled grpc++/protobuf/mongocxx C++ stack; Node uses npm; Python (the
+// only profile with no warmed cache — the image ships python3 but no
+// pip/uv/poetry) bootstraps uv + Poetry over the network (the verify container
+// has egress on the generation network) and installs from the deliverable's own
+// pyproject, then runs the compile gate + pytest.
 func verifyCommandFor(outputProfile, protocol, serviceName string) (cmd string, ok bool) {
+	_ = protocol // same build+test invocation for the gRPC and HTTP cells.
 	svc := strings.TrimSpace(serviceName)
 	if svc == "" {
 		return "", false
@@ -404,6 +424,62 @@ func verifyCommandFor(outputProfile, protocol, serviceName string) (cmd string, 
 		// -count=1 disables the test cache so a green is always a fresh run.
 		pkg := "./core/services/" + svc + "/..."
 		return "go build " + pkg + " && go test " + pkg + " -count=1", true
+	case "python":
+		// Layout: python/ (Poetry root pyproject.toml, pytest config with
+		// pythonpath=[".","gen"]), service at python/services/<svc>, tests at
+		// python/services/<svc>/tests. The image has no Python package manager, so
+		// bootstrap uv (a single static binary) then Poetry, install the
+		// deliverable's deps, run the compile gate (python -m compileall) and pytest.
+		return "cd python && export PATH=\"$HOME/.local/bin:$PATH\" && " +
+			"{ command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh; } && " +
+			"{ command -v poetry >/dev/null 2>&1 || uv tool install poetry; } && " +
+			"poetry install --no-interaction --no-root && " +
+			"poetry run python -m compileall -q services/" + svc + " && " +
+			"poetry run pytest services/" + svc + "/tests", true
+	case "node":
+		// Layout: node/ (root package.json with build=tsc --noEmit, test=vitest
+		// run, prisma:generate), service at node/services/<svc>. tsc --noEmit is the
+		// hard build gate (equivalent to go build); vitest is the test gate. Prisma
+		// client must be generated before tsc resolves @prisma/client types; it is
+		// best-effort (tsc fails anyway if a needed client is missing).
+		return "cd node && npm install && " +
+			"(npm run prisma:generate >/dev/null 2>&1 || true) && " +
+			"npm run build && npm test", true
+	case "rust":
+		// Layout: rust/ Cargo workspace, service crate at rust/services/<svc>
+		// (its own Cargo.toml). cargo build is the hard build gate; cargo test runs
+		// the unit tests. --manifest-path scopes the workspace to the service crate.
+		// Deps resolve from the image's warmed CARGO_HOME registry.
+		mf := "rust/services/" + svc + "/Cargo.toml"
+		return "cargo build --manifest-path " + mf + " && cargo test --manifest-path " + mf, true
+	case "java":
+		// Layout: java/ Maven reactor (parent pom.xml + one module per service at
+		// java/services/<svc>), JUnit 5 tests under src/test/java. The test phase
+		// compiles main+test (incl. the protobuf-maven-plugin gRPC codegen) and runs
+		// the suite; -pl selects the service module, -am builds its upstream deps.
+		// Resolves from the image's warmed /usr/local/m2.
+		return "cd java && mvn -B -pl services/" + svc + " -am test", true
+	case "ruby":
+		// Layout: ruby/ (root Gemfile resolving from the warmed /usr/local/bundle),
+		// service app at ruby/services/<svc> with lib/ + spec/ + .rspec. bundle
+		// exec rspec is the hard gate (loading every source file syntax-checks it,
+		// the ruby -c equivalent). rspec runs from the service dir so its .rspec
+		// load paths apply.
+		return "cd ruby && bundle install && (cd services/" + svc + " && bundle exec rspec)", true
+	case "csharp":
+		// Layout: csharp/services/<svc> with the service .csproj + a Tests/ project
+		// (xUnit). dotnet test on the Tests project builds it AND the referenced
+		// service project (the Grpc.Tools codegen + Roslyn compile = the build gate)
+		// and runs the suite. Restores from the image's warmed /usr/local/nuget.
+		return "cd csharp/services/" + svc + " && dotnet test Tests", true
+	case "cpp":
+		// Layout: cpp/ (root CMakeLists adds the service subdir at
+		// cpp/services/<svc>), GoogleTest/assert tests registered with ctest. The
+		// protoc/grpc_cpp_plugin codegen + cmake --build is the build gate; ctest is
+		// the test gate. grpc++/protobuf/mongocxx are preinstalled in the image
+		// (no FetchContent), so the build is offline.
+		return "cd cpp && cmake -S . -B build -G Ninja && cmake --build build && " +
+			"ctest --test-dir build --output-on-failure", true
 	default:
 		// Layout for this profile's deliverable inside the workspace is not yet
 		// certified for the deterministic gate — keep the agent-exit behaviour.

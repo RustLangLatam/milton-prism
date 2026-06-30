@@ -361,6 +361,19 @@ type GatewayServerCfg struct {
 	Metrics      MetricsCfg            `toml:"metrics"`
 	Logging      LoggingCfg            `toml:"logging"`
 	GrpcServices []*GrpcClientCfg      `toml:"grpcServices"`
+
+	// Cache and Auth are OPTIONAL and gate the SSE real-time endpoint
+	// (/v1/events) by config-presence. When BOTH are present the gateway mounts
+	// the SSE route (KeyDB pub-sub + PASETO verify); when either is absent the
+	// gateway behaves exactly as before. Mirror of MicroserviceServerCfg.
+	Cache *CacheCfg `toml:"cache"`
+	Auth  *AuthCfg  `toml:"auth"`
+}
+
+// SSEEnabled reports whether the real-time SSE endpoint should be mounted. The
+// feature flag is pure config-presence: both [cache] and [auth] must be set.
+func (c *GatewayServerCfg) SSEEnabled() bool {
+	return c.Cache != nil && c.Auth != nil
 }
 
 // Validate checks the GatewayServerCfg struct for valid configuration values.
@@ -395,6 +408,19 @@ func (c *GatewayServerCfg) Validate() error {
 		}
 		if err := svc.Validate(); err != nil {
 			return fmt.Errorf("grpc service at index %d validation failed: %w", i, err)
+		}
+	}
+
+	// SSE feature flag (config-presence). Both fields are OPTIONAL: validate
+	// them only when present so a no-SSE gateway config boots exactly as before.
+	if c.Auth != nil {
+		if err := c.Auth.Validate(TokenRoleValidator); err != nil {
+			return fmt.Errorf("gateway auth validation failed: %w", err)
+		}
+	}
+	if c.Cache != nil {
+		if err := c.Cache.Validate(); err != nil {
+			return fmt.Errorf("gateway cache validation failed: %w", err)
 		}
 	}
 

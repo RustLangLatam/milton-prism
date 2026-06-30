@@ -24,7 +24,7 @@ type RegisterServiceFunc func(ctx context.Context, mux *runtime.ServeMux, endpoi
 // It provides functions for service registration and middleware application.
 type RestApiBuilder interface {
 	RegisterService(msConfig *config.GrpcClientCfg, registerFn RegisterServiceFunc, healthPath string) error
-	Build(apiKey *string, corsCfg *config.CORSCfg) RestApi
+	Build(apiKey *string, corsCfg *config.CORSCfg, sseHandler http.Handler) RestApi
 }
 
 // RestApi is an interface that defines the Start method to launch the REST API server on a specified port.
@@ -105,7 +105,7 @@ func (r *restApiBuilder) registerHealthEndpoint(client grpc_health_v1.HealthClie
 //
 // For middleware configuration, see gRPC-Gateway documentation:
 //   - https://github.com/grpc-ecosystem/grpc-gateway
-func (r *restApiBuilder) Build(apiKey *string, corsCfg *config.CORSCfg) RestApi {
+func (r *restApiBuilder) Build(apiKey *string, corsCfg *config.CORSCfg, sseHandler http.Handler) RestApi {
 	httpMetricsCollector := metrics_collector.NewHttpApiMetrics()
 
 	// Apply middlewares in order
@@ -121,7 +121,26 @@ func (r *restApiBuilder) Build(apiKey *string, corsCfg *config.CORSCfg) RestApi 
 		), corsCfg,
 	)
 
-	return restApi{handler: handler}
+	// Feature flag off (no SSE handler): behave exactly as before — the existing
+	// CORS→…→ApiKey→Logging→Metrics→mux chain is the whole server.
+	if sseHandler == nil {
+		return restApi{handler: handler}
+	}
+
+	// Route-level bypass ABOVE the middleware chain. A single exact-path check
+	// sits in front of the chain: /v1/events is a sibling branch served by the
+	// raw, flush-capable SSE handler (no apiKey middleware, no responseWriter
+	// wrappers); EVERY other request is delegated to the existing chain
+	// byte-for-byte unchanged.
+	root := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/v1/events" {
+			sseHandler.ServeHTTP(w, req)
+			return
+		}
+		handler.ServeHTTP(w, req)
+	})
+
+	return restApi{handler: root}
 }
 
 // Start launches the REST API server on the specified ports.

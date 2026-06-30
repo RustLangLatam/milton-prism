@@ -16,6 +16,34 @@ exposeHeaders  = ["Authorization", "Refresh", "MiltonPrismApiKey"]
 [metrics]
 port = 9000
 
+# SSE real-time notifications (feature-flagged by config-presence). Presence of
+# BOTH [cache] and [auth] mounts GET /v1/events. KeyDB pub-sub backs the stream;
+# [auth.tokenValidator] holds the Ed25519 PUBLIC key (derived from the shared
+# signing seed) used to PASETO-verify the ?access_token=.
+[cache]
+host                   = "keydb-replica-0"
+port                   = "6379"
+requirePass            = "1qaz2WSX"
+protectedMode          = true
+connectionPoolCount    = 5
+idleTimeoutInSec       = 300
+connectionTimeoutInSec = 10
+maxIdle                = 3
+
+[auth]
+algorithm = 1
+
+[auth.tokenValidator]
+enabled          = true
+schemaType       = "JWT"
+issuer           = "milton-prism"
+audience         = "milton-prism-clients"
+storage          = false
+blacklist        = false
+validateIssuer   = false
+validateAudience = false
+publicKey        = "87b5ad953e4d781e5d3a3968c01cfa7e7c675d8ff5ca666a7232d48d163ace02"
+
 [[grpcServices]]
 name             = "identity"
 host             = "identity-services"

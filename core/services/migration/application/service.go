@@ -44,7 +44,30 @@ type Service struct {
 	blueprintGenerator     ports.BlueprintGenerator
 	stackDetector          ports.StackDetector
 	billing                ports.BillingClient
+	eventPublisher         ports.MigrationEventPublisher
 	monorepoPath           string // PRISM_MONOREPO_PATH — skeleton root for deliverable assembly
+}
+
+// WithEventPublisher wires the real-time event publisher used to emit
+// migration.state_changed events after committed transitions. When nil (no
+// [cache] configured) emission is a no-op so the service degrades to today's
+// behavior. Best-effort: a publish failure never affects the RPC.
+func (s *Service) WithEventPublisher(p ports.MigrationEventPublisher) *Service {
+	s.eventPublisher = p
+	return s
+}
+
+// emitStateChanged publishes a migration.state_changed event best-effort. It is
+// called AFTER a committed UpdateState; a failure is logged and swallowed so it
+// never fails the transition.
+func (s *Service) emitStateChanged(ctx context.Context, migrationID, ownerUserID uint64, previous, next migrationv1.MigrationState) {
+	if s.eventPublisher == nil {
+		return
+	}
+	if err := s.eventPublisher.PublishMigrationStateChanged(ctx, migrationID, ownerUserID, next.String(), previous.String()); err != nil {
+		applog.Warningf("migration: emit state_changed failed migration_id=%d owner_user_id=%d %s->%s: %v",
+			migrationID, ownerUserID, previous.String(), next.String(), err)
+	}
 }
 
 // WithBillingClient wires the billing client used for per-month migration quota
@@ -482,9 +505,11 @@ func (s *Service) startWithReuse(ctx context.Context, m *domain.Migration) (*dom
 		effectiveBranch = summary.GetSourceBranch()
 	}
 
+	prevState := m.GetState()
 	if err := s.repo.UpdateState(ctx, m.GetIdentifier(), domain.MigrationStateAnalyzing); err != nil {
 		return nil, err
 	}
+	s.emitStateChanged(ctx, m.GetIdentifier(), m.GetOwnerUserId(), prevState, domain.MigrationStateAnalyzing)
 	if err := s.repo.AdoptAnalysis(ctx, m.GetIdentifier(), srcID, effectiveBranch); err != nil {
 		// Roll back to PENDING — the migration is not yet in a useful state.
 		_ = s.repo.UpdateState(ctx, m.GetIdentifier(), domain.MigrationStatePending)
@@ -530,9 +555,11 @@ func (s *Service) startNormal(ctx context.Context, m *domain.Migration) (*domain
 			return nil, probeErr
 		}
 	}
+	prevState := m.GetState()
 	if err := s.repo.UpdateState(ctx, m.GetIdentifier(), domain.MigrationStateAnalyzing); err != nil {
 		return nil, err
 	}
+	s.emitStateChanged(ctx, m.GetIdentifier(), m.GetOwnerUserId(), prevState, domain.MigrationStateAnalyzing)
 	if s.analysis != nil {
 		if dispatchErr := s.analysis.RunAnalysis(ctx, m.GetRepositoryId(), m.GetIdentifier(), m.GetOwnerUserId(), m.GetSourceBranch(), m.GetRootSubdirectory()); dispatchErr != nil {
 			applog.Errorf("migration: RunAnalysis dispatch failed migration_id=%d repository_id=%d: %v — rolling back to PENDING",
@@ -650,9 +677,11 @@ func (s *Service) ApproveDesign(ctx context.Context, identifier uint64, approved
 	if !approved {
 		nextState = domain.MigrationStateCancelled
 	}
+	prevState := m.GetState()
 	if err := s.repo.UpdateState(ctx, identifier, nextState); err != nil {
 		return nil, err
 	}
+	s.emitStateChanged(ctx, identifier, m.GetOwnerUserId(), prevState, nextState)
 	m.State = nextState
 	if approved && s.generationEnqueuer != nil {
 		if dispatchErr := s.generationEnqueuer.EnqueueGeneration(ctx, identifier, serviceFilter); dispatchErr != nil {
@@ -732,9 +761,11 @@ func (s *Service) RetryGeneration(ctx context.Context, identifier uint64, servic
 		}
 	}
 
+	prevState := m.GetState()
 	if err := s.repo.UpdateState(ctx, identifier, domain.MigrationStateGenerating); err != nil {
 		return nil, err
 	}
+	s.emitStateChanged(ctx, identifier, m.GetOwnerUserId(), prevState, domain.MigrationStateGenerating)
 	// Clear any stale migration-level failure reason so the re-armed migration does
 	// not carry the previous run's message. Best-effort: a clear failure must not
 	// abort an otherwise-successful retry.
@@ -916,9 +947,11 @@ func (s *Service) CancelMigration(ctx context.Context, identifier uint64) (*doma
 	if !isCancelableMigrationState(m.GetState()) {
 		return nil, domain.ErrInvalidStateTransition
 	}
+	prevState := m.GetState()
 	if err := s.repo.UpdateState(ctx, identifier, domain.MigrationStateCancelled); err != nil {
 		return nil, err
 	}
+	s.emitStateChanged(ctx, identifier, m.GetOwnerUserId(), prevState, domain.MigrationStateCancelled)
 	m.State = domain.MigrationStateCancelled
 	return m, nil
 }
@@ -1048,9 +1081,11 @@ func (s *Service) PublishMigration(ctx context.Context, migrationID uint64, targ
 	}
 
 	if m.GetState() != domain.MigrationStatePushed {
+		prevState := m.GetState()
 		if stateErr := s.repo.UpdateState(ctx, migrationID, domain.MigrationStatePushed); stateErr != nil {
 			return nil, "", stateErr
 		}
+		s.emitStateChanged(ctx, migrationID, m.GetOwnerUserId(), prevState, domain.MigrationStatePushed)
 		m.State = domain.MigrationStatePushed
 	}
 	return m, pushedBranch, nil

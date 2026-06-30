@@ -2,10 +2,14 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 
+	"milton_prism/core/shared/auth_token"
+	"milton_prism/core/shared/cache_client"
 	"milton_prism/pkg/config"
 	"milton_prism/pkg/gateway"
+	"milton_prism/pkg/gateway/sse"
 	"milton_prism/pkg/log"
 	analysisv1 "milton_prism/pkg/pb/gen/milton_prism/services/analysis/v1"
 	billingv1 "milton_prism/pkg/pb/gen/milton_prism/services/billing/v1"
@@ -51,7 +55,29 @@ func main() {
 		}
 	}
 
-	restApi := apiBuilder.Build(cfg.Server.ApiKey, cfg.Cors)
+	// SSE real-time endpoint (feature-flagged by config-presence): mount
+	// /v1/events only when BOTH [auth] and [cache] are configured. Absent ⇒
+	// sseHandler stays nil and the gateway boots exactly as before.
+	var sseHandler http.Handler
+	if cfg.SSEEnabled() {
+		// Schema-aware validator (JWT or PASETO per [auth.tokenValidator].schemaType).
+		// The live identity service issues EdDSA JWTs; verification is signature-only
+		// against the configured public key (blacklist/issuer/audience off).
+		validator, err := auth_token.NewTokenValidator(cfg.Auth.TokenValidatorConfig, nil)
+		if err != nil {
+			log.Fatalf("Failed to init SSE token validator: %v", err)
+		}
+		pool, err := cache_client.NewPool(cfg.Cache)
+		if err != nil {
+			log.Fatalf("Failed to init SSE cache pool: %v", err)
+		}
+		sseHandler = sse.NewHandler(pool, validator)
+		log.Info("SSE real-time notifications ENABLED (GET /v1/events)")
+	} else {
+		log.Info("SSE real-time notifications DISABLED (no [auth]+[cache] in gateway config)")
+	}
+
+	restApi := apiBuilder.Build(cfg.Server.ApiKey, cfg.Cors, sseHandler)
 
 	log.Infof("Listening on %s:%d", cfg.Server.Host, *cfg.Server.Port)
 

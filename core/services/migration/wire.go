@@ -10,6 +10,8 @@ import (
 	migrationgrpc "milton_prism/core/services/migration/infrastructure/grpc_handlers"
 	migrationrepo "milton_prism/core/services/migration/infrastructure/repositories"
 	"milton_prism/core/services/migration/ports"
+	"milton_prism/core/shared/cache_client"
+	"milton_prism/core/shared/event_bus"
 	"milton_prism/core/shared/grpc_client_sdk"
 	applog "milton_prism/pkg/log"
 	migsvcv1 "milton_prism/pkg/pb/gen/milton_prism/services/migration/v1"
@@ -127,6 +129,18 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 	if billingClient != nil {
 		app.WithBillingClient(billingClient)
 		applog.Infof("migration: plan quota enforcement enabled (billing client over analysis conn)")
+	}
+
+	// Real-time event publisher (best-effort migration.state_changed over KeyDB
+	// pub-sub). Reuses the shared cache pool semantics. Nil [cache] ⇒ no
+	// publisher wired, emission degrades to a no-op.
+	if cfg.Cache != nil {
+		if pool, err := cache_client.NewPool(cfg.Cache); err != nil {
+			applog.Warningf("migration: event publisher disabled (cache pool init failed): error=%v", err)
+		} else {
+			app.WithEventPublisher(migrationrepo.NewMigrationEventPublisherAdapter(event_bus.NewPublisher(pool)))
+			applog.Infof("migration: real-time event publisher enabled (KeyDB pub-sub)")
+		}
 	}
 
 	// Backfill repository_url for records created before the snapshot feature.

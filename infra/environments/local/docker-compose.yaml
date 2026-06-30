@@ -252,6 +252,9 @@ services:
       - "9091:9000"
     networks:
       - milton-prism-network
+      # SSE endpoint subscribes to KeyDB pub-sub (keydb-replica-0) which lives on
+      # the cache-network — the gateway must join it to resolve the host.
+      - cache-network
     healthcheck:
       test: ["CMD-SHELL", "curl -so /dev/null http://localhost:80/"]
       interval: 10s

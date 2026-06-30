@@ -55,8 +55,9 @@ func StartGatewayWithService(
 		return errors.New("gRPC client configuration disabled or missing")
 	}
 
-	// Build REST API with configured middleware and routes
-	restApi := apiBuilder.Build(httpCfg.ApiKey, httpCfg.Cors)
+	// Build REST API with configured middleware and routes. Per-service inline
+	// gateways do not expose the SSE endpoint (nil handler ⇒ unchanged chain).
+	restApi := apiBuilder.Build(httpCfg.ApiKey, httpCfg.Cors, nil)
 
 	// Log startup information
 	log.Infof("Starting HTTP [%s] on %s", grpcClientCfg.Name, httpCfg.FullURL())

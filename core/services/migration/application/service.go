@@ -36,8 +36,9 @@ type Service struct {
 	artifacts              ports.ArtifactReader
 	generationEnqueuer     ports.GenerationJobEnqueuer
 	decomposeEnqueuer      ports.DecomposeJobEnqueuer
-	generationResultReader ports.GenerationResultReader
-	fileArtifactReader     ports.GenerationFileArtifactReader
+	generationResultReader   ports.GenerationResultReader
+	generationRecordResetter ports.GenerationRecordResetter
+	fileArtifactReader       ports.GenerationFileArtifactReader
 	migrabilityAssessor    ports.MigrabilityAssessor
 	roadmapEnricher        ports.RoadmapEnricher
 	blueprintGenerator     ports.BlueprintGenerator
@@ -51,6 +52,15 @@ type Service struct {
 // the service degrades open if billing is unavailable.
 func (s *Service) WithBillingClient(b ports.BillingClient) *Service {
 	s.billing = b
+	return s
+}
+
+// WithGenerationRecordResetter wires the resetter used by RetryGeneration to flip
+// failed per-service records back to pending. When nil, the record reset is
+// skipped (the worker still overwrites the records on its run) so the feature
+// degrades to a slightly less instant UI without breaking the retry.
+func (s *Service) WithGenerationRecordResetter(r ports.GenerationRecordResetter) *Service {
+	s.generationRecordResetter = r
 	return s
 }
 
@@ -292,15 +302,20 @@ func (s *Service) GetMigration(ctx context.Context, identifier uint64) (*domain.
 }
 
 // finalizeGenerationBilling records the migration's GENERATION token spend in
-// billing exactly once, attributed to the migration owner. It is the close hook
-// for generation accounting: the generation worker cannot mint the system token
-// RecordUsage requires, so the spend is recorded from migration-services when a
-// migration is observed in a terminal generation state (READY/FAILED).
+// billing PER SERVICE, exactly once each, attributed to the migration owner. It
+// is the close hook for generation accounting: the generation worker cannot mint
+// the system token RecordUsage requires, so the spend is recorded from
+// migration-services when a migration is observed in a terminal generation state
+// (READY/FAILED).
 //
-// Idempotent: it first checks billing for an existing GENERATION record for the
-// migration and skips when one is present, so repeated GetMigration calls (or a
-// re-triggered finalize) never double-count. Best-effort: every failure is
-// logged and swallowed — it must never break the surrounding read.
+// Idempotency is keyed on (migration_id, service_name): the routine first reads
+// the set of services already billed for this migration's GENERATION operation
+// and skips them. Only done services are billed (a failed service produced no
+// final output); on a retry the worker overwrites the failed record with the
+// successful one, so the read always reflects the final per-service cost and each
+// service is billed exactly once — no double-charge, no under-charge. A done
+// service is never re-billed once recorded. Best-effort: every failure is logged
+// and swallowed — it must never break the surrounding read.
 //
 // Cost: the real agent-reported total_cost_usd is used when present (apikey
 // mode); otherwise the cost is estimated by token using the billing price sheet
@@ -318,49 +333,68 @@ func (s *Service) finalizeGenerationBilling(ctx context.Context, m *domain.Migra
 		return
 	}
 
-	// Idempotency: skip when a GENERATION record already exists for this migration.
-	existing, err := s.billing.CountUsageRecords(ctx, migrationID, billingdomain.OperationGeneration)
+	// Idempotency anchor: the services already billed for GENERATION on this
+	// migration. Skip them so a re-observed terminal state never double-charges.
+	billed, err := s.billing.ListBilledServiceNames(ctx, migrationID, billingdomain.OperationGeneration)
 	if err != nil {
 		applog.Warningf("migration: finalize generation billing — idempotency check failed migration_id=%d: %v", migrationID, err)
 		return
 	}
-	if existing > 0 {
-		return
-	}
 
-	totals, err := s.generationResultReader.ReadUsageTotals(ctx, migrationID)
+	usages, err := s.generationResultReader.ReadServiceUsages(ctx, migrationID)
 	if err != nil {
-		applog.Warningf("migration: finalize generation billing — read totals failed migration_id=%d: %v", migrationID, err)
-		return
-	}
-	if totals.Records == 0 || (totals.TokensIn == 0 && totals.TokensOut == 0) {
-		// Nothing was generated (or no token data) — nothing to bill.
+		applog.Warningf("migration: finalize generation billing — read usages failed migration_id=%d: %v", migrationID, err)
 		return
 	}
 
-	cost := totals.RealCostUSD
-	estimated := false
-	if cost <= 0 {
-		cost = billingdomain.EstimateCostUSD(totals.Model, totals.TokensIn, 0, 0, totals.TokensOut)
-		estimated = true
-	}
+	for _, u := range usages {
+		// Bill only done services (a failed service produced no final output), once
+		// each, and never a service that already has a GENERATION record.
+		if u.Status != workerStatusDone {
+			continue
+		}
+		if billed[u.ServiceName] {
+			continue
+		}
+		if u.TokensIn == 0 && u.TokensOut == 0 {
+			// No token data for this service — nothing to bill.
+			continue
+		}
 
-	if err := s.billing.RecordUsage(ctx, ports.UsageSpend{
-		UserID:        ownerID,
-		MigrationID:   migrationID,
-		Operation:     billingdomain.OperationGeneration,
-		TokensIn:      totals.TokensIn,
-		TokensOut:     totals.TokensOut,
-		CostUSD:       cost,
-		Model:         totals.Model,
-		CostEstimated: estimated,
-	}); err != nil {
-		applog.Warningf("migration: finalize generation billing — record failed migration_id=%d: %v", migrationID, err)
-		return
+		cost := u.RealCostUSD
+		estimated := false
+		if cost <= 0 {
+			cost = billingdomain.EstimateCostUSD(u.Model, u.TokensIn, 0, 0, u.TokensOut)
+			estimated = true
+		}
+
+		if err := s.billing.RecordUsage(ctx, ports.UsageSpend{
+			UserID:        ownerID,
+			MigrationID:   migrationID,
+			ServiceName:   u.ServiceName,
+			Operation:     billingdomain.OperationGeneration,
+			TokensIn:      u.TokensIn,
+			TokensOut:     u.TokensOut,
+			CostUSD:       cost,
+			Model:         u.Model,
+			CostEstimated: estimated,
+		}); err != nil {
+			applog.Warningf("migration: finalize generation billing — record failed migration_id=%d service=%s: %v", migrationID, u.ServiceName, err)
+			continue
+		}
+		applog.Infof("migration: GENERATION spend recorded migration_id=%d service=%s owner=%d tokensIn=%d tokensOut=%d costUSD=%.4f estimated=%v model=%q",
+			migrationID, u.ServiceName, ownerID, u.TokensIn, u.TokensOut, cost, estimated, u.Model)
 	}
-	applog.Infof("migration: GENERATION spend recorded migration_id=%d owner=%d tokensIn=%d tokensOut=%d costUSD=%.4f estimated=%v model=%q",
-		migrationID, ownerID, totals.TokensIn, totals.TokensOut, cost, estimated, totals.Model)
 }
+
+// workerStatusDone / workerStatusFailed are the generation_results status values
+// the worker writes for a successfully generated / failed service. Declared here
+// (not imported from the worker domain) so the migration application layer stays
+// decoupled from the worker package; they must match workerdomain.ServiceStatus*.
+const (
+	workerStatusDone   = "done"
+	workerStatusFailed = "failed"
+)
 
 // ListMigrations returns a paginated, filtered, ordered list of migrations.
 // orderBy is an AIP-132 directive resolved server-side by the repository;
@@ -625,6 +659,100 @@ func (s *Service) ApproveDesign(ctx context.Context, identifier uint64, approved
 			applog.Warningf("migration: EnqueueGeneration dispatch failed migration_id=%d: %v", identifier, dispatchErr)
 		}
 	}
+	return m, nil
+}
+
+// RetryGeneration re-runs autonomous generation for the failed services of a
+// FAILED migration. It is the FAILED→GENERATING transition: a third way out of
+// FAILED that leaves the cancel/delete guards untouched.
+//
+// Guards: the migration must be in FAILED state (else ErrInvalidStateTransition)
+// and have at least one service record in the failed status (else MIG224). The
+// retry set is the failed services intersected with serviceFilter — an empty
+// filter retries every failed service; a non-empty filter that misses the failed
+// set is MIG224.
+//
+// It resets the retried services' records to pending (instant UI feedback),
+// transitions the migration to GENERATING and clears the migration-level failure
+// reason, then ALWAYS enqueues a generation job with an explicit failed-only
+// filter. Services that already completed are never regenerated — the worker
+// skips them via its done-set, so done spend is never re-billed.
+func (s *Service) RetryGeneration(ctx context.Context, identifier uint64, serviceFilter []string) (*domain.Migration, error) {
+	if identifier == 0 {
+		return nil, domain.ErrMissingIdentifier
+	}
+	m, err := s.repo.GetByID(ctx, identifier, false)
+	if err != nil {
+		return nil, err
+	}
+	if m.GetState() != domain.MigrationStateFailed {
+		return nil, domain.ErrInvalidStateTransition
+	}
+
+	records, err := s.generationResultReader.ReadResults(ctx, identifier)
+	if err != nil {
+		return nil, fmt.Errorf("migration: retry read results: %w", err)
+	}
+	failedSet := make(map[string]bool)
+	for _, r := range records {
+		if r.GetStatus() == workerStatusFailed {
+			failedSet[r.GetServiceName()] = true
+		}
+	}
+	if len(failedSet) == 0 {
+		return nil, domain.ErrNoFailedServices
+	}
+
+	// Compute the retry set: failed services intersected with the request filter.
+	// Empty filter = every failed service. Sorted for a deterministic enqueue/log.
+	var failedNames []string
+	if len(serviceFilter) == 0 {
+		for name := range failedSet {
+			failedNames = append(failedNames, name)
+		}
+	} else {
+		seen := make(map[string]bool, len(serviceFilter))
+		for _, name := range serviceFilter {
+			if failedSet[name] && !seen[name] {
+				seen[name] = true
+				failedNames = append(failedNames, name)
+			}
+		}
+	}
+	if len(failedNames) == 0 {
+		return nil, domain.ErrNoFailedServices
+	}
+	sort.Strings(failedNames)
+
+	// Flip the retried records back to pending for instant UI feedback. Best-effort
+	// is not enough here — a failure would leave records stale; surface the error.
+	if s.generationRecordResetter != nil {
+		if resetErr := s.generationRecordResetter.ResetServiceRecords(ctx, identifier, failedNames); resetErr != nil {
+			return nil, fmt.Errorf("migration: retry reset records: %w", resetErr)
+		}
+	}
+
+	if err := s.repo.UpdateState(ctx, identifier, domain.MigrationStateGenerating); err != nil {
+		return nil, err
+	}
+	// Clear any stale migration-level failure reason so the re-armed migration does
+	// not carry the previous run's message. Best-effort: a clear failure must not
+	// abort an otherwise-successful retry.
+	if clearErr := s.repo.ClearFailureReason(ctx, identifier); clearErr != nil {
+		applog.Warningf("migration: RetryGeneration clear failure_reason failed migration_id=%d: %v", identifier, clearErr)
+	}
+
+	// ALWAYS enqueue with an explicit failed-only filter so only the failed
+	// services regenerate; already-done services are skipped by the worker.
+	if s.generationEnqueuer != nil {
+		if dispatchErr := s.generationEnqueuer.EnqueueGeneration(ctx, identifier, failedNames); dispatchErr != nil {
+			applog.Warningf("migration: RetryGeneration EnqueueGeneration dispatch failed migration_id=%d: %v", identifier, dispatchErr)
+		}
+	}
+
+	applog.Infof("migration: RetryGeneration re-armed migration_id=%d → GENERATING services=%v", identifier, failedNames)
+	m.State = domain.MigrationStateGenerating
+	m.FailureReason = ""
 	return m, nil
 }
 

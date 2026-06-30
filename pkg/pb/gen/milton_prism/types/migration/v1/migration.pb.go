@@ -155,7 +155,7 @@ const (
 	TargetLanguage_TARGET_LANGUAGE_RUBY TargetLanguage = 6
 	// C# / .NET — grpc-dotnet (gRPC) / ASP.NET Core (HTTP); MongoDB.Driver (Mongo) / EF Core (SQL).
 	TargetLanguage_TARGET_LANGUAGE_CSHARP TargetLanguage = 7
-	// C++ — grpc++ (gRPC) / Drogon (HTTP); mongocxx (Mongo) / libpqxx|mysql-connector (SQL).
+	// C++ — grpc++ (gRPC) / Drogon (HTTP); mongocxx (Mongo) / libpqxx|mysql-connector (SQL). CMake build gate.
 	TargetLanguage_TARGET_LANGUAGE_CPP TargetLanguage = 8
 )
 
@@ -518,6 +518,69 @@ func (x OutputTarget) Number() protoreflect.EnumNumber {
 // Deprecated: Use OutputTarget.Descriptor instead.
 func (OutputTarget) EnumDescriptor() ([]byte, []int) {
 	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{6}
+}
+
+// FailureClass classifies WHY a service's generation failed, so the panel can
+// decide whether a retry is worth offering. It is computed by the generation
+// worker at persist time (single source: ClassifyFailure) and surfaced read-only
+// on each ServiceGenerationRecord.
+//
+//	TRANSIENT — rate-limit (429/overloaded), infrastructure, or deadline failures.
+//	            A retry is likely to succeed once the throttle/outage clears.
+//	DESIGN    — a deterministic-gate red (the service did not compile / its tests
+//	            failed) or a not-migrable/incomplete-contract service. A retry may
+//	            still be attempted but is de-emphasised — the input plan is the
+//	            likely cause.
+type FailureClass int32
+
+const (
+	// Default — no classification (e.g. the service has not failed).
+	FailureClass_FAILURE_CLASS_UNSPECIFIED FailureClass = 0
+	// Transient failure (rate-limit / overload / infrastructure / deadline).
+	FailureClass_FAILURE_CLASS_TRANSIENT FailureClass = 1
+	// Design/contract failure (gate-red, not-migrable, incomplete contract).
+	FailureClass_FAILURE_CLASS_DESIGN FailureClass = 2
+)
+
+// Enum value maps for FailureClass.
+var (
+	FailureClass_name = map[int32]string{
+		0: "FAILURE_CLASS_UNSPECIFIED",
+		1: "FAILURE_CLASS_TRANSIENT",
+		2: "FAILURE_CLASS_DESIGN",
+	}
+	FailureClass_value = map[string]int32{
+		"FAILURE_CLASS_UNSPECIFIED": 0,
+		"FAILURE_CLASS_TRANSIENT":   1,
+		"FAILURE_CLASS_DESIGN":      2,
+	}
+)
+
+func (x FailureClass) Enum() *FailureClass {
+	p := new(FailureClass)
+	*p = x
+	return p
+}
+
+func (x FailureClass) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FailureClass) Descriptor() protoreflect.EnumDescriptor {
+	return file_milton_prism_types_migration_v1_migration_proto_enumTypes[7].Descriptor()
+}
+
+func (FailureClass) Type() protoreflect.EnumType {
+	return &file_milton_prism_types_migration_v1_migration_proto_enumTypes[7]
+}
+
+func (x FailureClass) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FailureClass.Descriptor instead.
+func (FailureClass) EnumDescriptor() ([]byte, []int) {
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{7}
 }
 
 // Migration is the central aggregate that drives the end-to-end migration
@@ -1570,7 +1633,12 @@ type ServiceGenerationRecord struct {
 	// Input tokens served from the prompt cache for this service's generation run.
 	CacheReadInputTokens int64 `protobuf:"varint,10,opt,name=cache_read_input_tokens,json=cacheReadInputTokens,proto3" json:"cache_read_input_tokens,omitempty"`
 	// Output tokens produced by this service's generation run.
-	OutputTokens  int64 `protobuf:"varint,11,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	OutputTokens int64 `protobuf:"varint,11,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	// Classification of WHY this service failed, set only when status is failed.
+	// TRANSIENT (rate-limit/overload/infra/deadline) → a retry is likely to help;
+	// DESIGN (gate-red / not-migrable / incomplete contract) → retry de-emphasised.
+	// Computed by the generation worker at persist time; UNSPECIFIED otherwise.
+	FailureClass  FailureClass `protobuf:"varint,12,opt,name=failure_class,json=failureClass,proto3,enum=milton_prism.types.migration.v1.FailureClass" json:"failure_class,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1680,6 +1748,13 @@ func (x *ServiceGenerationRecord) GetOutputTokens() int64 {
 		return x.OutputTokens
 	}
 	return 0
+}
+
+func (x *ServiceGenerationRecord) GetFailureClass() FailureClass {
+	if x != nil {
+		return x.FailureClass
+	}
+	return FailureClass_FAILURE_CLASS_UNSPECIFIED
 }
 
 // FileArtifact represents one source file produced by the autonomous generation agent.
@@ -2848,7 +2923,8 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\routput_target\x18\x01 \x01(\x0e2-.milton_prism.types.migration.v1.OutputTargetBd\xbaGa:\x1a\x12\x18OUTPUT_TARGET_NEW_BRANCH\x92\x02BWhether the output was pushed to a new branch or a new repository.R\foutputTarget\x12\x85\x01\n" +
 	"\vbranch_name\x18\x02 \x01(\tBd\xbaGa:\x17\x12\x15migration/output-2025\x92\x02EBranch that received the migration output (when pushing to a branch).R\n" +
 	"branchName\x12\xa3\x01\n" +
-	"\x12new_repository_url\x18\x03 \x01(\tBu\xbaGr:,\x12*https://github.com/org/my-service-migrated\x92\x02AURL of the newly created repository (when pushing to a new repo).R\x10newRepositoryUrl:J\xbaGGJ\x0fMigrationOutput\x92\x023Push coordinates of the committed migration output.\"\x89\t\n" +
+	"\x12new_repository_url\x18\x03 \x01(\tBu\xbaGr:,\x12*https://github.com/org/my-service-migrated\x92\x02AURL of the newly created repository (when pushing to a new repo).R\x10newRepositoryUrl:J\xbaGGJ\x0fMigrationOutput\x92\x023Push coordinates of the committed migration output.\"\xc3\n" +
+	"\n" +
 	"\x17ServiceGenerationRecord\x126\n" +
 	"\fservice_name\x18\x01 \x01(\tB\x13\xbaG\x10\x92\x02\rService name.R\vserviceName\x12X\n" +
 	"\x06status\x18\x02 \x01(\tB@\xbaG=\x92\x02:Generation status: generating, verifying, done, or failed.R\x06status\x12Q\n" +
@@ -2861,7 +2937,8 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x1bcache_creation_input_tokens\x18\t \x01(\x03B>\xe0A\x03\xbaG8\x92\x025Cache-creation input tokens consumed by this service.R\x18cacheCreationInputTokens\x12q\n" +
 	"\x17cache_read_input_tokens\x18\n" +
 	" \x01(\x03B:\xe0A\x03\xbaG4\x92\x021Cache-read input tokens consumed by this service.R\x14cacheReadInputTokens\x12U\n" +
-	"\routput_tokens\x18\v \x01(\x03B0\xe0A\x03\xbaG*\x92\x02'Output tokens produced by this service.R\foutputTokens:Q\xbaGNJ\x17ServiceGenerationRecord\x92\x022Per-service outcome of autonomous code generation.\"\xa6\x02\n" +
+	"\routput_tokens\x18\v \x01(\x03B0\xe0A\x03\xbaG*\x92\x02'Output tokens produced by this service.R\foutputTokens\x12\xb7\x01\n" +
+	"\rfailure_class\x18\f \x01(\x0e2-.milton_prism.types.migration.v1.FailureClassBc\xe0A\x03\xbaG]\x92\x02ZFailure classification (TRANSIENT or DESIGN) when status is failed. UNSPECIFIED otherwise.R\ffailureClass:Q\xbaGNJ\x17ServiceGenerationRecord\x92\x022Per-service outcome of autonomous code generation.\"\xa6\x02\n" +
 	"\fFileArtifact\x12c\n" +
 	"\x04path\x18\x01 \x01(\tBO\xbaGL:%\x12#core/services/user/domain/domain.go\x92\x02\"Relative path within the monorepo.R\x04path\x12K\n" +
 	"\acontent\x18\x02 \x01(\tB1\xbaG.\x92\x02+UTF-8 source content of the generated file.R\acontent:d\xbaGaJ\fFileArtifact\x92\x02PA single generated source file produced by the autonomous code generation agent.\"\x9d\x03\n" +
@@ -3004,7 +3081,11 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\fOutputTarget\x12\x1d\n" +
 	"\x19OUTPUT_TARGET_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18OUTPUT_TARGET_NEW_BRANCH\x10\x01\x12 \n" +
-	"\x1cOUTPUT_TARGET_NEW_REPOSITORY\x10\x02B\x98\x02\n" +
+	"\x1cOUTPUT_TARGET_NEW_REPOSITORY\x10\x02*d\n" +
+	"\fFailureClass\x12\x1d\n" +
+	"\x19FAILURE_CLASS_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17FAILURE_CLASS_TRANSIENT\x10\x01\x12\x18\n" +
+	"\x14FAILURE_CLASS_DESIGN\x10\x02B\x98\x02\n" +
 	"#com.milton_prism.types.migration.v1B\x0eMigrationProtoP\x01ZCmilton_prism/pkg/pb/gen/milton_prism/types/migration/v1;migrationv1\xf8\x01\x01\xa2\x02\x03MTM\xaa\x02\x1eMiltonPrism.Types.Migration.V1\xca\x02\x1eMiltonPrism\\Types\\Migration\\V1\xe2\x02*MiltonPrism\\Types\\Migration\\V1\\GPBMetadata\xea\x02!MiltonPrism::Types::Migration::V1b\x06proto3"
 
 var (
@@ -3019,7 +3100,7 @@ func file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP() []byte {
 	return file_milton_prism_types_migration_v1_migration_proto_rawDescData
 }
 
-var file_milton_prism_types_migration_v1_migration_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
+var file_milton_prism_types_migration_v1_migration_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
 var file_milton_prism_types_migration_v1_migration_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_milton_prism_types_migration_v1_migration_proto_goTypes = []any{
 	(MigrationState)(0),                // 0: milton_prism.types.migration.v1.MigrationState
@@ -3029,79 +3110,81 @@ var file_milton_prism_types_migration_v1_migration_proto_goTypes = []any{
 	(HttpFramework)(0),                 // 4: milton_prism.types.migration.v1.HttpFramework
 	(TargetTopology)(0),                // 5: milton_prism.types.migration.v1.TargetTopology
 	(OutputTarget)(0),                  // 6: milton_prism.types.migration.v1.OutputTarget
-	(*Migration)(nil),                  // 7: milton_prism.types.migration.v1.Migration
-	(*TargetConfig)(nil),               // 8: milton_prism.types.migration.v1.TargetConfig
-	(*RestructurePlan)(nil),            // 9: milton_prism.types.migration.v1.RestructurePlan
-	(*CandidateGrouping)(nil),          // 10: milton_prism.types.migration.v1.CandidateGrouping
-	(*RestructureRecommendation)(nil),  // 11: milton_prism.types.migration.v1.RestructureRecommendation
-	(*ProposedService)(nil),            // 12: milton_prism.types.migration.v1.ProposedService
-	(*CrossServiceFk)(nil),             // 13: milton_prism.types.migration.v1.CrossServiceFk
-	(*OperationalCoupling)(nil),        // 14: milton_prism.types.migration.v1.OperationalCoupling
-	(*MigrationOutput)(nil),            // 15: milton_prism.types.migration.v1.MigrationOutput
-	(*ServiceGenerationRecord)(nil),    // 16: milton_prism.types.migration.v1.ServiceGenerationRecord
-	(*FileArtifact)(nil),               // 17: milton_prism.types.migration.v1.FileArtifact
-	(*ServiceGenerationArtifacts)(nil), // 18: milton_prism.types.migration.v1.ServiceGenerationArtifacts
-	(*ServiceGenerationSpec)(nil),      // 19: milton_prism.types.migration.v1.ServiceGenerationSpec
-	(*GenerationPackage)(nil),          // 20: milton_prism.types.migration.v1.GenerationPackage
-	(*RoadmapDiagnosis)(nil),           // 21: milton_prism.types.migration.v1.RoadmapDiagnosis
-	(*StructuralProblem)(nil),          // 22: milton_prism.types.migration.v1.StructuralProblem
-	(*ActionItem)(nil),                 // 23: milton_prism.types.migration.v1.ActionItem
-	(*EnrichedStep)(nil),               // 24: milton_prism.types.migration.v1.EnrichedStep
-	(*RoadmapEnrichment)(nil),          // 25: milton_prism.types.migration.v1.RoadmapEnrichment
-	(*RestructuringRoadmap)(nil),       // 26: milton_prism.types.migration.v1.RestructuringRoadmap
-	(*BlueprintService)(nil),           // 27: milton_prism.types.migration.v1.BlueprintService
-	(*ServiceBlueprint)(nil),           // 28: milton_prism.types.migration.v1.ServiceBlueprint
-	(*MigrationsFilter)(nil),           // 29: milton_prism.types.migration.v1.MigrationsFilter
-	(*timestamppb.Timestamp)(nil),      // 30: google.protobuf.Timestamp
-	(*v1.MigrabilityAssessment)(nil),   // 31: milton_prism.types.common.v1.MigrabilityAssessment
-	(v11.AuthScheme)(0),                // 32: milton_prism.types.analysis.v1.AuthScheme
+	(FailureClass)(0),                  // 7: milton_prism.types.migration.v1.FailureClass
+	(*Migration)(nil),                  // 8: milton_prism.types.migration.v1.Migration
+	(*TargetConfig)(nil),               // 9: milton_prism.types.migration.v1.TargetConfig
+	(*RestructurePlan)(nil),            // 10: milton_prism.types.migration.v1.RestructurePlan
+	(*CandidateGrouping)(nil),          // 11: milton_prism.types.migration.v1.CandidateGrouping
+	(*RestructureRecommendation)(nil),  // 12: milton_prism.types.migration.v1.RestructureRecommendation
+	(*ProposedService)(nil),            // 13: milton_prism.types.migration.v1.ProposedService
+	(*CrossServiceFk)(nil),             // 14: milton_prism.types.migration.v1.CrossServiceFk
+	(*OperationalCoupling)(nil),        // 15: milton_prism.types.migration.v1.OperationalCoupling
+	(*MigrationOutput)(nil),            // 16: milton_prism.types.migration.v1.MigrationOutput
+	(*ServiceGenerationRecord)(nil),    // 17: milton_prism.types.migration.v1.ServiceGenerationRecord
+	(*FileArtifact)(nil),               // 18: milton_prism.types.migration.v1.FileArtifact
+	(*ServiceGenerationArtifacts)(nil), // 19: milton_prism.types.migration.v1.ServiceGenerationArtifacts
+	(*ServiceGenerationSpec)(nil),      // 20: milton_prism.types.migration.v1.ServiceGenerationSpec
+	(*GenerationPackage)(nil),          // 21: milton_prism.types.migration.v1.GenerationPackage
+	(*RoadmapDiagnosis)(nil),           // 22: milton_prism.types.migration.v1.RoadmapDiagnosis
+	(*StructuralProblem)(nil),          // 23: milton_prism.types.migration.v1.StructuralProblem
+	(*ActionItem)(nil),                 // 24: milton_prism.types.migration.v1.ActionItem
+	(*EnrichedStep)(nil),               // 25: milton_prism.types.migration.v1.EnrichedStep
+	(*RoadmapEnrichment)(nil),          // 26: milton_prism.types.migration.v1.RoadmapEnrichment
+	(*RestructuringRoadmap)(nil),       // 27: milton_prism.types.migration.v1.RestructuringRoadmap
+	(*BlueprintService)(nil),           // 28: milton_prism.types.migration.v1.BlueprintService
+	(*ServiceBlueprint)(nil),           // 29: milton_prism.types.migration.v1.ServiceBlueprint
+	(*MigrationsFilter)(nil),           // 30: milton_prism.types.migration.v1.MigrationsFilter
+	(*timestamppb.Timestamp)(nil),      // 31: google.protobuf.Timestamp
+	(*v1.MigrabilityAssessment)(nil),   // 32: milton_prism.types.common.v1.MigrabilityAssessment
+	(v11.AuthScheme)(0),                // 33: milton_prism.types.analysis.v1.AuthScheme
 }
 var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	0,  // 0: milton_prism.types.migration.v1.Migration.state:type_name -> milton_prism.types.migration.v1.MigrationState
-	8,  // 1: milton_prism.types.migration.v1.Migration.target:type_name -> milton_prism.types.migration.v1.TargetConfig
-	9,  // 2: milton_prism.types.migration.v1.Migration.plan:type_name -> milton_prism.types.migration.v1.RestructurePlan
-	15, // 3: milton_prism.types.migration.v1.Migration.output:type_name -> milton_prism.types.migration.v1.MigrationOutput
-	16, // 4: milton_prism.types.migration.v1.Migration.generation_records:type_name -> milton_prism.types.migration.v1.ServiceGenerationRecord
-	30, // 5: milton_prism.types.migration.v1.Migration.create_time:type_name -> google.protobuf.Timestamp
-	30, // 6: milton_prism.types.migration.v1.Migration.update_time:type_name -> google.protobuf.Timestamp
-	30, // 7: milton_prism.types.migration.v1.Migration.delete_time:type_name -> google.protobuf.Timestamp
-	30, // 8: milton_prism.types.migration.v1.Migration.purge_time:type_name -> google.protobuf.Timestamp
-	31, // 9: milton_prism.types.migration.v1.Migration.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
-	26, // 10: milton_prism.types.migration.v1.Migration.restructuring_roadmap:type_name -> milton_prism.types.migration.v1.RestructuringRoadmap
+	9,  // 1: milton_prism.types.migration.v1.Migration.target:type_name -> milton_prism.types.migration.v1.TargetConfig
+	10, // 2: milton_prism.types.migration.v1.Migration.plan:type_name -> milton_prism.types.migration.v1.RestructurePlan
+	16, // 3: milton_prism.types.migration.v1.Migration.output:type_name -> milton_prism.types.migration.v1.MigrationOutput
+	17, // 4: milton_prism.types.migration.v1.Migration.generation_records:type_name -> milton_prism.types.migration.v1.ServiceGenerationRecord
+	31, // 5: milton_prism.types.migration.v1.Migration.create_time:type_name -> google.protobuf.Timestamp
+	31, // 6: milton_prism.types.migration.v1.Migration.update_time:type_name -> google.protobuf.Timestamp
+	31, // 7: milton_prism.types.migration.v1.Migration.delete_time:type_name -> google.protobuf.Timestamp
+	31, // 8: milton_prism.types.migration.v1.Migration.purge_time:type_name -> google.protobuf.Timestamp
+	32, // 9: milton_prism.types.migration.v1.Migration.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
+	27, // 10: milton_prism.types.migration.v1.Migration.restructuring_roadmap:type_name -> milton_prism.types.migration.v1.RestructuringRoadmap
 	1,  // 11: milton_prism.types.migration.v1.TargetConfig.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
 	2,  // 12: milton_prism.types.migration.v1.TargetConfig.database:type_name -> milton_prism.types.migration.v1.TargetDatabase
 	3,  // 13: milton_prism.types.migration.v1.TargetConfig.inter_service_transport:type_name -> milton_prism.types.migration.v1.Transport
 	5,  // 14: milton_prism.types.migration.v1.TargetConfig.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
-	32, // 15: milton_prism.types.migration.v1.TargetConfig.target_auth_scheme:type_name -> milton_prism.types.analysis.v1.AuthScheme
+	33, // 15: milton_prism.types.migration.v1.TargetConfig.target_auth_scheme:type_name -> milton_prism.types.analysis.v1.AuthScheme
 	4,  // 16: milton_prism.types.migration.v1.TargetConfig.http_framework:type_name -> milton_prism.types.migration.v1.HttpFramework
-	12, // 17: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
-	14, // 18: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
-	10, // 19: milton_prism.types.migration.v1.RestructurePlan.candidate_groupings:type_name -> milton_prism.types.migration.v1.CandidateGrouping
-	11, // 20: milton_prism.types.migration.v1.RestructurePlan.restructure_recommendations:type_name -> milton_prism.types.migration.v1.RestructureRecommendation
-	13, // 21: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
+	13, // 17: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
+	15, // 18: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
+	11, // 19: milton_prism.types.migration.v1.RestructurePlan.candidate_groupings:type_name -> milton_prism.types.migration.v1.CandidateGrouping
+	12, // 20: milton_prism.types.migration.v1.RestructurePlan.restructure_recommendations:type_name -> milton_prism.types.migration.v1.RestructureRecommendation
+	14, // 21: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
 	6,  // 22: milton_prism.types.migration.v1.MigrationOutput.output_target:type_name -> milton_prism.types.migration.v1.OutputTarget
-	17, // 23: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
-	19, // 24: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
-	24, // 25: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
-	30, // 26: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
-	21, // 27: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
-	22, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
-	23, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
-	30, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
-	25, // 31: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
-	28, // 32: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
-	27, // 33: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
-	30, // 34: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
-	0,  // 35: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
-	0,  // 36: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
-	5,  // 37: milton_prism.types.migration.v1.MigrationsFilter.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
-	3,  // 38: milton_prism.types.migration.v1.MigrationsFilter.protocol:type_name -> milton_prism.types.migration.v1.Transport
-	1,  // 39: milton_prism.types.migration.v1.MigrationsFilter.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	7,  // 23: milton_prism.types.migration.v1.ServiceGenerationRecord.failure_class:type_name -> milton_prism.types.migration.v1.FailureClass
+	18, // 24: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
+	20, // 25: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
+	25, // 26: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
+	31, // 27: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
+	22, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
+	23, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
+	24, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
+	31, // 31: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
+	26, // 32: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
+	29, // 33: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
+	28, // 34: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
+	31, // 35: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
+	0,  // 36: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
+	0,  // 37: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
+	5,  // 38: milton_prism.types.migration.v1.MigrationsFilter.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
+	3,  // 39: milton_prism.types.migration.v1.MigrationsFilter.protocol:type_name -> milton_prism.types.migration.v1.Transport
+	1,  // 40: milton_prism.types.migration.v1.MigrationsFilter.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
+	41, // [41:41] is the sub-list for method output_type
+	41, // [41:41] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_milton_prism_types_migration_v1_migration_proto_init() }
@@ -3117,7 +3200,7 @@ func file_milton_prism_types_migration_v1_migration_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_types_migration_v1_migration_proto_rawDesc), len(file_milton_prism_types_migration_v1_migration_proto_rawDesc)),
-			NumEnums:      7,
+			NumEnums:      8,
 			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,

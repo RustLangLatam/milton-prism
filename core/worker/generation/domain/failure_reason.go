@@ -5,6 +5,48 @@ import "strings"
 // MaxFailureReasonLen caps the length of a user-visible failure reason.
 const MaxFailureReasonLen = 200
 
+// rateLimitKeywords are substrings that indicate a transient, retriable failure
+// (rate-limit or server overload). They are the single source for transient
+// classification, shared by the pipeline's backoff decision and the persisted
+// FailureClass (via ClassifyFailure).
+var rateLimitKeywords = []string{
+	"rate limit", "rate_limit", "too many requests",
+	"429", "overloaded", "server temporarily unavailable",
+}
+
+// IsTransientError reports whether a failure is worth retrying.
+// invokeErr != nil (infrastructure failure, context deadline) is always transient.
+// A clean invoker run that fails its gates is transient only when a rate-limit
+// keyword appears in the failure reason; all other gate failures are permanent
+// (a deterministic-gate red — the code did not compile / tests failed — is a
+// DESIGN failure, not a throttle).
+func IsTransientError(invokeErr error, failureReason string) bool {
+	if invokeErr != nil {
+		return true
+	}
+	lower := strings.ToLower(failureReason)
+	for _, kw := range rateLimitKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifyFailure maps a failed generation attempt to its FailureClass — the
+// single source of truth for whether a retry is worth offering. A transient
+// failure (rate-limit / overload / infrastructure / deadline) classifies as
+// TRANSIENT; everything else (a deterministic-gate red or a not-migrable /
+// incomplete-contract service) classifies as DESIGN. invokeErr is the infra
+// error (nil on a clean run that merely failed its gates); reason is the raw,
+// unsanitized failure text used for keyword detection.
+func ClassifyFailure(invokeErr error, reason string) FailureClass {
+	if IsTransientError(invokeErr, reason) {
+		return FailureClassTransient
+	}
+	return FailureClassDesign
+}
+
 // SanitizeFailureReason reduces a raw agent failure blob (which may be the full
 // Claude Code JSON envelope including total_cost_usd, session_id, usage and
 // modelUsage) to a short, clean, user-facing technical message.

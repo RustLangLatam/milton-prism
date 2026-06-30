@@ -189,6 +189,29 @@ func (h *MigrationHandler) RunMigration(ctx context.Context, req *migsvcv1.RunMi
 	return out, nil
 }
 
+func (h *MigrationHandler) RetryGeneration(ctx context.Context, req *migsvcv1.RetryGenerationRequest) (*migrationv1.Migration, error) {
+	callerID, isSystem, err := h.authExtract(ctx)
+	if err != nil {
+		applog.Warningf("migration: RetryGeneration authentication failed: error=%v", err)
+		return nil, coreerror.TokenValidationErrorInvalid
+	}
+	if req.GetIdentifier() == 0 {
+		return nil, coreerror.NewInvalidArgumentError(domain.ErrCodeMissingIdentifier, domain.ErrMissingIdentifier.Message)
+	}
+	m, err := h.svc.GetMigration(ctx, req.GetIdentifier())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	if m.GetOwnerUserId() != callerID && !isSystem {
+		return nil, coreerror.NewPermissionDeniedError(domain.ErrCodeForbiddenAccess, domain.ErrForbiddenAccess.Message)
+	}
+	out, err := h.svc.RetryGeneration(ctx, req.GetIdentifier(), req.GetServiceFilter())
+	if err != nil {
+		return nil, h.mapError(err)
+	}
+	return out, nil
+}
+
 func (h *MigrationHandler) ApproveDesign(ctx context.Context, req *migsvcv1.ApproveDesignRequest) (*migrationv1.Migration, error) {
 	callerID, isSystem, err := h.authExtract(ctx)
 	if err != nil {
@@ -510,7 +533,8 @@ func (h *MigrationHandler) mapError(err error) error {
 			domain.ErrCodeNoBlueprintAnalysis,
 			domain.ErrCodeNoActionPlan,
 			domain.ErrCodePlanLimitExceeded,
-			domain.ErrCodeBranchUnchanged:
+			domain.ErrCodeBranchUnchanged,
+			domain.ErrCodeNoFailedServices:
 			return coreerror.NewFailedPreconditionError(dErr.Code, dErr.Message)
 		case domain.ErrCodeMissingIdentifier,
 			domain.ErrCodeMissingPayload,

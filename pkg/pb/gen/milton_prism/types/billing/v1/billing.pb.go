@@ -117,6 +117,12 @@ type UsageRecord struct {
 	// "estimated" label when this is set so a subscription run is not presented as
 	// a billed dollar amount. False when cost_usd is the provider's real cost.
 	CostEstimated bool `protobuf:"varint,11,opt,name=cost_estimated,json=costEstimated,proto3" json:"cost_estimated,omitempty"`
+	// Service the spend is attributed to within a migration, when applicable
+	// (empty = not service-scoped). GENERATION spend is recorded per-service so the
+	// finalize routine stays idempotent per (migration_id, service_name): a service
+	// is billed exactly once even across generation retries. Empty for
+	// migration-level operations (assessment, roadmap, blueprint).
+	ServiceName   string `protobuf:"bytes,12,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -226,6 +232,13 @@ func (x *UsageRecord) GetCostEstimated() bool {
 		return x.CostEstimated
 	}
 	return false
+}
+
+func (x *UsageRecord) GetServiceName() string {
+	if x != nil {
+		return x.ServiceName
+	}
+	return ""
 }
 
 // UsageTotals is an aggregate of usage records: summed tokens and cost plus the
@@ -462,7 +475,8 @@ var File_milton_prism_types_billing_v1_billing_proto protoreflect.FileDescriptor
 
 const file_milton_prism_types_billing_v1_billing_proto_rawDesc = "" +
 	"\n" +
-	"+milton_prism/types/billing/v1/billing.proto\x12\x1dmilton_prism.types.billing.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bopenapiv3/annotations.proto\"\xa1\t\n" +
+	"+milton_prism/types/billing/v1/billing.proto\x12\x1dmilton_prism.types.billing.v1\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bopenapiv3/annotations.proto\"\xdd\n" +
+	"\n" +
 	"\vUsageRecord\x12k\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04BK\xe0A\x03\xe0A\x05\xe0A\b\xbaG?\x18\x01\x92\x021Platform-assigned unique usage-record identifier.\x9a\x02\x06uint64R\n" +
@@ -480,7 +494,8 @@ const file_milton_prism_types_billing_v1_billing_proto_rawDesc = "" +
 	"\vcreate_time\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampB'\xe0A\x03\xbaG!\x18\x01\x92\x02\x1cTime the spend was recorded.R\n" +
 	"createTime\x12\xad\x01\n" +
-	"\x0ecost_estimated\x18\v \x01(\bB\x85\x01\xbaG\x81\x01:\a\x12\x05false\x92\x02uTrue when cost_usd is an estimate from the price table (subscription run); false when it is the provider's real cost.R\rcostEstimated\"\x93\x02\n" +
+	"\x0ecost_estimated\x18\v \x01(\bB\x85\x01\xbaG\x81\x01:\a\x12\x05false\x92\x02uTrue when cost_usd is an estimate from the price table (subscription run); false when it is the provider's real cost.R\rcostEstimated\x12\xb9\x01\n" +
+	"\fservice_name\x18\f \x01(\tB\x95\x01\xbaG\x91\x01\x92\x02\x8d\x01Service name the spend is attributed to within a migration (empty when not service-scoped). Used to bill generation per-service exactly once.R\vserviceName\"\x93\x02\n" +
 	"\vUsageTotals\x12R\n" +
 	"\frecord_count\x18\x01 \x01(\x03B/\xbaG,\x92\x02)Number of usage records in the aggregate.R\vrecordCount\x127\n" +
 	"\ttokens_in\x18\x02 \x01(\x03B\x1a\xbaG\x17\x92\x02\x14Summed input tokens.R\btokensIn\x12:\n" +

@@ -101,6 +101,13 @@ message UsageRecord {
     description: "True when cost_usd is an estimate from the price table (subscription run); false when it is the provider's real cost."
     example: {yaml: "false"}
   }];
+
+  // Service the spend is attributed to within a migration, when applicable
+  // (empty = not service-scoped). GENERATION spend is recorded per-service so the
+  // finalize routine stays idempotent per (migration_id, service_name): a service
+  // is billed exactly once even across generation retries. Empty for
+  // migration-level operations (assessment, roadmap, blueprint).
+  string service_name = 12 [(openapi.v3.property) = {description: "Service name the spend is attributed to within a migration (empty when not service-scoped). Used to bill generation per-service exactly once."}];
 }
 
 // UsageTotals is an aggregate of usage records: summed tokens and cost plus the

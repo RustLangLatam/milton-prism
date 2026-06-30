@@ -35,6 +35,7 @@ var (
 	_ ports.StackDetector                = (*MockStackDetector)(nil)
 	_ ports.BillingClient                = (*MockBillingClient)(nil)
 	_ ports.GenerationResultReader       = (*MockGenerationResultReader)(nil)
+	_ ports.GenerationRecordResetter     = (*MockGenerationRecordResetter)(nil)
 )
 
 // MockGenerationResultReader is a testify mock for ports.GenerationResultReader.
@@ -48,10 +49,19 @@ func (m *MockGenerationResultReader) ReadResults(ctx context.Context, migrationI
 	return v, args.Error(1)
 }
 
-func (m *MockGenerationResultReader) ReadUsageTotals(ctx context.Context, migrationID uint64) (ports.GenerationUsageTotals, error) {
+func (m *MockGenerationResultReader) ReadServiceUsages(ctx context.Context, migrationID uint64) ([]ports.ServiceGenerationUsage, error) {
 	args := m.Called(ctx, migrationID)
-	v, _ := args.Get(0).(ports.GenerationUsageTotals)
+	v, _ := args.Get(0).([]ports.ServiceGenerationUsage)
 	return v, args.Error(1)
+}
+
+// MockGenerationRecordResetter is a testify mock for ports.GenerationRecordResetter.
+type MockGenerationRecordResetter struct {
+	mock.Mock
+}
+
+func (m *MockGenerationRecordResetter) ResetServiceRecords(ctx context.Context, migrationID uint64, serviceNames []string) error {
+	return m.Called(ctx, migrationID, serviceNames).Error(0)
 }
 
 // MockMigrationRepository is a testify mock for ports.MigrationRepository.
@@ -80,6 +90,10 @@ func (m *MockMigrationRepository) List(ctx context.Context, filter *domain.Migra
 
 func (m *MockMigrationRepository) UpdateState(ctx context.Context, identifier uint64, state domain.MigrationState) error {
 	return m.Called(ctx, identifier, state).Error(0)
+}
+
+func (m *MockMigrationRepository) ClearFailureReason(ctx context.Context, identifier uint64) error {
+	return m.Called(ctx, identifier).Error(0)
 }
 
 func (m *MockMigrationRepository) SetRepositoryURL(ctx context.Context, identifier uint64, url string) error {
@@ -138,9 +152,10 @@ func (m *MockBillingClient) RecordUsage(ctx context.Context, spend ports.UsageSp
 	return m.Called(ctx, spend).Error(0)
 }
 
-func (m *MockBillingClient) CountUsageRecords(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (int, error) {
+func (m *MockBillingClient) ListBilledServiceNames(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (map[string]bool, error) {
 	args := m.Called(ctx, migrationID, op)
-	return args.Int(0), args.Error(1)
+	v, _ := args.Get(0).(map[string]bool)
+	return v, args.Error(1)
 }
 
 // MockTransactionManager is a pass-through implementation of ports.TransactionManager.

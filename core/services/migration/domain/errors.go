@@ -157,6 +157,10 @@ const (
 	// exists for the same (repository_id, source_branch, commit_sha) — the branch
 	// has no new commits since the last migration. The migration is moved to FAILED.
 	ErrCodeBranchUnchanged = "MIG223"
+	// ErrCodeNoFailedServices: RetryGeneration was called but the migration has no
+	// service in the failed state to retry (or the requested service_filter does
+	// not intersect the failed set). There is nothing to re-generate.
+	ErrCodeNoFailedServices = "MIG224"
 )
 
 var (
@@ -186,6 +190,9 @@ var (
 	// ErrBranchUnchanged: a migration already exists for this repo+branch at the
 	// same commit; there are no new commits since the last migration.
 	ErrBranchUnchanged = newError(ErrCodeBranchUnchanged, "Failure_Migration_Branch_Unchanged")
+	// ErrNoFailedServices: RetryGeneration found no failed service to retry (the
+	// migration has no failed records, or the service_filter misses the failed set).
+	ErrNoFailedServices = newError(ErrCodeNoFailedServices, "Failure_No_Failed_Services")
 )
 
 // NewErrPlanLimitExceeded builds a plan-limit error whose message names the

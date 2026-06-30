@@ -28,6 +28,7 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 	tx := migrationrepo.NewMongoTransactionManager(mongoClient)
 	artifactReader := migrationrepo.NewMongoArtifactReader(db)
 	generationResultReader := migrationrepo.NewMongoGenerationResultReader(db)
+	generationRecordResetter := migrationrepo.NewMongoGenerationRecordResetter(db)
 	fileArtifactReader := migrationrepo.NewMongoGenerationFileArtifactReader(db)
 
 	var analysisClient ports.AnalysisClient
@@ -117,7 +118,8 @@ func BuildMigrationServer(ctx context.Context, svc *services.Services, server *g
 
 	stackDetector := ports.StackDetector(migrationrepo.NewStackDetectorAdapter(analysisDB))
 
-	app := migrationapp.NewService(repo, tx, identityClient, repositoryClient, analysisClient, artifactReader, generationEnqueuer, decomposeEnqueuer, generationResultReader, fileArtifactReader, migrabilityAssessor, roadmapEnricher, blueprintGenerator, stackDetector, os.Getenv("PRISM_MONOREPO_PATH"))
+	app := migrationapp.NewService(repo, tx, identityClient, repositoryClient, analysisClient, artifactReader, generationEnqueuer, decomposeEnqueuer, generationResultReader, fileArtifactReader, migrabilityAssessor, roadmapEnricher, blueprintGenerator, stackDetector, os.Getenv("PRISM_MONOREPO_PATH")).
+		WithGenerationRecordResetter(generationRecordResetter)
 
 	// Enforce per-month migration plan quotas against the co-served billing
 	// service (hard block; Unlimited plans never blocked). No-op when no analysis/

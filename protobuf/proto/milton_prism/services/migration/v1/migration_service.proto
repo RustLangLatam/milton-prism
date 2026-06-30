@@ -137,6 +137,28 @@ service MigrationService {
     };
   }
 
+  // RetryGeneration re-runs autonomous generation for the FAILED services of a
+  // migration that is in the FAILED state.
+  //
+  // It transitions the migration back to GENERATING and re-enqueues a generation
+  // job scoped to the failed services only — services that already completed are
+  // never regenerated (the worker skips them via its done-set). When
+  // service_filter is empty every failed service is retried; when non-empty only
+  // the named services that are actually in the failed set are retried.
+  //
+  // Requires the migration to be in FAILED state and to have at least one failed
+  // service record. Only the owner or a system user may call this.
+  rpc RetryGeneration(RetryGenerationRequest) returns (milton_prism.types.migration.v1.Migration) {
+    option (google.api.http) = {
+      post: "/v1/migrations/{identifier}:retryGeneration"
+      body: "*"
+    };
+    option (openapi.v3.operation) = {
+      summary: "Retry generation for failed services"
+      description: "Re-runs generation for the FAILED services of a FAILED migration and transitions it back to GENERATING. Already-completed services are not regenerated. Leave service_filter empty to retry all failed services."
+    };
+  }
+
   // GetGenerationPackage assembles and returns the full generation package for a
   // GENERATING migration: proto contracts, boundary specs, and profile metadata
   // for every proposed service.
@@ -458,6 +480,24 @@ message ApproveDesignRequest {
   // Optional allowlist of service names to generate. Empty = generate all services.
   // Use this to trial-generate 1–3 services before committing to the full run.
   repeated string service_filter = 3 [(openapi.v3.property) = {description: "Optional subset of service names to generate. Empty = generate all."}];
+}
+
+// RetryGenerationRequest re-runs generation for a FAILED migration's failed services.
+message RetryGenerationRequest {
+  // Numeric identifier assigned at creation.
+  uint64 identifier = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (openapi.v3.property) = {
+      description: "Migration identifier. Must be in FAILED state with at least one failed service."
+      example: {yaml: "7"}
+    }
+  ];
+
+  // Optional allowlist of service names to retry. Empty = retry every failed
+  // service; non-empty = retry only the named services that are in the failed
+  // set (names not currently failed are ignored). Already-completed services are
+  // never regenerated.
+  repeated string service_filter = 2 [(openapi.v3.property) = {description: "Optional subset of failed service names to retry. Empty = retry all failed services."}];
 }
 
 // GetGenerationPackageRequest identifies the migration whose generation package to retrieve.

@@ -23,6 +23,10 @@ type MigrationRepository interface {
 	List(ctx context.Context, filter *domain.MigrationsFilter, orderBy string, params *queryparamsv1.PageQueryParams) ([]*domain.Migration, *paginationv1.Pagination, error)
 	// UpdateState persists only the state field for the given migration.
 	UpdateState(ctx context.Context, identifier uint64, state domain.MigrationState) error
+	// ClearFailureReason clears the migration-level failure_reason field. Used by
+	// RetryGeneration when re-arming a FAILED migration back to GENERATING so a
+	// stale failure message does not survive the retry.
+	ClearFailureReason(ctx context.Context, identifier uint64) error
 	// SetRepositoryURL persists repository_url for an existing record.
 	// Used to backfill migrations created before the snapshot feature existed.
 	SetRepositoryURL(ctx context.Context, identifier uint64, url string) error

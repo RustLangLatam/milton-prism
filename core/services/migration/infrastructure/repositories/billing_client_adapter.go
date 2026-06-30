@@ -58,11 +58,12 @@ func (a *BillingClientAdapter) GetUserPlan(ctx context.Context, userID uint64) (
 	return a.client.GetUserPlan(ctx, &billingsvcv1.GetUserPlanRequest{UserId: userID})
 }
 
-// CountUsageRecords forwards the caller's token and returns the number of usage
-// records for a migration filtered to the given operation. Used by the
-// generation-spend finalize to stay idempotent (skip when a GENERATION record
-// already exists). It requests a single record and reads pagination.total_size.
-func (a *BillingClientAdapter) CountUsageRecords(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (int, error) {
+// ListBilledServiceNames forwards the caller's token and returns the set of
+// service names that already have a usage record for (migrationID, op). Used by
+// the generation-spend finalize to stay idempotent per (migration, service):
+// a service already present is never billed again. Records with an empty
+// service_name are skipped (they are not service-scoped).
+func (a *BillingClientAdapter) ListBilledServiceNames(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (map[string]bool, error) {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
@@ -71,15 +72,15 @@ func (a *BillingClientAdapter) CountUsageRecords(ctx context.Context, migrationI
 		PageParams:  &queryparamsv1.PageQueryParams{PageSize: 100},
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	count := 0
+	billed := make(map[string]bool)
 	for _, r := range resp.GetUsageRecords() {
-		if r.GetOperation() == op {
-			count++
+		if r.GetOperation() == op && r.GetServiceName() != "" {
+			billed[r.GetServiceName()] = true
 		}
 	}
-	return count, nil
+	return billed, nil
 }
 
 // RecordUsage forwards an LLM spend event to the billing service over the
@@ -97,6 +98,7 @@ func (a *BillingClientAdapter) RecordUsage(ctx context.Context, spend ports.Usag
 		UsageRecord: &billingv1.UsageRecord{
 			UserId:        spend.UserID,
 			MigrationId:   spend.MigrationID,
+			ServiceName:   spend.ServiceName,
 			Operation:     spend.Operation,
 			TokensIn:      spend.TokensIn,
 			TokensOut:     spend.TokensOut,

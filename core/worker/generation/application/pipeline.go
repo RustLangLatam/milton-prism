@@ -4,7 +4,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,13 +19,6 @@ const (
 	maxServiceAttempts  = 3
 	defaultRetryBackoff = 30 * time.Second
 )
-
-// rateLimitKeywords are substrings that indicate a transient, retriable failure
-// (rate-limit or server overload). invokeErr != nil is always transient.
-var rateLimitKeywords = []string{
-	"rate limit", "rate_limit", "too many requests",
-	"429", "overloaded", "server temporarily unavailable",
-}
 
 // Pipeline orchestrates autonomous service generation for one migration.
 type Pipeline struct {
@@ -93,23 +85,6 @@ func (p *Pipeline) WithRetryBackoff(d time.Duration) *Pipeline { p.retryBackoff 
 // user-visible field. The raw blob is logged server-side for diagnosis.
 func sanitizeFailureReason(raw string) string {
 	return workerdomain.SanitizeFailureReason(raw)
-}
-
-// isTransientError reports whether the failure is worth retrying.
-// invokeErr != nil (infrastructure failure, context deadline) is always transient.
-// A clean invoker run that fails gates is transient only when rate-limit keywords
-// appear in the failure reason; all other gates failures are permanent.
-func isTransientError(invokeErr error, failureReason string) bool {
-	if invokeErr != nil {
-		return true
-	}
-	lower := strings.ToLower(failureReason)
-	for _, kw := range rateLimitKeywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 // Run executes the generation pipeline for the given migration.
@@ -179,6 +154,8 @@ func (p *Pipeline) Run(ctx context.Context, payload workerdomain.JobPayload) err
 				ServiceName:   svc.Name,
 				Status:        workerdomain.ServiceStatusFailed,
 				FailureReason: svc.IncompleteReason,
+				// An incomplete contract is a design/input problem, never a throttle.
+				FailureClass: workerdomain.FailureClassDesign,
 			}); upsertErr != nil {
 				applog.Warningf("generation-worker: upsert incomplete service=%s: %v", svc.Name, upsertErr)
 			}
@@ -296,7 +273,7 @@ func (p *Pipeline) generateService(ctx context.Context, migrationID uint64, prof
 			// Long backoff only for transient throttling; a red gate (compile/test
 			// failure) is retried promptly — there is nothing to wait for.
 			backoff := time.Duration(0)
-			if isTransientError(invokeErr, result.RawFailureReason) {
+			if workerdomain.IsTransientError(invokeErr, result.RawFailureReason) {
 				backoff = time.Duration(attempt-1) * p.retryBackoff
 			}
 			applog.Infof("generation-worker: retry service=%s attempt=%d/%d backoff=%s gateRed=%v",
@@ -349,17 +326,22 @@ persist:
 	switch {
 	case invokeErr != nil:
 		rec.Status = workerdomain.ServiceStatusFailed
+		// An infrastructure / invoker error is always transient.
+		rec.FailureClass = workerdomain.ClassifyFailure(invokeErr, "")
 		// Sanitize the infrastructure error before persisting to the user-visible
 		// field; log the full error server-side for diagnosis.
 		rec.FailureReason = sanitizeFailureReason(invokeErr.Error())
 		applog.Warningf("generation-worker: service=%s invoker error (raw, server-only): %v", spec.Name, invokeErr)
 	case !result.GatesPassed:
 		rec.Status = workerdomain.ServiceStatusFailed
+		// Classify on the RAW (unsanitized) reason so rate-limit keywords are still
+		// visible: a throttle is TRANSIENT, a deterministic-gate red is DESIGN.
+		rec.FailureClass = workerdomain.ClassifyFailure(nil, result.RawFailureReason)
 		// result.FailureReason is already sanitized by the invoker; the raw blob
 		// was logged server-side at the invoker boundary.
 		rec.FailureReason = sanitizeFailureReason(result.FailureReason)
-		applog.Warningf("generation-worker: service=%s gates failed reason=%q (raw server-only=%q)",
-			spec.Name, result.FailureReason, result.RawFailureReason)
+		applog.Warningf("generation-worker: service=%s gates failed reason=%q class=%s (raw server-only=%q)",
+			spec.Name, result.FailureReason, rec.FailureClass, result.RawFailureReason)
 	default:
 		rec.Status = workerdomain.ServiceStatusDone
 		rec.GatesPassed = true

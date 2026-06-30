@@ -718,6 +718,26 @@ message MigrationOutput {
   }];
 }
 
+// FailureClass classifies WHY a service's generation failed, so the panel can
+// decide whether a retry is worth offering. It is computed by the generation
+// worker at persist time (single source: ClassifyFailure) and surfaced read-only
+// on each ServiceGenerationRecord.
+//
+//   TRANSIENT — rate-limit (429/overloaded), infrastructure, or deadline failures.
+//               A retry is likely to succeed once the throttle/outage clears.
+//   DESIGN    — a deterministic-gate red (the service did not compile / its tests
+//               failed) or a not-migrable/incomplete-contract service. A retry may
+//               still be attempted but is de-emphasised — the input plan is the
+//               likely cause.
+enum FailureClass {
+  // Default — no classification (e.g. the service has not failed).
+  FAILURE_CLASS_UNSPECIFIED = 0;
+  // Transient failure (rate-limit / overload / infrastructure / deadline).
+  FAILURE_CLASS_TRANSIENT = 1;
+  // Design/contract failure (gate-red, not-migrable, incomplete contract).
+  FAILURE_CLASS_DESIGN = 2;
+}
+
 // ServiceGenerationRecord captures the per-service outcome of autonomous code generation.
 // Written by the generation worker as each service progresses through its pipeline.
 message ServiceGenerationRecord {
@@ -773,6 +793,15 @@ message ServiceGenerationRecord {
   int64 output_tokens = 11 [
     (google.api.field_behavior) = OUTPUT_ONLY,
     (openapi.v3.property) = {description: "Output tokens produced by this service."}
+  ];
+
+  // Classification of WHY this service failed, set only when status is failed.
+  // TRANSIENT (rate-limit/overload/infra/deadline) → a retry is likely to help;
+  // DESIGN (gate-red / not-migrable / incomplete contract) → retry de-emphasised.
+  // Computed by the generation worker at persist time; UNSPECIFIED otherwise.
+  FailureClass failure_class = 12 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Failure classification (TRANSIENT or DESIGN) when status is failed. UNSPECIFIED otherwise."}
   ];
 }
 

@@ -61,6 +61,7 @@ type generationResultDoc struct {
 	Status                   string             `bson:"status"`
 	GatesPassed              bool               `bson:"gates_passed"`
 	FailureReason            string             `bson:"failure_reason,omitempty"`
+	FailureClass             string             `bson:"failure_class,omitempty"`
 	TotalCostUSD             float64            `bson:"total_cost_usd"`
 	GeneratedFileCount       int                `bson:"generated_file_count"`
 	InputTokens              int64              `bson:"input_tokens"`
@@ -90,6 +91,7 @@ func (s *MongoGenerationStore) UpsertRecord(ctx context.Context, rec workerdomai
 		Status:                   string(rec.Status),
 		GatesPassed:              rec.GatesPassed,
 		FailureReason:            rec.FailureReason,
+		FailureClass:             string(rec.FailureClass),
 		TotalCostUSD:             rec.TotalCostUSD,
 		GeneratedFileCount:       rec.GeneratedFileCount,
 		InputTokens:              rec.InputTokens,
@@ -126,6 +128,7 @@ func (s *MongoGenerationStore) ListRecords(ctx context.Context, migrationID uint
 			Status:                   workerdomain.ServiceStatus(d.Status),
 			GatesPassed:              d.GatesPassed,
 			FailureReason:            d.FailureReason,
+			FailureClass:             workerdomain.FailureClass(d.FailureClass),
 			TotalCostUSD:             d.TotalCostUSD,
 			GeneratedFileCount:       d.GeneratedFileCount,
 			InputTokens:              d.InputTokens,

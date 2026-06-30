@@ -459,6 +459,64 @@ func (x *ApproveDesignRequest) GetServiceFilter() []string {
 	return nil
 }
 
+// RetryGenerationRequest re-runs generation for a FAILED migration's failed services.
+type RetryGenerationRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Numeric identifier assigned at creation.
+	Identifier uint64 `protobuf:"varint,1,opt,name=identifier,proto3" json:"identifier,omitempty"`
+	// Optional allowlist of service names to retry. Empty = retry every failed
+	// service; non-empty = retry only the named services that are in the failed
+	// set (names not currently failed are ignored). Already-completed services are
+	// never regenerated.
+	ServiceFilter []string `protobuf:"bytes,2,rep,name=service_filter,json=serviceFilter,proto3" json:"service_filter,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryGenerationRequest) Reset() {
+	*x = RetryGenerationRequest{}
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryGenerationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryGenerationRequest) ProtoMessage() {}
+
+func (x *RetryGenerationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryGenerationRequest.ProtoReflect.Descriptor instead.
+func (*RetryGenerationRequest) Descriptor() ([]byte, []int) {
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RetryGenerationRequest) GetIdentifier() uint64 {
+	if x != nil {
+		return x.Identifier
+	}
+	return 0
+}
+
+func (x *RetryGenerationRequest) GetServiceFilter() []string {
+	if x != nil {
+		return x.ServiceFilter
+	}
+	return nil
+}
+
 // GetGenerationPackageRequest identifies the migration whose generation package to retrieve.
 type GetGenerationPackageRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -470,7 +528,7 @@ type GetGenerationPackageRequest struct {
 
 func (x *GetGenerationPackageRequest) Reset() {
 	*x = GetGenerationPackageRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[8]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +540,7 @@ func (x *GetGenerationPackageRequest) String() string {
 func (*GetGenerationPackageRequest) ProtoMessage() {}
 
 func (x *GetGenerationPackageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[8]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +553,7 @@ func (x *GetGenerationPackageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetGenerationPackageRequest.ProtoReflect.Descriptor instead.
 func (*GetGenerationPackageRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{8}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetGenerationPackageRequest) GetIdentifier() uint64 {
@@ -516,7 +574,7 @@ type CancelMigrationRequest struct {
 
 func (x *CancelMigrationRequest) Reset() {
 	*x = CancelMigrationRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[9]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -528,7 +586,7 @@ func (x *CancelMigrationRequest) String() string {
 func (*CancelMigrationRequest) ProtoMessage() {}
 
 func (x *CancelMigrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[9]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -541,7 +599,7 @@ func (x *CancelMigrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelMigrationRequest.ProtoReflect.Descriptor instead.
 func (*CancelMigrationRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{9}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CancelMigrationRequest) GetIdentifier() uint64 {
@@ -568,7 +626,7 @@ type PublishMigrationRequest struct {
 
 func (x *PublishMigrationRequest) Reset() {
 	*x = PublishMigrationRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[10]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -580,7 +638,7 @@ func (x *PublishMigrationRequest) String() string {
 func (*PublishMigrationRequest) ProtoMessage() {}
 
 func (x *PublishMigrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[10]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -593,7 +651,7 @@ func (x *PublishMigrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishMigrationRequest.ProtoReflect.Descriptor instead.
 func (*PublishMigrationRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{10}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PublishMigrationRequest) GetMigrationId() uint64 {
@@ -637,7 +695,7 @@ type PublishMigrationResponse struct {
 
 func (x *PublishMigrationResponse) Reset() {
 	*x = PublishMigrationResponse{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[11]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -649,7 +707,7 @@ func (x *PublishMigrationResponse) String() string {
 func (*PublishMigrationResponse) ProtoMessage() {}
 
 func (x *PublishMigrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[11]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -662,7 +720,7 @@ func (x *PublishMigrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishMigrationResponse.ProtoReflect.Descriptor instead.
 func (*PublishMigrationResponse) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{11}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PublishMigrationResponse) GetMigration() *v1.Migration {
@@ -694,7 +752,7 @@ type AssessMigrabilityRequest struct {
 
 func (x *AssessMigrabilityRequest) Reset() {
 	*x = AssessMigrabilityRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[12]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -706,7 +764,7 @@ func (x *AssessMigrabilityRequest) String() string {
 func (*AssessMigrabilityRequest) ProtoMessage() {}
 
 func (x *AssessMigrabilityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[12]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -719,7 +777,7 @@ func (x *AssessMigrabilityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssessMigrabilityRequest.ProtoReflect.Descriptor instead.
 func (*AssessMigrabilityRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{12}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AssessMigrabilityRequest) GetIdentifier() uint64 {
@@ -749,7 +807,7 @@ type SetMigrabilityOverrideRequest struct {
 
 func (x *SetMigrabilityOverrideRequest) Reset() {
 	*x = SetMigrabilityOverrideRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[13]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -761,7 +819,7 @@ func (x *SetMigrabilityOverrideRequest) String() string {
 func (*SetMigrabilityOverrideRequest) ProtoMessage() {}
 
 func (x *SetMigrabilityOverrideRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[13]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -774,7 +832,7 @@ func (x *SetMigrabilityOverrideRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetMigrabilityOverrideRequest.ProtoReflect.Descriptor instead.
 func (*SetMigrabilityOverrideRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{13}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SetMigrabilityOverrideRequest) GetIdentifier() uint64 {
@@ -805,7 +863,7 @@ type GetGenerationArtifactsRequest struct {
 
 func (x *GetGenerationArtifactsRequest) Reset() {
 	*x = GetGenerationArtifactsRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[14]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -817,7 +875,7 @@ func (x *GetGenerationArtifactsRequest) String() string {
 func (*GetGenerationArtifactsRequest) ProtoMessage() {}
 
 func (x *GetGenerationArtifactsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[14]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -830,7 +888,7 @@ func (x *GetGenerationArtifactsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetGenerationArtifactsRequest.ProtoReflect.Descriptor instead.
 func (*GetGenerationArtifactsRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{14}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetGenerationArtifactsRequest) GetMigrationId() uint64 {
@@ -858,7 +916,7 @@ type GetGenerationArtifactsResponse struct {
 
 func (x *GetGenerationArtifactsResponse) Reset() {
 	*x = GetGenerationArtifactsResponse{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[15]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -870,7 +928,7 @@ func (x *GetGenerationArtifactsResponse) String() string {
 func (*GetGenerationArtifactsResponse) ProtoMessage() {}
 
 func (x *GetGenerationArtifactsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[15]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -883,7 +941,7 @@ func (x *GetGenerationArtifactsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetGenerationArtifactsResponse.ProtoReflect.Descriptor instead.
 func (*GetGenerationArtifactsResponse) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{15}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetGenerationArtifactsResponse) GetServices() []*v1.ServiceGenerationArtifacts {
@@ -906,7 +964,7 @@ type GenerateRestructuringRoadmapRequest struct {
 
 func (x *GenerateRestructuringRoadmapRequest) Reset() {
 	*x = GenerateRestructuringRoadmapRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[16]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -918,7 +976,7 @@ func (x *GenerateRestructuringRoadmapRequest) String() string {
 func (*GenerateRestructuringRoadmapRequest) ProtoMessage() {}
 
 func (x *GenerateRestructuringRoadmapRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[16]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -931,7 +989,7 @@ func (x *GenerateRestructuringRoadmapRequest) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use GenerateRestructuringRoadmapRequest.ProtoReflect.Descriptor instead.
 func (*GenerateRestructuringRoadmapRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{16}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GenerateRestructuringRoadmapRequest) GetIdentifier() uint64 {
@@ -952,7 +1010,7 @@ type DownloadDeliverableRequest struct {
 
 func (x *DownloadDeliverableRequest) Reset() {
 	*x = DownloadDeliverableRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[17]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -964,7 +1022,7 @@ func (x *DownloadDeliverableRequest) String() string {
 func (*DownloadDeliverableRequest) ProtoMessage() {}
 
 func (x *DownloadDeliverableRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[17]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -977,7 +1035,7 @@ func (x *DownloadDeliverableRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadDeliverableRequest.ProtoReflect.Descriptor instead.
 func (*DownloadDeliverableRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{17}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DownloadDeliverableRequest) GetMigrationId() uint64 {
@@ -998,7 +1056,7 @@ type EnrichRoadmapRequest struct {
 
 func (x *EnrichRoadmapRequest) Reset() {
 	*x = EnrichRoadmapRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[18]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1010,7 +1068,7 @@ func (x *EnrichRoadmapRequest) String() string {
 func (*EnrichRoadmapRequest) ProtoMessage() {}
 
 func (x *EnrichRoadmapRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[18]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1023,7 +1081,7 @@ func (x *EnrichRoadmapRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrichRoadmapRequest.ProtoReflect.Descriptor instead.
 func (*EnrichRoadmapRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{18}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *EnrichRoadmapRequest) GetIdentifier() uint64 {
@@ -1045,7 +1103,7 @@ type ExportActionPlanPromptRequest struct {
 
 func (x *ExportActionPlanPromptRequest) Reset() {
 	*x = ExportActionPlanPromptRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[19]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1057,7 +1115,7 @@ func (x *ExportActionPlanPromptRequest) String() string {
 func (*ExportActionPlanPromptRequest) ProtoMessage() {}
 
 func (x *ExportActionPlanPromptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[19]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1070,7 +1128,7 @@ func (x *ExportActionPlanPromptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportActionPlanPromptRequest.ProtoReflect.Descriptor instead.
 func (*ExportActionPlanPromptRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{19}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ExportActionPlanPromptRequest) GetIdentifier() uint64 {
@@ -1092,7 +1150,7 @@ type GenerateBlueprintRequest struct {
 
 func (x *GenerateBlueprintRequest) Reset() {
 	*x = GenerateBlueprintRequest{}
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[20]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1162,7 @@ func (x *GenerateBlueprintRequest) String() string {
 func (*GenerateBlueprintRequest) ProtoMessage() {}
 
 func (x *GenerateBlueprintRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[20]
+	mi := &file_milton_prism_services_migration_v1_migration_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1175,7 @@ func (x *GenerateBlueprintRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateBlueprintRequest.ProtoReflect.Descriptor instead.
 func (*GenerateBlueprintRequest) Descriptor() ([]byte, []int) {
-	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{20}
+	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *GenerateBlueprintRequest) GetIdentifier() uint64 {
@@ -1168,7 +1226,12 @@ const file_milton_prism_services_migration_v1_migration_service_proto_rawDesc = 
 	"identifier\x18\x01 \x01(\x04B#\xe0A\x02\xbaG\x1d:\x03\x12\x017\x92\x02\x15Migration identifier.R\n" +
 	"identifier\x12i\n" +
 	"\bapproved\x18\x02 \x01(\bBM\xe0A\x02\xbaGG:\x06\x12\x04true\x92\x02<true advances to GENERATING; false transitions to CANCELLED.R\bapproved\x12p\n" +
-	"\x0eservice_filter\x18\x03 \x03(\tBI\xbaGF\x92\x02COptional subset of service names to generate. Empty = generate all.R\rserviceFilter\"b\n" +
+	"\x0eservice_filter\x18\x03 \x03(\tBI\xbaGF\x92\x02COptional subset of service names to generate. Empty = generate all.R\rserviceFilter\"\x9b\x02\n" +
+	"\x16RetryGenerationRequest\x12}\n" +
+	"\n" +
+	"identifier\x18\x01 \x01(\x04B]\xe0A\x02\xbaGW:\x03\x12\x017\x92\x02OMigration identifier. Must be in FAILED state with at least one failed service.R\n" +
+	"identifier\x12\x81\x01\n" +
+	"\x0eservice_filter\x18\x02 \x03(\tBZ\xbaGW\x92\x02TOptional subset of failed service names to retry. Empty = retry all failed services.R\rserviceFilter\"b\n" +
 	"\x1bGetGenerationPackageRequest\x12C\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04B#\xe0A\x02\xbaG\x1d:\x03\x12\x017\x92\x02\x15Migration identifier.R\n" +
@@ -1219,7 +1282,7 @@ const file_milton_prism_services_migration_v1_migration_service_proto_rawDesc = 
 	"\x18GenerateBlueprintRequest\x12\x87\x01\n" +
 	"\n" +
 	"identifier\x18\x01 \x01(\x04Bg\xe0A\x02\xbaGa:\a\x12\x0510003\x92\x02UMigration identifier. Must be in RESTRUCTURING_READY state with a completed analysis.R\n" +
-	"identifier2\x8e4\n" +
+	"identifier2\xc07\n" +
 	"\x10MigrationService\x12\x91\x02\n" +
 	"\x0fCreateMigration\x12:.milton_prism.services.migration.v1.CreateMigrationRequest\x1a*.milton_prism.types.migration.v1.Migration\"\x95\x01\xbaGq\x12\x12Create a migration\x1a[Creates a new migration record in PENDING state. Call StartMigration to begin the pipeline.\x82\xd3\xe4\x93\x02\x1b:\tmigration\"\x0e/v1/migrations\x12\x88\x02\n" +
 	"\fGetMigration\x127.milton_prism.services.migration.v1.GetMigrationRequest\x1a*.milton_prism.types.migration.v1.Migration\"\x92\x01\xbaGl\x12\x0fGet a migration\x1aYReturns a migration by numeric identifier. Only the owner or a system user may call this.\x82\xd3\xe4\x93\x02\x1d\x12\x1b/v1/migrations/{identifier}\x12\x8b\x02\n" +
@@ -1227,7 +1290,8 @@ const file_milton_prism_services_migration_v1_migration_service_proto_rawDesc = 
 	"\x0fDeleteMigration\x12:.milton_prism.services.migration.v1.DeleteMigrationRequest\x1a\x16.google.protobuf.Empty\"\x99\x01\xbaGs\x12\x17Soft-delete a migration\x1aXMarks a terminal-state migration as deleted. Record retained until purge window expires.\x82\xd3\xe4\x93\x02\x1d*\x1b/v1/migrations/{identifier}\x12\x9a\x02\n" +
 	"\x0eStartMigration\x129.milton_prism.services.migration.v1.StartMigrationRequest\x1a*.milton_prism.types.migration.v1.Migration\"\xa0\x01\xbaGq\x12\x1cStart the migration pipeline\x1aQTransitions the migration from PENDING to ANALYZING and signals the orchestrator.\x82\xd3\xe4\x93\x02&:\x01*\"!/v1/migrations/{identifier}:start\x12\xeb\x03\n" +
 	"\fRunMigration\x127.milton_prism.services.migration.v1.RunMigrationRequest\x1a*.milton_prism.types.migration.v1.Migration\"\xf5\x02\xbaG\xc7\x02\x121Run the full roadmap end-to-end from the platform\x1a\x91\x02One-shot orchestration: starts the pipeline and auto-approves the plan when design completes so analysis → design → generation runs without manual steps. Stops at READY; never auto-publishes. The migrability gate still blocks a NOT_MIGRABLE verdict without an override.\x82\xd3\xe4\x93\x02$:\x01*\"\x1f/v1/migrations/{identifier}:run\x12\xaa\x02\n" +
-	"\rApproveDesign\x128.milton_prism.services.migration.v1.ApproveDesignRequest\x1a*.milton_prism.types.migration.v1.Migration\"\xb2\x01\xbaG{\x12&Approve or reject the restructure plan\x1aQAdvances to GENERATING when approved=true, or sets CANCELLED when approved=false.\x82\xd3\xe4\x93\x02.:\x01*\")/v1/migrations/{identifier}:approveDesign\x12\xc6\x02\n" +
+	"\rApproveDesign\x128.milton_prism.services.migration.v1.ApproveDesignRequest\x1a*.milton_prism.types.migration.v1.Migration\"\xb2\x01\xbaG{\x12&Approve or reject the restructure plan\x1aQAdvances to GENERATING when approved=true, or sets CANCELLED when approved=false.\x82\xd3\xe4\x93\x02.:\x01*\")/v1/migrations/{identifier}:approveDesign\x12\xaf\x03\n" +
+	"\x0fRetryGeneration\x12:.milton_prism.services.migration.v1.RetryGenerationRequest\x1a*.milton_prism.types.migration.v1.Migration\"\xb3\x02\xbaG\xf9\x01\x12$Retry generation for failed services\x1a\xd0\x01Re-runs generation for the FAILED services of a FAILED migration and transitions it back to GENERATING. Already-completed services are not regenerated. Leave service_filter empty to retry all failed services.\x82\xd3\xe4\x93\x020:\x01*\"+/v1/migrations/{identifier}:retryGeneration\x12\xc6\x02\n" +
 	"\x14GetGenerationPackage\x12?.milton_prism.services.migration.v1.GetGenerationPackageRequest\x1a2.milton_prism.types.migration.v1.GenerationPackage\"\xb8\x01\xbaG}\x12\x16Get generation package\x1acReturns the full generation package (proto + boundary spec per service) for a GENERATING migration.\x82\xd3\xe4\x93\x022:\x01*\"-/v1/migrations/{identifier}:generationPackage\x12\x85\x02\n" +
 	"\x0fCancelMigration\x12:.milton_prism.services.migration.v1.CancelMigrationRequest\x1a*.milton_prism.types.migration.v1.Migration\"\x89\x01\xbaGY\x12\x12Cancel a migration\x1aCTransitions the migration to CANCELLED from any non-terminal state.\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/migrations/{identifier}:cancel\x12\x99\x03\n" +
 	"\x10PublishMigration\x12;.milton_prism.services.migration.v1.PublishMigrationRequest\x1a<.milton_prism.services.migration.v1.PublishMigrationResponse\"\x89\x02\xbaG\xd5\x01\x12/Publish migration artifacts to a git repository\x1a\xa1\x01Commits all generated artifacts and pushes them to the target repository. On push failure the migration stays READY (retryable). The write token is never stored.\x82\xd3\xe4\x93\x02*:\x01*\"%/v1/migrations/{migration_id}:publish\x12\xe9\x02\n" +
@@ -1260,7 +1324,7 @@ func file_milton_prism_services_migration_v1_migration_service_proto_rawDescGZIP
 	return file_milton_prism_services_migration_v1_migration_service_proto_rawDescData
 }
 
-var file_milton_prism_services_migration_v1_migration_service_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_milton_prism_services_migration_v1_migration_service_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_milton_prism_services_migration_v1_migration_service_proto_goTypes = []any{
 	(*CreateMigrationRequest)(nil),              // 0: milton_prism.services.migration.v1.CreateMigrationRequest
 	(*GetMigrationRequest)(nil),                 // 1: milton_prism.services.migration.v1.GetMigrationRequest
@@ -1270,36 +1334,37 @@ var file_milton_prism_services_migration_v1_migration_service_proto_goTypes = []
 	(*StartMigrationRequest)(nil),               // 5: milton_prism.services.migration.v1.StartMigrationRequest
 	(*RunMigrationRequest)(nil),                 // 6: milton_prism.services.migration.v1.RunMigrationRequest
 	(*ApproveDesignRequest)(nil),                // 7: milton_prism.services.migration.v1.ApproveDesignRequest
-	(*GetGenerationPackageRequest)(nil),         // 8: milton_prism.services.migration.v1.GetGenerationPackageRequest
-	(*CancelMigrationRequest)(nil),              // 9: milton_prism.services.migration.v1.CancelMigrationRequest
-	(*PublishMigrationRequest)(nil),             // 10: milton_prism.services.migration.v1.PublishMigrationRequest
-	(*PublishMigrationResponse)(nil),            // 11: milton_prism.services.migration.v1.PublishMigrationResponse
-	(*AssessMigrabilityRequest)(nil),            // 12: milton_prism.services.migration.v1.AssessMigrabilityRequest
-	(*SetMigrabilityOverrideRequest)(nil),       // 13: milton_prism.services.migration.v1.SetMigrabilityOverrideRequest
-	(*GetGenerationArtifactsRequest)(nil),       // 14: milton_prism.services.migration.v1.GetGenerationArtifactsRequest
-	(*GetGenerationArtifactsResponse)(nil),      // 15: milton_prism.services.migration.v1.GetGenerationArtifactsResponse
-	(*GenerateRestructuringRoadmapRequest)(nil), // 16: milton_prism.services.migration.v1.GenerateRestructuringRoadmapRequest
-	(*DownloadDeliverableRequest)(nil),          // 17: milton_prism.services.migration.v1.DownloadDeliverableRequest
-	(*EnrichRoadmapRequest)(nil),                // 18: milton_prism.services.migration.v1.EnrichRoadmapRequest
-	(*ExportActionPlanPromptRequest)(nil),       // 19: milton_prism.services.migration.v1.ExportActionPlanPromptRequest
-	(*GenerateBlueprintRequest)(nil),            // 20: milton_prism.services.migration.v1.GenerateBlueprintRequest
-	(*v1.Migration)(nil),                        // 21: milton_prism.types.migration.v1.Migration
-	(*v1.MigrationsFilter)(nil),                 // 22: milton_prism.types.migration.v1.MigrationsFilter
-	(*v11.PageQueryParams)(nil),                 // 23: milton_prism.types.query_params.v1.PageQueryParams
-	(*v12.Pagination)(nil),                      // 24: milton_prism.types.pagination.v1.Pagination
-	(*v1.ServiceGenerationArtifacts)(nil),       // 25: milton_prism.types.migration.v1.ServiceGenerationArtifacts
-	(*emptypb.Empty)(nil),                       // 26: google.protobuf.Empty
-	(*v1.GenerationPackage)(nil),                // 27: milton_prism.types.migration.v1.GenerationPackage
-	(*httpbody.HttpBody)(nil),                   // 28: google.api.HttpBody
+	(*RetryGenerationRequest)(nil),              // 8: milton_prism.services.migration.v1.RetryGenerationRequest
+	(*GetGenerationPackageRequest)(nil),         // 9: milton_prism.services.migration.v1.GetGenerationPackageRequest
+	(*CancelMigrationRequest)(nil),              // 10: milton_prism.services.migration.v1.CancelMigrationRequest
+	(*PublishMigrationRequest)(nil),             // 11: milton_prism.services.migration.v1.PublishMigrationRequest
+	(*PublishMigrationResponse)(nil),            // 12: milton_prism.services.migration.v1.PublishMigrationResponse
+	(*AssessMigrabilityRequest)(nil),            // 13: milton_prism.services.migration.v1.AssessMigrabilityRequest
+	(*SetMigrabilityOverrideRequest)(nil),       // 14: milton_prism.services.migration.v1.SetMigrabilityOverrideRequest
+	(*GetGenerationArtifactsRequest)(nil),       // 15: milton_prism.services.migration.v1.GetGenerationArtifactsRequest
+	(*GetGenerationArtifactsResponse)(nil),      // 16: milton_prism.services.migration.v1.GetGenerationArtifactsResponse
+	(*GenerateRestructuringRoadmapRequest)(nil), // 17: milton_prism.services.migration.v1.GenerateRestructuringRoadmapRequest
+	(*DownloadDeliverableRequest)(nil),          // 18: milton_prism.services.migration.v1.DownloadDeliverableRequest
+	(*EnrichRoadmapRequest)(nil),                // 19: milton_prism.services.migration.v1.EnrichRoadmapRequest
+	(*ExportActionPlanPromptRequest)(nil),       // 20: milton_prism.services.migration.v1.ExportActionPlanPromptRequest
+	(*GenerateBlueprintRequest)(nil),            // 21: milton_prism.services.migration.v1.GenerateBlueprintRequest
+	(*v1.Migration)(nil),                        // 22: milton_prism.types.migration.v1.Migration
+	(*v1.MigrationsFilter)(nil),                 // 23: milton_prism.types.migration.v1.MigrationsFilter
+	(*v11.PageQueryParams)(nil),                 // 24: milton_prism.types.query_params.v1.PageQueryParams
+	(*v12.Pagination)(nil),                      // 25: milton_prism.types.pagination.v1.Pagination
+	(*v1.ServiceGenerationArtifacts)(nil),       // 26: milton_prism.types.migration.v1.ServiceGenerationArtifacts
+	(*emptypb.Empty)(nil),                       // 27: google.protobuf.Empty
+	(*v1.GenerationPackage)(nil),                // 28: milton_prism.types.migration.v1.GenerationPackage
+	(*httpbody.HttpBody)(nil),                   // 29: google.api.HttpBody
 }
 var file_milton_prism_services_migration_v1_migration_service_proto_depIdxs = []int32{
-	21, // 0: milton_prism.services.migration.v1.CreateMigrationRequest.migration:type_name -> milton_prism.types.migration.v1.Migration
-	22, // 1: milton_prism.services.migration.v1.ListMigrationsRequest.filter:type_name -> milton_prism.types.migration.v1.MigrationsFilter
-	23, // 2: milton_prism.services.migration.v1.ListMigrationsRequest.page_params:type_name -> milton_prism.types.query_params.v1.PageQueryParams
-	21, // 3: milton_prism.services.migration.v1.ListMigrationsResponse.migrations:type_name -> milton_prism.types.migration.v1.Migration
-	24, // 4: milton_prism.services.migration.v1.ListMigrationsResponse.pagination:type_name -> milton_prism.types.pagination.v1.Pagination
-	21, // 5: milton_prism.services.migration.v1.PublishMigrationResponse.migration:type_name -> milton_prism.types.migration.v1.Migration
-	25, // 6: milton_prism.services.migration.v1.GetGenerationArtifactsResponse.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationArtifacts
+	22, // 0: milton_prism.services.migration.v1.CreateMigrationRequest.migration:type_name -> milton_prism.types.migration.v1.Migration
+	23, // 1: milton_prism.services.migration.v1.ListMigrationsRequest.filter:type_name -> milton_prism.types.migration.v1.MigrationsFilter
+	24, // 2: milton_prism.services.migration.v1.ListMigrationsRequest.page_params:type_name -> milton_prism.types.query_params.v1.PageQueryParams
+	22, // 3: milton_prism.services.migration.v1.ListMigrationsResponse.migrations:type_name -> milton_prism.types.migration.v1.Migration
+	25, // 4: milton_prism.services.migration.v1.ListMigrationsResponse.pagination:type_name -> milton_prism.types.pagination.v1.Pagination
+	22, // 5: milton_prism.services.migration.v1.PublishMigrationResponse.migration:type_name -> milton_prism.types.migration.v1.Migration
+	26, // 6: milton_prism.services.migration.v1.GetGenerationArtifactsResponse.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationArtifacts
 	0,  // 7: milton_prism.services.migration.v1.MigrationService.CreateMigration:input_type -> milton_prism.services.migration.v1.CreateMigrationRequest
 	1,  // 8: milton_prism.services.migration.v1.MigrationService.GetMigration:input_type -> milton_prism.services.migration.v1.GetMigrationRequest
 	2,  // 9: milton_prism.services.migration.v1.MigrationService.ListMigrations:input_type -> milton_prism.services.migration.v1.ListMigrationsRequest
@@ -1307,37 +1372,39 @@ var file_milton_prism_services_migration_v1_migration_service_proto_depIdxs = []
 	5,  // 11: milton_prism.services.migration.v1.MigrationService.StartMigration:input_type -> milton_prism.services.migration.v1.StartMigrationRequest
 	6,  // 12: milton_prism.services.migration.v1.MigrationService.RunMigration:input_type -> milton_prism.services.migration.v1.RunMigrationRequest
 	7,  // 13: milton_prism.services.migration.v1.MigrationService.ApproveDesign:input_type -> milton_prism.services.migration.v1.ApproveDesignRequest
-	8,  // 14: milton_prism.services.migration.v1.MigrationService.GetGenerationPackage:input_type -> milton_prism.services.migration.v1.GetGenerationPackageRequest
-	9,  // 15: milton_prism.services.migration.v1.MigrationService.CancelMigration:input_type -> milton_prism.services.migration.v1.CancelMigrationRequest
-	10, // 16: milton_prism.services.migration.v1.MigrationService.PublishMigration:input_type -> milton_prism.services.migration.v1.PublishMigrationRequest
-	12, // 17: milton_prism.services.migration.v1.MigrationService.AssessMigrability:input_type -> milton_prism.services.migration.v1.AssessMigrabilityRequest
-	13, // 18: milton_prism.services.migration.v1.MigrationService.SetMigrabilityOverride:input_type -> milton_prism.services.migration.v1.SetMigrabilityOverrideRequest
-	16, // 19: milton_prism.services.migration.v1.MigrationService.GenerateRestructuringRoadmap:input_type -> milton_prism.services.migration.v1.GenerateRestructuringRoadmapRequest
-	14, // 20: milton_prism.services.migration.v1.MigrationService.GetGenerationArtifacts:input_type -> milton_prism.services.migration.v1.GetGenerationArtifactsRequest
-	18, // 21: milton_prism.services.migration.v1.MigrationService.EnrichRoadmap:input_type -> milton_prism.services.migration.v1.EnrichRoadmapRequest
-	20, // 22: milton_prism.services.migration.v1.MigrationService.GenerateBlueprint:input_type -> milton_prism.services.migration.v1.GenerateBlueprintRequest
-	19, // 23: milton_prism.services.migration.v1.MigrationService.ExportActionPlanPrompt:input_type -> milton_prism.services.migration.v1.ExportActionPlanPromptRequest
-	17, // 24: milton_prism.services.migration.v1.MigrationService.DownloadDeliverable:input_type -> milton_prism.services.migration.v1.DownloadDeliverableRequest
-	21, // 25: milton_prism.services.migration.v1.MigrationService.CreateMigration:output_type -> milton_prism.types.migration.v1.Migration
-	21, // 26: milton_prism.services.migration.v1.MigrationService.GetMigration:output_type -> milton_prism.types.migration.v1.Migration
-	3,  // 27: milton_prism.services.migration.v1.MigrationService.ListMigrations:output_type -> milton_prism.services.migration.v1.ListMigrationsResponse
-	26, // 28: milton_prism.services.migration.v1.MigrationService.DeleteMigration:output_type -> google.protobuf.Empty
-	21, // 29: milton_prism.services.migration.v1.MigrationService.StartMigration:output_type -> milton_prism.types.migration.v1.Migration
-	21, // 30: milton_prism.services.migration.v1.MigrationService.RunMigration:output_type -> milton_prism.types.migration.v1.Migration
-	21, // 31: milton_prism.services.migration.v1.MigrationService.ApproveDesign:output_type -> milton_prism.types.migration.v1.Migration
-	27, // 32: milton_prism.services.migration.v1.MigrationService.GetGenerationPackage:output_type -> milton_prism.types.migration.v1.GenerationPackage
-	21, // 33: milton_prism.services.migration.v1.MigrationService.CancelMigration:output_type -> milton_prism.types.migration.v1.Migration
-	11, // 34: milton_prism.services.migration.v1.MigrationService.PublishMigration:output_type -> milton_prism.services.migration.v1.PublishMigrationResponse
-	21, // 35: milton_prism.services.migration.v1.MigrationService.AssessMigrability:output_type -> milton_prism.types.migration.v1.Migration
-	21, // 36: milton_prism.services.migration.v1.MigrationService.SetMigrabilityOverride:output_type -> milton_prism.types.migration.v1.Migration
-	21, // 37: milton_prism.services.migration.v1.MigrationService.GenerateRestructuringRoadmap:output_type -> milton_prism.types.migration.v1.Migration
-	15, // 38: milton_prism.services.migration.v1.MigrationService.GetGenerationArtifacts:output_type -> milton_prism.services.migration.v1.GetGenerationArtifactsResponse
-	21, // 39: milton_prism.services.migration.v1.MigrationService.EnrichRoadmap:output_type -> milton_prism.types.migration.v1.Migration
-	21, // 40: milton_prism.services.migration.v1.MigrationService.GenerateBlueprint:output_type -> milton_prism.types.migration.v1.Migration
-	28, // 41: milton_prism.services.migration.v1.MigrationService.ExportActionPlanPrompt:output_type -> google.api.HttpBody
-	28, // 42: milton_prism.services.migration.v1.MigrationService.DownloadDeliverable:output_type -> google.api.HttpBody
-	25, // [25:43] is the sub-list for method output_type
-	7,  // [7:25] is the sub-list for method input_type
+	8,  // 14: milton_prism.services.migration.v1.MigrationService.RetryGeneration:input_type -> milton_prism.services.migration.v1.RetryGenerationRequest
+	9,  // 15: milton_prism.services.migration.v1.MigrationService.GetGenerationPackage:input_type -> milton_prism.services.migration.v1.GetGenerationPackageRequest
+	10, // 16: milton_prism.services.migration.v1.MigrationService.CancelMigration:input_type -> milton_prism.services.migration.v1.CancelMigrationRequest
+	11, // 17: milton_prism.services.migration.v1.MigrationService.PublishMigration:input_type -> milton_prism.services.migration.v1.PublishMigrationRequest
+	13, // 18: milton_prism.services.migration.v1.MigrationService.AssessMigrability:input_type -> milton_prism.services.migration.v1.AssessMigrabilityRequest
+	14, // 19: milton_prism.services.migration.v1.MigrationService.SetMigrabilityOverride:input_type -> milton_prism.services.migration.v1.SetMigrabilityOverrideRequest
+	17, // 20: milton_prism.services.migration.v1.MigrationService.GenerateRestructuringRoadmap:input_type -> milton_prism.services.migration.v1.GenerateRestructuringRoadmapRequest
+	15, // 21: milton_prism.services.migration.v1.MigrationService.GetGenerationArtifacts:input_type -> milton_prism.services.migration.v1.GetGenerationArtifactsRequest
+	19, // 22: milton_prism.services.migration.v1.MigrationService.EnrichRoadmap:input_type -> milton_prism.services.migration.v1.EnrichRoadmapRequest
+	21, // 23: milton_prism.services.migration.v1.MigrationService.GenerateBlueprint:input_type -> milton_prism.services.migration.v1.GenerateBlueprintRequest
+	20, // 24: milton_prism.services.migration.v1.MigrationService.ExportActionPlanPrompt:input_type -> milton_prism.services.migration.v1.ExportActionPlanPromptRequest
+	18, // 25: milton_prism.services.migration.v1.MigrationService.DownloadDeliverable:input_type -> milton_prism.services.migration.v1.DownloadDeliverableRequest
+	22, // 26: milton_prism.services.migration.v1.MigrationService.CreateMigration:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 27: milton_prism.services.migration.v1.MigrationService.GetMigration:output_type -> milton_prism.types.migration.v1.Migration
+	3,  // 28: milton_prism.services.migration.v1.MigrationService.ListMigrations:output_type -> milton_prism.services.migration.v1.ListMigrationsResponse
+	27, // 29: milton_prism.services.migration.v1.MigrationService.DeleteMigration:output_type -> google.protobuf.Empty
+	22, // 30: milton_prism.services.migration.v1.MigrationService.StartMigration:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 31: milton_prism.services.migration.v1.MigrationService.RunMigration:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 32: milton_prism.services.migration.v1.MigrationService.ApproveDesign:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 33: milton_prism.services.migration.v1.MigrationService.RetryGeneration:output_type -> milton_prism.types.migration.v1.Migration
+	28, // 34: milton_prism.services.migration.v1.MigrationService.GetGenerationPackage:output_type -> milton_prism.types.migration.v1.GenerationPackage
+	22, // 35: milton_prism.services.migration.v1.MigrationService.CancelMigration:output_type -> milton_prism.types.migration.v1.Migration
+	12, // 36: milton_prism.services.migration.v1.MigrationService.PublishMigration:output_type -> milton_prism.services.migration.v1.PublishMigrationResponse
+	22, // 37: milton_prism.services.migration.v1.MigrationService.AssessMigrability:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 38: milton_prism.services.migration.v1.MigrationService.SetMigrabilityOverride:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 39: milton_prism.services.migration.v1.MigrationService.GenerateRestructuringRoadmap:output_type -> milton_prism.types.migration.v1.Migration
+	16, // 40: milton_prism.services.migration.v1.MigrationService.GetGenerationArtifacts:output_type -> milton_prism.services.migration.v1.GetGenerationArtifactsResponse
+	22, // 41: milton_prism.services.migration.v1.MigrationService.EnrichRoadmap:output_type -> milton_prism.types.migration.v1.Migration
+	22, // 42: milton_prism.services.migration.v1.MigrationService.GenerateBlueprint:output_type -> milton_prism.types.migration.v1.Migration
+	29, // 43: milton_prism.services.migration.v1.MigrationService.ExportActionPlanPrompt:output_type -> google.api.HttpBody
+	29, // 44: milton_prism.services.migration.v1.MigrationService.DownloadDeliverable:output_type -> google.api.HttpBody
+	26, // [26:45] is the sub-list for method output_type
+	7,  // [7:26] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name
 	7,  // [7:7] is the sub-list for extension extendee
 	0,  // [0:7] is the sub-list for field type_name
@@ -1354,7 +1421,7 @@ func file_milton_prism_services_migration_v1_migration_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_services_migration_v1_migration_service_proto_rawDesc), len(file_milton_prism_services_migration_v1_migration_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

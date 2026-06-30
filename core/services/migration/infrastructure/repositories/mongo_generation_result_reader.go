@@ -29,6 +29,7 @@ type generationResultDoc struct {
 	Status             string  `bson:"status"`
 	GatesPassed        bool    `bson:"gates_passed"`
 	FailureReason      string  `bson:"failure_reason"`
+	FailureClass       string  `bson:"failure_class,omitempty"`
 	TotalCostUSD       float64 `bson:"total_cost_usd"`
 	GeneratedFileCount int     `bson:"generated_file_count"`
 	AgentRawResult     string  `bson:"agent_raw_result,omitempty"`
@@ -60,6 +61,7 @@ func (r *MongoGenerationResultReader) ReadResults(ctx context.Context, migration
 			Status:             d.Status,
 			GatesPassed:        d.GatesPassed,
 			FailureReason:      d.FailureReason,
+			FailureClass:       failureClassFromString(d.FailureClass),
 			TotalCostUsd:       d.TotalCostUSD,
 			GeneratedFileCount: int32(d.GeneratedFileCount),
 			AgentRawResult:     d.AgentRawResult,
@@ -73,37 +75,48 @@ func (r *MongoGenerationResultReader) ReadResults(ctx context.Context, migration
 	return records, nil
 }
 
-// ReadUsageTotals aggregates the token/cost footprint of every per-service
+// failureClassFromString maps the persisted failure_class token (written by the
+// generation worker) to the proto FailureClass enum surfaced read-only on each
+// ServiceGenerationRecord. An empty/unknown token maps to UNSPECIFIED.
+func failureClassFromString(s string) migrationv1.FailureClass {
+	switch s {
+	case "transient":
+		return migrationv1.FailureClass_FAILURE_CLASS_TRANSIENT
+	case "design":
+		return migrationv1.FailureClass_FAILURE_CLASS_DESIGN
+	default:
+		return migrationv1.FailureClass_FAILURE_CLASS_UNSPECIFIED
+	}
+}
+
+// ReadServiceUsages returns the per-service token/cost footprint of every
 // generation record for a migration. TokensIn sums all input tiers (fresh +
-// cache-creation + cache-read); TokensOut sums output tokens; RealCostUSD sums
-// the agent-reported total_cost_usd (>0 only in apikey mode); Model is the
-// dominant model across the records (the one with the largest token footprint),
-// used to estimate cost by token when RealCostUSD is 0.
-func (r *MongoGenerationResultReader) ReadUsageTotals(ctx context.Context, migrationID uint64) (ports.GenerationUsageTotals, error) {
+// cache-creation + cache-read); TokensOut is the output tokens; RealCostUSD is
+// the agent-reported total_cost_usd (>0 only in apikey mode); Model is the model
+// id reported for the run, used to estimate cost by token when RealCostUSD is 0.
+// Status is carried so the biller only charges done services.
+func (r *MongoGenerationResultReader) ReadServiceUsages(ctx context.Context, migrationID uint64) ([]ports.ServiceGenerationUsage, error) {
 	cur, err := r.coll.Find(ctx, bson.M{"migration_id": migrationID})
 	if err != nil {
-		return ports.GenerationUsageTotals{}, fmt.Errorf("generation-result-reader: usage find migration_id=%d: %w", migrationID, err)
+		return nil, fmt.Errorf("generation-result-reader: usage find migration_id=%d: %w", migrationID, err)
 	}
 	defer cur.Close(ctx)
 
 	var docs []generationResultDoc
 	if err := cur.All(ctx, &docs); err != nil {
-		return ports.GenerationUsageTotals{}, fmt.Errorf("generation-result-reader: usage decode migration_id=%d: %w", migrationID, err)
+		return nil, fmt.Errorf("generation-result-reader: usage decode migration_id=%d: %w", migrationID, err)
 	}
 
-	var totals ports.GenerationUsageTotals
-	var dominantTokens int64 = -1
-	for _, d := range docs {
-		totals.Records++
-		totals.TokensIn += d.InputTokens + d.CacheCreationInputTokens + d.CacheReadInputTokens
-		totals.TokensOut += d.OutputTokens
-		totals.RealCostUSD += d.TotalCostUSD
-		// Attribute the dominant model: the record consuming the most tokens.
-		recTokens := d.InputTokens + d.CacheCreationInputTokens + d.CacheReadInputTokens + d.OutputTokens
-		if d.Model != "" && (recTokens > dominantTokens || (recTokens == dominantTokens && d.Model < totals.Model)) {
-			totals.Model = d.Model
-			dominantTokens = recTokens
+	out := make([]ports.ServiceGenerationUsage, len(docs))
+	for i, d := range docs {
+		out[i] = ports.ServiceGenerationUsage{
+			ServiceName: d.ServiceName,
+			Status:      d.Status,
+			TokensIn:    d.InputTokens + d.CacheCreationInputTokens + d.CacheReadInputTokens,
+			TokensOut:   d.OutputTokens,
+			RealCostUSD: d.TotalCostUSD,
+			Model:       d.Model,
 		}
 	}
-	return totals, nil
+	return out, nil
 }

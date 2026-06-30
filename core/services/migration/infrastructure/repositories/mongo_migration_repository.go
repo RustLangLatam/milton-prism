@@ -309,6 +309,22 @@ func (r *MongoMigrationRepository) UpdateState(ctx context.Context, identifier u
 	return nil
 }
 
+func (r *MongoMigrationRepository) ClearFailureReason(ctx context.Context, identifier uint64) error {
+	now := primitive.NewDateTimeFromTime(time.Now().UTC())
+	res, err := r.coll.UpdateOne(
+		ctx,
+		bson.M{"identifier": identifier, "delete_time": nil},
+		bson.M{"$set": bson.M{"update_time": now}, "$unset": bson.M{"failure_reason": ""}},
+	)
+	if err != nil {
+		return fmt.Errorf("migration: clear_failure_reason failed: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrMigrationNotFound
+	}
+	return nil
+}
+
 func (r *MongoMigrationRepository) SetRepositoryURL(ctx context.Context, identifier uint64, url string) error {
 	res, err := r.coll.UpdateOne(
 		ctx,

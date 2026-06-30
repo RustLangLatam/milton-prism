@@ -16,11 +16,13 @@ type BillingClient interface {
 	// token must be forwarded so the billing service can authorize the lookup.
 	GetUserPlan(ctx context.Context, userID uint64) (*billingv1.Plan, error)
 
-	// CountUsageRecords returns how many usage records exist for a migration with
-	// the given operation. Used to make GENERATION spend recording idempotent:
-	// the finalize routine skips recording when a GENERATION record already
-	// exists for the migration. The caller's auth token authorizes the lookup.
-	CountUsageRecords(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (int, error)
+	// ListBilledServiceNames returns the set of service names that already have a
+	// usage record for (migrationID, op). It makes per-service GENERATION billing
+	// idempotent: the finalize routine skips a service that is already billed, so
+	// a service is charged exactly once across generation retries. Records with an
+	// empty service_name are normalized out. The caller's auth token authorizes
+	// the lookup.
+	ListBilledServiceNames(ctx context.Context, migrationID uint64, op billingv1.UsageOperation) (map[string]bool, error)
 
 	UsageRecorder
 }
@@ -34,6 +36,10 @@ type BillingClient interface {
 type UsageSpend struct {
 	UserID      uint64
 	MigrationID uint64
+	// ServiceName attributes the spend to a single service within the migration
+	// (empty = not service-scoped). GENERATION spend is recorded per-service so
+	// billing stays idempotent per (migration_id, service_name) across retries.
+	ServiceName string
 	Operation   billingv1.UsageOperation
 	TokensIn    int64
 	TokensOut   int64

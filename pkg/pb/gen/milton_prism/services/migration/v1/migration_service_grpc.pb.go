@@ -29,6 +29,7 @@ const (
 	MigrationService_StartMigration_FullMethodName               = "/milton_prism.services.migration.v1.MigrationService/StartMigration"
 	MigrationService_RunMigration_FullMethodName                 = "/milton_prism.services.migration.v1.MigrationService/RunMigration"
 	MigrationService_ApproveDesign_FullMethodName                = "/milton_prism.services.migration.v1.MigrationService/ApproveDesign"
+	MigrationService_RetryGeneration_FullMethodName              = "/milton_prism.services.migration.v1.MigrationService/RetryGeneration"
 	MigrationService_GetGenerationPackage_FullMethodName         = "/milton_prism.services.migration.v1.MigrationService/GetGenerationPackage"
 	MigrationService_CancelMigration_FullMethodName              = "/milton_prism.services.migration.v1.MigrationService/CancelMigration"
 	MigrationService_PublishMigration_FullMethodName             = "/milton_prism.services.migration.v1.MigrationService/PublishMigration"
@@ -103,6 +104,18 @@ type MigrationServiceClient interface {
 	// When approved is false the migration is set to CANCELLED.
 	// Only the owner or a system user may approve or reject.
 	ApproveDesign(ctx context.Context, in *ApproveDesignRequest, opts ...grpc.CallOption) (*v1.Migration, error)
+	// RetryGeneration re-runs autonomous generation for the FAILED services of a
+	// migration that is in the FAILED state.
+	//
+	// It transitions the migration back to GENERATING and re-enqueues a generation
+	// job scoped to the failed services only — services that already completed are
+	// never regenerated (the worker skips them via its done-set). When
+	// service_filter is empty every failed service is retried; when non-empty only
+	// the named services that are actually in the failed set are retried.
+	//
+	// Requires the migration to be in FAILED state and to have at least one failed
+	// service record. Only the owner or a system user may call this.
+	RetryGeneration(ctx context.Context, in *RetryGenerationRequest, opts ...grpc.CallOption) (*v1.Migration, error)
 	// GetGenerationPackage assembles and returns the full generation package for a
 	// GENERATING migration: proto contracts, boundary specs, and profile metadata
 	// for every proposed service.
@@ -260,6 +273,16 @@ func (c *migrationServiceClient) ApproveDesign(ctx context.Context, in *ApproveD
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(v1.Migration)
 	err := c.cc.Invoke(ctx, MigrationService_ApproveDesign_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *migrationServiceClient) RetryGeneration(ctx context.Context, in *RetryGenerationRequest, opts ...grpc.CallOption) (*v1.Migration, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(v1.Migration)
+	err := c.cc.Invoke(ctx, MigrationService_RetryGeneration_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -437,6 +460,18 @@ type MigrationServiceServer interface {
 	// When approved is false the migration is set to CANCELLED.
 	// Only the owner or a system user may approve or reject.
 	ApproveDesign(context.Context, *ApproveDesignRequest) (*v1.Migration, error)
+	// RetryGeneration re-runs autonomous generation for the FAILED services of a
+	// migration that is in the FAILED state.
+	//
+	// It transitions the migration back to GENERATING and re-enqueues a generation
+	// job scoped to the failed services only — services that already completed are
+	// never regenerated (the worker skips them via its done-set). When
+	// service_filter is empty every failed service is retried; when non-empty only
+	// the named services that are actually in the failed set are retried.
+	//
+	// Requires the migration to be in FAILED state and to have at least one failed
+	// service record. Only the owner or a system user may call this.
+	RetryGeneration(context.Context, *RetryGenerationRequest) (*v1.Migration, error)
 	// GetGenerationPackage assembles and returns the full generation package for a
 	// GENERATING migration: proto contracts, boundary specs, and profile metadata
 	// for every proposed service.
@@ -550,6 +585,9 @@ func (UnimplementedMigrationServiceServer) RunMigration(context.Context, *RunMig
 }
 func (UnimplementedMigrationServiceServer) ApproveDesign(context.Context, *ApproveDesignRequest) (*v1.Migration, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApproveDesign not implemented")
+}
+func (UnimplementedMigrationServiceServer) RetryGeneration(context.Context, *RetryGenerationRequest) (*v1.Migration, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetryGeneration not implemented")
 }
 func (UnimplementedMigrationServiceServer) GetGenerationPackage(context.Context, *GetGenerationPackageRequest) (*v1.GenerationPackage, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetGenerationPackage not implemented")
@@ -727,6 +765,24 @@ func _MigrationService_ApproveDesign_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MigrationServiceServer).ApproveDesign(ctx, req.(*ApproveDesignRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MigrationService_RetryGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetryGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MigrationServiceServer).RetryGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MigrationService_RetryGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MigrationServiceServer).RetryGeneration(ctx, req.(*RetryGenerationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -963,6 +1019,10 @@ var MigrationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ApproveDesign",
 			Handler:    _MigrationService_ApproveDesign_Handler,
+		},
+		{
+			MethodName: "RetryGeneration",
+			Handler:    _MigrationService_RetryGeneration_Handler,
 		},
 		{
 			MethodName: "GetGenerationPackage",

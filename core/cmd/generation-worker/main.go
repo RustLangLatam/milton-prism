@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	services "milton_prism/core/internal/svc"
+	"milton_prism/core/shared/cache_client"
+	"milton_prism/core/shared/event_bus"
 	genapp "milton_prism/core/worker/generation/application"
 	genadapters "milton_prism/core/worker/generation/infrastructure/adapters"
 	genagent "milton_prism/core/worker/generation/infrastructure/agent"
@@ -46,6 +48,20 @@ func main() {
 	packageReader := genadapters.NewMongoGenerationPackageReader(db)
 	store := genadapters.NewMongoGenerationStore(db)
 	stateUpdater := genadapters.NewMongoMigrationStateUpdater(db)
+
+	// Real-time event publisher (best-effort migration.state_changed over KeyDB
+	// pub-sub). The generation-worker owns the terminal GENERATING→READY/FAILED
+	// write, so this is the only emitter for generation completion. Reuses the
+	// same KeyDB the worker already reaches for asynq. Nil/unreachable [cache] ⇒
+	// no publisher wired, emission degrades to a no-op (never crashes the worker).
+	if cfg.Cache != nil {
+		if pool, err := cache_client.NewPool(cfg.Cache); err != nil {
+			log.Warningf("generation-worker: event publisher disabled (cache pool init failed): error=%v", err)
+		} else {
+			stateUpdater = stateUpdater.WithEventPublisher(event_bus.NewPublisher(pool))
+			log.Infof("generation-worker: real-time event publisher enabled (KeyDB pub-sub)")
+		}
+	}
 
 	// Docker host selection (Camino B, pending B2):
 	//   - PRISM_DOCKER_HOST unset  → spawn ephemeral containers on the LOCAL daemon

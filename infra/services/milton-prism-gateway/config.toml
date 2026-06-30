@@ -17,37 +17,50 @@ exposeHeaders  = ["Authorization", "Refresh", "MiltonPrismApiKey"]
 port = 9000
 
 [[grpcServices]]
-name        = "identity"
-host        = "identity-services"
-port        = 50051
-enabled     = true
-healthCheck = false
+name             = "identity"
+host             = "identity-services"
+port             = 50051
+enabled          = true
+healthCheck      = false
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250
 
 [[grpcServices]]
-name        = "repository"
-host        = "repository-services"
-port        = 50051
-enabled     = true
-healthCheck = false
+name             = "repository"
+host             = "repository-services"
+port             = 50051
+enabled          = true
+healthCheck      = false
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250
 
+# migration responses carry generated source files (whole microservice code) and
+# can far exceed the 1 MiB client default — keep this dial generous.
 [[grpcServices]]
-name        = "migration"
-host        = "migration-services"
-port        = 50051
-enabled     = true
-healthCheck = false
+name             = "migration"
+host             = "migration-services"
+port             = 50051
+enabled          = true
+healthCheck      = false
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250
 
+# analysis responses carry coupling graphs / module cards which can be large.
 [[grpcServices]]
-name        = "analysis"
-host        = "analysis-services"
-port        = 50051
-enabled     = true
-healthCheck = false
+name             = "analysis"
+host             = "analysis-services"
+port             = 50051
+enabled          = true
+healthCheck      = false
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250
 
 # billing is co-located on the analysis service's gRPC server (same endpoint).
 [[grpcServices]]
-name        = "billing"
-host        = "analysis-services"
-port        = 50051
-enabled     = true
-healthCheck = false
+name             = "billing"
+host             = "analysis-services"
+port             = 50051
+enabled          = true
+healthCheck      = false
+maxRecvMsgSizeMb = 250
+maxSendMsgSizeMb = 250

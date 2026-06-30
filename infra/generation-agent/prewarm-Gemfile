@@ -1,0 +1,32 @@
+# Milton Prism — Ruby generation-profile gem pre-warm Gemfile.
+#
+# This Gemfile is `bundle install`-ed into the SHARED, world-readable GEM_HOME
+# (/usr/local/bundle) at image-build time so a generated Ruby service's runtime
+# `bundle install` resolves OFFLINE from the warmed gems (mirroring the warmed
+# /usr/local/m2 for Java). It declares EXACTLY the Ruby profile's gem set
+# (milton-prism-ruby-profile.md §A.1.1). Native-extension gems (grpc, pg, mysql2,
+# bson via mongoid) compile C/C++ against glibc here — the Debian base makes that
+# work. Keep this in lockstep with the profile's pinned gem table.
+source "https://rubygems.org"
+
+# gRPC core + codegen (the grpc gem profile's primary transport).
+gem "grpc"
+gem "grpc-tools"        # provides grpc_tools_ruby_protoc
+gem "google-protobuf"
+
+# Stores: Mongoid (Mongo, default cert cell) + ActiveRecord (SQL cells).
+gem "mongoid"
+gem "activerecord"
+gem "pg"                # PostgreSQL driver (native ext, libpq-dev)
+gem "mysql2"            # MySQL/MariaDB driver (native ext, default-libmysqlclient-dev)
+
+# HTTP transport (Rails API|Sinatra). Sinatra + Puma + Rackup are the light,
+# reliably-warmable path; the HTTP prompt targets "Rails API or Sinatra".
+gem "sinatra"
+gem "rackup"
+gem "puma"
+
+# Auth + config + tests.
+gem "jwt"
+gem "dotenv"
+gem "rspec"

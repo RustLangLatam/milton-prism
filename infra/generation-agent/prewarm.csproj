@@ -1,0 +1,53 @@
+<!-- Milton Prism — C# generation-profile NuGet + Grpc.Tools codegen pre-warm project.
+
+     This .csproj is `dotnet restore`d + `dotnet build`t into the SHARED,
+     world-readable NUGET_PACKAGES cache (/usr/local/nuget) at image-build time so
+     a generated C# service's runtime `dotnet build` restores OFFLINE from the
+     warmed packages + the cached Roslyn analyzer graph (mirroring the warmed
+     /usr/local/m2 for Java and /usr/local/bundle for Ruby). It references EXACTLY
+     the C# profile's package set (milton-prism-csharp-profile.md §A.1.1).
+
+     It builds as a Library (Microsoft.NET.Sdk) so no Program.cs/Main is needed; the
+     <Protobuf> item with GrpcServices="Both" forces Grpc.Tools to run protoc +
+     grpc_csharp_plugin (glibc :exe artifacts) so the build emits Warm.cs +
+     WarmGrpc.cs — the offline C# gRPC codegen acceptance proof (the C# homologue of
+     the Java WarmServiceGrpc.java / Ruby warm_services_pb.rb guard).
+
+     Floating versions (major-pinned) keep the warm build resilient to point
+     releases while staying on the net9 line. Keep in lockstep with the profile's
+     package table. -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ASP.NET Core shared framework, needed by Grpc.AspNetCore (also pulled in
+         transitively; declared explicitly so the warm graph is unambiguous). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+
+    <!-- gRPC server + codegen (the grpc-dotnet profile's primary transport). -->
+    <PackageReference Include="Grpc.AspNetCore" Version="2.*" />
+    <PackageReference Include="Grpc.Tools" Version="2.*" PrivateAssets="all" />
+    <PackageReference Include="Google.Protobuf" Version="3.*" />
+
+    <!-- Stores: MongoDB.Driver (Mongo, default cert cell) + EF Core (SQL cells). -->
+    <PackageReference Include="MongoDB.Driver" Version="3.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.*" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.*" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.*" />
+
+    <!-- Auth (JWT bearer). -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Carries a gRPC `service` so Grpc.Tools emits Warm.cs + WarmGrpc.cs at build. -->
+    <Protobuf Include="warm.proto" GrpcServices="Both" />
+  </ItemGroup>
+
+</Project>

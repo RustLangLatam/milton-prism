@@ -1,6 +1,9 @@
 package assembler
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -234,6 +237,64 @@ func TestShipsBufLock_AllProfiles(t *testing.T) {
 				t.Errorf("%s deliverable buf.lock is not the canonical skeleton lock:\n got=%q\nwant=%q", tc.profile, string(lock), wantLock)
 			}
 		})
+	}
+}
+
+// TestEmbeddedBufLockMatchesCanonical is the drift guard for the embedded
+// build-time fallback copy of buf.lock. embeddedBufLock (//go:embed
+// embedded/buf.lock) MUST stay byte-identical to the repo's canonical
+// protobuf/buf.lock, otherwise a `buf dep update` that updates the real lock but
+// not the embedded copy would ship a stale lock whenever the perms fallback fires.
+func TestEmbeddedBufLockMatchesCanonical(t *testing.T) {
+	if len(embeddedBufLock) == 0 {
+		t.Fatal("embeddedBufLock is empty — //go:embed embedded/buf.lock did not compile in the canonical lock")
+	}
+	// The package dir is core/services/migration/application/assembler — five
+	// levels below the repo root that holds protobuf/buf.lock.
+	canonical := filepath.Join("..", "..", "..", "..", "..", "protobuf", "buf.lock")
+	want, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatalf("read canonical %s: %v", canonical, err)
+	}
+	if !bytes.Equal(embeddedBufLock, want) {
+		t.Errorf("embedded/buf.lock has drifted from protobuf/buf.lock — re-copy it.\n embedded=%q\ncanonical=%q", string(embeddedBufLock), string(want))
+	}
+}
+
+// TestShipsBufLock_EmbeddedFallback proves the perms-independent path: when the
+// on-disk buf.lock cannot be read at download time (here simulated by removing it
+// from the skeleton root, the same observable state as an EACCES on a 0600 file
+// the distroless container cannot read), the deliverable STILL ships buf.lock —
+// the embedded canonical copy — so the buf module's remote deps stay resolvable.
+func TestShipsBufLock_EmbeddedFallback(t *testing.T) {
+	root := buildProtoClosureFixture(t)
+	// Simulate the unreadable on-disk lock: remove it so every disk read path
+	// (walkSkeleton + the shipBufLock re-read) fails to obtain it.
+	if err := os.Remove(filepath.Join(root, "protobuf", "buf.lock")); err != nil {
+		t.Fatalf("remove fixture buf.lock: %v", err)
+	}
+
+	a := New(root, false, "go", "grpc", "")
+	files, err := a.Assemble([]InputFile{
+		{Path: "core/cmd/user-services/main.go", Content: "package main\n"},
+		{Path: "protobuf/proto/milton_prism/services/user/v1/user_service.proto", Content: userServiceProtoArtifact},
+	})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+
+	var haveLock bool
+	var lock []byte
+	for _, f := range files {
+		if f.Path == "protobuf/buf.lock" {
+			haveLock, lock = true, f.Content
+		}
+	}
+	if !haveLock {
+		t.Fatal("buf.lock did not ship when the on-disk lock was unreadable — embedded fallback failed")
+	}
+	if !bytes.Equal(lock, embeddedBufLock) {
+		t.Errorf("fallback shipped a non-embedded lock:\n got=%q\nwant(embedded)=%q", string(lock), string(embeddedBufLock))
 	}
 }
 

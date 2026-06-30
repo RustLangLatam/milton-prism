@@ -13,6 +13,7 @@
 package assembler
 
 import (
+	_ "embed"
 	"fmt"
 	"io/fs"
 	"os"
@@ -22,6 +23,27 @@ import (
 
 	applog "milton_prism/pkg/log"
 )
+
+// embeddedBufLock is a build-time copy of the canonical protobuf/buf.lock,
+// compiled INTO the migration-services binary. It is the perms-independent
+// fallback used by shipBufLockAndCleanBufYaml when the on-disk buf.lock cannot
+// be read at download time.
+//
+// Why this exists: PRISM_MONOREPO_PATH is bind-mounted read-only into the
+// distroless container (uid 65532), but the on-disk buf.lock can carry a
+// restrictive 0600 mode (e.g. right after `buf dep update` regenerates it under
+// a tight umask) owned by a different host uid, so os.ReadFile returns EACCES.
+// Both disk read paths (walkSkeleton and the shipBufLock re-read) tolerate that
+// error and skip the file, which silently dropped buf.lock from EVERY downloaded
+// deliverable even though buf.yaml still declared remote deps — leaving the
+// module unresolvable offline. Embedding the lock guarantees it always ships.
+//
+// The embedded copy MUST stay byte-identical to protobuf/buf.lock; the
+// TestEmbeddedBufLockMatchesCanonical guard fails if it drifts (e.g. after a buf
+// dep bump that updates the real lock but not this copy).
+//
+//go:embed embedded/buf.lock
+var embeddedBufLock []byte
 
 // InputFile is one generated source file from generation_file_artifacts.
 type InputFile struct {
@@ -3516,11 +3538,19 @@ func shipBufLockAndCleanBufYaml(merged map[string][]byte, skeletonRoot string) {
 	if _, hasYaml := merged["protobuf/buf.yaml"]; !hasYaml {
 		return // no buf module shipped in this deliverable
 	}
-	// Ship buf.lock so remote deps resolve.
+	// Ship buf.lock so remote deps resolve. Prefer the on-disk copy from the
+	// skeleton root (always the current lock), but fall back to the embedded
+	// build-time copy when the disk read fails — the bind-mounted lock can be a
+	// 0600 file owned by another uid that the distroless container cannot read
+	// (EACCES), and without this fallback buf.lock silently never ships, leaving
+	// the deliverable's buf module unable to resolve its remote buf.build deps.
 	if _, has := merged["protobuf/buf.lock"]; !has {
 		abs := filepath.Join(skeletonRoot, "protobuf", "buf.lock")
 		if data, err := os.ReadFile(abs); err == nil {
 			merged["protobuf/buf.lock"] = data
+		} else if len(embeddedBufLock) > 0 {
+			applog.Warningf("assembler: buf.lock unreadable at %s (%v) — shipping embedded canonical copy so remote buf deps stay resolvable", abs, err)
+			merged["protobuf/buf.lock"] = embeddedBufLock
 		}
 	}
 	// Clean dangling ignore entries from buf.yaml.

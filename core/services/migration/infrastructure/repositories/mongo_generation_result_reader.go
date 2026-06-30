@@ -40,6 +40,29 @@ type generationResultDoc struct {
 	OutputTokens             int64 `bson:"output_tokens"`
 
 	Model string `bson:"model,omitempty"`
+
+	// PortCoverage is the Fase-4 deterministic port-coverage summary, nil for
+	// pre-Fase-4 records (no bar surfaced).
+	PortCoverage *portCoverageDoc `bson:"port_coverage,omitempty"`
+}
+
+// portCoverageDoc mirrors the worker-persisted port_coverage sub-document so the
+// read path can surface it on the proto record.
+type portCoverageDoc struct {
+	SourceMethodCount int          `bson:"source_method_count"`
+	PortGapCount      int          `bson:"port_gap_count"`
+	PortedMethodCount int          `bson:"ported_method_count"`
+	CoverageRatio     float64      `bson:"coverage_ratio"`
+	Measured          bool         `bson:"measured"`
+	Gaps              []portGapDoc `bson:"gaps,omitempty"`
+}
+
+// portGapDoc is one per-marker PORT-GAP detail row inside portCoverageDoc.
+type portGapDoc struct {
+	File   string `bson:"file"`
+	Line   int    `bson:"line"`
+	Symbol string `bson:"symbol,omitempty"`
+	Note   string `bson:"note,omitempty"`
 }
 
 func (r *MongoGenerationResultReader) ReadResults(ctx context.Context, migrationID uint64) ([]*migrationv1.ServiceGenerationRecord, error) {
@@ -70,9 +93,40 @@ func (r *MongoGenerationResultReader) ReadResults(ctx context.Context, migration
 			CacheCreationInputTokens: d.CacheCreationInputTokens,
 			CacheReadInputTokens:     d.CacheReadInputTokens,
 			OutputTokens:             d.OutputTokens,
+
+			PortCoverage: portCoverageToProto(d.PortCoverage),
 		}
 	}
 	return records, nil
+}
+
+// portCoverageToProto maps the persisted port_coverage sub-document (written by
+// the generation worker, Fase 4) to the proto PortCoverage surfaced read-only on
+// each ServiceGenerationRecord. A nil doc (pre-Fase-4 record) yields nil so the
+// panel renders no bar.
+func portCoverageToProto(d *portCoverageDoc) *migrationv1.PortCoverage {
+	if d == nil {
+		return nil
+	}
+	pc := &migrationv1.PortCoverage{
+		SourceMethodCount: int32(d.SourceMethodCount),
+		PortGapCount:      int32(d.PortGapCount),
+		PortedMethodCount: int32(d.PortedMethodCount),
+		CoverageRatio:     d.CoverageRatio,
+		Measured:          d.Measured,
+	}
+	if len(d.Gaps) > 0 {
+		pc.Gaps = make([]*migrationv1.PortGap, len(d.Gaps))
+		for i, g := range d.Gaps {
+			pc.Gaps[i] = &migrationv1.PortGap{
+				File:   g.File,
+				Line:   int32(g.Line),
+				Symbol: g.Symbol,
+				Note:   g.Note,
+			}
+		}
+	}
+	return pc
 }
 
 // failureClassFromString maps the persisted failure_class token (written by the

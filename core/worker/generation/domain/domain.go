@@ -59,6 +59,10 @@ type ServiceGenerationRecord struct {
 	// AgentRawResult is the final "result" text from Claude Code's JSON output.
 	// Preserved for debugging and post-hoc inspection.
 	AgentRawResult string
+	// PortCoverage is the deterministic port-coverage summary (Fase 4), computed
+	// via ComputePortCoverage at persist time for every terminal status. The
+	// PortCoverage type is defined in port_coverage.go in this package.
+	PortCoverage PortCoverage
 }
 
 // JobPayload is the Asynq task payload for generation:run jobs.

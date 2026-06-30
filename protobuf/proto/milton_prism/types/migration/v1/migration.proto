@@ -803,6 +803,63 @@ message ServiceGenerationRecord {
     (google.api.field_behavior) = OUTPUT_ONLY,
     (openapi.v3.property) = {description: "Failure classification (TRANSIENT or DESIGN) when status is failed. UNSPECIFIED otherwise."}
   ];
+
+  // Deterministic per-service port-coverage summary computed worker-side at
+  // persist time (Fase 4). Nil for pre-Fase-4 records (no bar rendered).
+  PortCoverage port_coverage = 13 [
+    (google.api.field_behavior) = OUTPUT_ONLY,
+    (openapi.v3.property) = {description: "Deterministic port-coverage summary (signal, not audited %). Absent for pre-Fase-4 records."}
+  ];
+}
+
+// PortCoverage is the deterministic per-service port-coverage summary computed
+// worker-side at generation persist time (Fase 4). coverage_ratio is only
+// meaningful when measured is true; measured=false ⇒ contract-only (no captured
+// source symbols) and the panel renders "contract-only", never 0% or 100%.
+message PortCoverage {
+  option (openapi.v3.schema) = {
+    title: "PortCoverage"
+    description: "Deterministic per-service port-coverage summary (signal, not an audited percentage)."
+  };
+
+  // Denominator: distinct domain-role source symbols. 0 ⇒ contract-only.
+  int32 source_method_count = 1 [(openapi.v3.property) = {description: "Distinct domain-role source symbols (denominator). 0 when no source captured."}];
+
+  // Total PORT-GAP markers across this service's generated files (exact, uncapped).
+  int32 port_gap_count = 2 [(openapi.v3.property) = {description: "Total PORT-GAP markers across the generated files."}];
+
+  // max(source_method_count - port_gap_count, 0).
+  int32 ported_method_count = 3 [(openapi.v3.property) = {description: "Ported method-equivalents: max(source_method_count - port_gap_count, 0)."}];
+
+  // ported/source clamped to [0,1]; meaningful only when measured is true.
+  double coverage_ratio = 4 [(openapi.v3.property) = {description: "Coverage ratio (0..1). Meaningful only when measured is true."}];
+
+  // false ⇒ contract-only; render "contract-only", not 0/100%.
+  bool measured = 5 [(openapi.v3.property) = {description: "False ⇒ contract-only (no source to port); render 'contract-only', not a percentage."}];
+
+  // Per-marker detail, capped for UI payload safety (count stays exact).
+  repeated PortGap gaps = 6 [(openapi.v3.property) = {description: "Per-marker detail, capped at 200 entries; port_gap_count stays exact."}];
+}
+
+// PortGap is the per-marker detail for one PORT-GAP comment found in the
+// generated deliverable. Best-effort UI enrichment; never moves the bar.
+message PortGap {
+  option (openapi.v3.schema) = {
+    title: "PortGap"
+    description: "Detail for one PORT-GAP marker found in a generated file."
+  };
+
+  // Generated artifact path the marker was found in.
+  string file = 1 [(openapi.v3.property) = {description: "Generated file path containing the marker."}];
+
+  // 1-based line number of the marker within that file.
+  int32 line = 2 [(openapi.v3.property) = {description: "1-based line of the marker."}];
+
+  // Best-effort nearest source symbol enclosing the marker; "" when none.
+  string symbol = 3 [(openapi.v3.property) = {description: "Best-effort nearest source symbol; empty when none found."}];
+
+  // Trimmed text following "PORT-GAP:" on the marker line.
+  string note = 4 [(openapi.v3.property) = {description: "Text following 'PORT-GAP:' on the marker line."}];
 }
 
 // FileArtifact represents one source file produced by the autonomous generation agent.

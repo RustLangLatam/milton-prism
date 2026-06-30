@@ -70,7 +70,28 @@ type generationResultDoc struct {
 	OutputTokens             int64              `bson:"output_tokens"`
 	Model                    string             `bson:"model,omitempty"`
 	AgentRawResult           string             `bson:"agent_raw_result,omitempty"`
+	PortCoverage             *portCoverageDoc   `bson:"port_coverage,omitempty"`
 	UpdatedAt                primitive.DateTime `bson:"updated_at"`
+}
+
+// portCoverageDoc is the persisted Fase-4 port-coverage summary sub-document.
+// Mirrors workerdomain.PortCoverage; omitempty on the parent pointer keeps
+// pre-Fase-4 records free of the field.
+type portCoverageDoc struct {
+	SourceMethodCount int          `bson:"source_method_count"`
+	PortGapCount      int          `bson:"port_gap_count"`
+	PortedMethodCount int          `bson:"ported_method_count"`
+	CoverageRatio     float64      `bson:"coverage_ratio"`
+	Measured          bool         `bson:"measured"`
+	Gaps              []portGapDoc `bson:"gaps,omitempty"`
+}
+
+// portGapDoc is one per-marker PORT-GAP detail row inside portCoverageDoc.
+type portGapDoc struct {
+	File   string `bson:"file"`
+	Line   int    `bson:"line"`
+	Symbol string `bson:"symbol,omitempty"`
+	Note   string `bson:"note,omitempty"`
 }
 
 // generationFileArtifactDoc is one row in generation_file_artifacts.
@@ -100,6 +121,7 @@ func (s *MongoGenerationStore) UpsertRecord(ctx context.Context, rec workerdomai
 		OutputTokens:             rec.OutputTokens,
 		Model:                    rec.Model,
 		AgentRawResult:           rec.AgentRawResult,
+		PortCoverage:             portCoverageToDoc(rec.PortCoverage),
 		UpdatedAt:                primitive.NewDateTimeFromTime(time.Now().UTC()),
 	}
 	filter := bson.M{"migration_id": rec.MigrationID, "service_name": rec.ServiceName}
@@ -137,9 +159,54 @@ func (s *MongoGenerationStore) ListRecords(ctx context.Context, migrationID uint
 			OutputTokens:             d.OutputTokens,
 			Model:                    d.Model,
 			AgentRawResult:           d.AgentRawResult,
+			PortCoverage:             portCoverageFromDoc(d.PortCoverage),
 		}
 	}
 	return out, nil
+}
+
+// portCoverageToDoc maps the domain port-coverage value to its persisted
+// sub-document. An unmeasured summary with no gaps still round-trips faithfully;
+// the parent pointer stays nil only for the zero value so pre-Fase-4 records and
+// brand-new contract-only records are distinguishable from genuinely absent data
+// only by content, not presence — every Fase-4 write carries the field.
+func portCoverageToDoc(pc workerdomain.PortCoverage) *portCoverageDoc {
+	doc := &portCoverageDoc{
+		SourceMethodCount: pc.SourceMethodCount,
+		PortGapCount:      pc.PortGapCount,
+		PortedMethodCount: pc.PortedMethodCount,
+		CoverageRatio:     pc.CoverageRatio,
+		Measured:          pc.Measured,
+	}
+	if len(pc.Gaps) > 0 {
+		doc.Gaps = make([]portGapDoc, len(pc.Gaps))
+		for i, g := range pc.Gaps {
+			doc.Gaps[i] = portGapDoc{File: g.File, Line: g.Line, Symbol: g.Symbol, Note: g.Note}
+		}
+	}
+	return doc
+}
+
+// portCoverageFromDoc maps the persisted sub-document back to the domain value.
+// A nil doc (pre-Fase-4 record) yields the zero PortCoverage.
+func portCoverageFromDoc(d *portCoverageDoc) workerdomain.PortCoverage {
+	if d == nil {
+		return workerdomain.PortCoverage{}
+	}
+	pc := workerdomain.PortCoverage{
+		SourceMethodCount: d.SourceMethodCount,
+		PortGapCount:      d.PortGapCount,
+		PortedMethodCount: d.PortedMethodCount,
+		CoverageRatio:     d.CoverageRatio,
+		Measured:          d.Measured,
+	}
+	if len(d.Gaps) > 0 {
+		pc.Gaps = make([]workerdomain.PortGap, len(d.Gaps))
+		for i, g := range d.Gaps {
+			pc.Gaps[i] = workerdomain.PortGap{File: g.File, Line: g.Line, Symbol: g.Symbol, Note: g.Note}
+		}
+	}
+	return pc
 }
 
 // UpsertArtifacts persists the generated file contents for one service.

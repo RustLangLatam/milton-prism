@@ -1638,7 +1638,10 @@ type ServiceGenerationRecord struct {
 	// TRANSIENT (rate-limit/overload/infra/deadline) → a retry is likely to help;
 	// DESIGN (gate-red / not-migrable / incomplete contract) → retry de-emphasised.
 	// Computed by the generation worker at persist time; UNSPECIFIED otherwise.
-	FailureClass  FailureClass `protobuf:"varint,12,opt,name=failure_class,json=failureClass,proto3,enum=milton_prism.types.migration.v1.FailureClass" json:"failure_class,omitempty"`
+	FailureClass FailureClass `protobuf:"varint,12,opt,name=failure_class,json=failureClass,proto3,enum=milton_prism.types.migration.v1.FailureClass" json:"failure_class,omitempty"`
+	// Deterministic per-service port-coverage summary computed worker-side at
+	// persist time (Fase 4). Nil for pre-Fase-4 records (no bar rendered).
+	PortCoverage  *PortCoverage `protobuf:"bytes,13,opt,name=port_coverage,json=portCoverage,proto3" json:"port_coverage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1757,6 +1760,181 @@ func (x *ServiceGenerationRecord) GetFailureClass() FailureClass {
 	return FailureClass_FAILURE_CLASS_UNSPECIFIED
 }
 
+func (x *ServiceGenerationRecord) GetPortCoverage() *PortCoverage {
+	if x != nil {
+		return x.PortCoverage
+	}
+	return nil
+}
+
+// PortCoverage is the deterministic per-service port-coverage summary computed
+// worker-side at generation persist time (Fase 4). coverage_ratio is only
+// meaningful when measured is true; measured=false ⇒ contract-only (no captured
+// source symbols) and the panel renders "contract-only", never 0% or 100%.
+type PortCoverage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Denominator: distinct domain-role source symbols. 0 ⇒ contract-only.
+	SourceMethodCount int32 `protobuf:"varint,1,opt,name=source_method_count,json=sourceMethodCount,proto3" json:"source_method_count,omitempty"`
+	// Total PORT-GAP markers across this service's generated files (exact, uncapped).
+	PortGapCount int32 `protobuf:"varint,2,opt,name=port_gap_count,json=portGapCount,proto3" json:"port_gap_count,omitempty"`
+	// max(source_method_count - port_gap_count, 0).
+	PortedMethodCount int32 `protobuf:"varint,3,opt,name=ported_method_count,json=portedMethodCount,proto3" json:"ported_method_count,omitempty"`
+	// ported/source clamped to [0,1]; meaningful only when measured is true.
+	CoverageRatio float64 `protobuf:"fixed64,4,opt,name=coverage_ratio,json=coverageRatio,proto3" json:"coverage_ratio,omitempty"`
+	// false ⇒ contract-only; render "contract-only", not 0/100%.
+	Measured bool `protobuf:"varint,5,opt,name=measured,proto3" json:"measured,omitempty"`
+	// Per-marker detail, capped for UI payload safety (count stays exact).
+	Gaps          []*PortGap `protobuf:"bytes,6,rep,name=gaps,proto3" json:"gaps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PortCoverage) Reset() {
+	*x = PortCoverage{}
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PortCoverage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PortCoverage) ProtoMessage() {}
+
+func (x *PortCoverage) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PortCoverage.ProtoReflect.Descriptor instead.
+func (*PortCoverage) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PortCoverage) GetSourceMethodCount() int32 {
+	if x != nil {
+		return x.SourceMethodCount
+	}
+	return 0
+}
+
+func (x *PortCoverage) GetPortGapCount() int32 {
+	if x != nil {
+		return x.PortGapCount
+	}
+	return 0
+}
+
+func (x *PortCoverage) GetPortedMethodCount() int32 {
+	if x != nil {
+		return x.PortedMethodCount
+	}
+	return 0
+}
+
+func (x *PortCoverage) GetCoverageRatio() float64 {
+	if x != nil {
+		return x.CoverageRatio
+	}
+	return 0
+}
+
+func (x *PortCoverage) GetMeasured() bool {
+	if x != nil {
+		return x.Measured
+	}
+	return false
+}
+
+func (x *PortCoverage) GetGaps() []*PortGap {
+	if x != nil {
+		return x.Gaps
+	}
+	return nil
+}
+
+// PortGap is the per-marker detail for one PORT-GAP comment found in the
+// generated deliverable. Best-effort UI enrichment; never moves the bar.
+type PortGap struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Generated artifact path the marker was found in.
+	File string `protobuf:"bytes,1,opt,name=file,proto3" json:"file,omitempty"`
+	// 1-based line number of the marker within that file.
+	Line int32 `protobuf:"varint,2,opt,name=line,proto3" json:"line,omitempty"`
+	// Best-effort nearest source symbol enclosing the marker; "" when none.
+	Symbol string `protobuf:"bytes,3,opt,name=symbol,proto3" json:"symbol,omitempty"`
+	// Trimmed text following "PORT-GAP:" on the marker line.
+	Note          string `protobuf:"bytes,4,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PortGap) Reset() {
+	*x = PortGap{}
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PortGap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PortGap) ProtoMessage() {}
+
+func (x *PortGap) ProtoReflect() protoreflect.Message {
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PortGap.ProtoReflect.Descriptor instead.
+func (*PortGap) Descriptor() ([]byte, []int) {
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PortGap) GetFile() string {
+	if x != nil {
+		return x.File
+	}
+	return ""
+}
+
+func (x *PortGap) GetLine() int32 {
+	if x != nil {
+		return x.Line
+	}
+	return 0
+}
+
+func (x *PortGap) GetSymbol() string {
+	if x != nil {
+		return x.Symbol
+	}
+	return ""
+}
+
+func (x *PortGap) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
 // FileArtifact represents one source file produced by the autonomous generation agent.
 type FileArtifact struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1770,7 +1948,7 @@ type FileArtifact struct {
 
 func (x *FileArtifact) Reset() {
 	*x = FileArtifact{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[10]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1782,7 +1960,7 @@ func (x *FileArtifact) String() string {
 func (*FileArtifact) ProtoMessage() {}
 
 func (x *FileArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[10]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1795,7 +1973,7 @@ func (x *FileArtifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileArtifact.ProtoReflect.Descriptor instead.
 func (*FileArtifact) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{10}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *FileArtifact) GetPath() string {
@@ -1830,7 +2008,7 @@ type ServiceGenerationArtifacts struct {
 
 func (x *ServiceGenerationArtifacts) Reset() {
 	*x = ServiceGenerationArtifacts{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[11]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1842,7 +2020,7 @@ func (x *ServiceGenerationArtifacts) String() string {
 func (*ServiceGenerationArtifacts) ProtoMessage() {}
 
 func (x *ServiceGenerationArtifacts) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[11]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1855,7 +2033,7 @@ func (x *ServiceGenerationArtifacts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceGenerationArtifacts.ProtoReflect.Descriptor instead.
 func (*ServiceGenerationArtifacts) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{11}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ServiceGenerationArtifacts) GetServiceName() string {
@@ -1916,7 +2094,7 @@ type ServiceGenerationSpec struct {
 
 func (x *ServiceGenerationSpec) Reset() {
 	*x = ServiceGenerationSpec{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[12]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1928,7 +2106,7 @@ func (x *ServiceGenerationSpec) String() string {
 func (*ServiceGenerationSpec) ProtoMessage() {}
 
 func (x *ServiceGenerationSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[12]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1941,7 +2119,7 @@ func (x *ServiceGenerationSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceGenerationSpec.ProtoReflect.Descriptor instead.
 func (*ServiceGenerationSpec) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{12}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ServiceGenerationSpec) GetName() string {
@@ -2023,7 +2201,7 @@ type GenerationPackage struct {
 
 func (x *GenerationPackage) Reset() {
 	*x = GenerationPackage{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[13]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2035,7 +2213,7 @@ func (x *GenerationPackage) String() string {
 func (*GenerationPackage) ProtoMessage() {}
 
 func (x *GenerationPackage) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[13]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2048,7 +2226,7 @@ func (x *GenerationPackage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerationPackage.ProtoReflect.Descriptor instead.
 func (*GenerationPackage) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{13}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GenerationPackage) GetMigrationId() uint64 {
@@ -2086,7 +2264,7 @@ type RoadmapDiagnosis struct {
 
 func (x *RoadmapDiagnosis) Reset() {
 	*x = RoadmapDiagnosis{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[14]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2098,7 +2276,7 @@ func (x *RoadmapDiagnosis) String() string {
 func (*RoadmapDiagnosis) ProtoMessage() {}
 
 func (x *RoadmapDiagnosis) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[14]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2111,7 +2289,7 @@ func (x *RoadmapDiagnosis) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoadmapDiagnosis.ProtoReflect.Descriptor instead.
 func (*RoadmapDiagnosis) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{14}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RoadmapDiagnosis) GetVerdict() string {
@@ -2162,7 +2340,7 @@ type StructuralProblem struct {
 
 func (x *StructuralProblem) Reset() {
 	*x = StructuralProblem{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[15]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2174,7 +2352,7 @@ func (x *StructuralProblem) String() string {
 func (*StructuralProblem) ProtoMessage() {}
 
 func (x *StructuralProblem) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[15]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2187,7 +2365,7 @@ func (x *StructuralProblem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructuralProblem.ProtoReflect.Descriptor instead.
 func (*StructuralProblem) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{15}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *StructuralProblem) GetSignal() string {
@@ -2228,7 +2406,7 @@ type ActionItem struct {
 
 func (x *ActionItem) Reset() {
 	*x = ActionItem{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[16]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2240,7 +2418,7 @@ func (x *ActionItem) String() string {
 func (*ActionItem) ProtoMessage() {}
 
 func (x *ActionItem) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[16]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2253,7 +2431,7 @@ func (x *ActionItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionItem.ProtoReflect.Descriptor instead.
 func (*ActionItem) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{16}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ActionItem) GetKind() string {
@@ -2319,7 +2497,7 @@ type EnrichedStep struct {
 
 func (x *EnrichedStep) Reset() {
 	*x = EnrichedStep{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[17]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2331,7 +2509,7 @@ func (x *EnrichedStep) String() string {
 func (*EnrichedStep) ProtoMessage() {}
 
 func (x *EnrichedStep) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[17]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2344,7 +2522,7 @@ func (x *EnrichedStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrichedStep.ProtoReflect.Descriptor instead.
 func (*EnrichedStep) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{17}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *EnrichedStep) GetStepOrder() int32 {
@@ -2378,7 +2556,7 @@ type RoadmapEnrichment struct {
 
 func (x *RoadmapEnrichment) Reset() {
 	*x = RoadmapEnrichment{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[18]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2390,7 +2568,7 @@ func (x *RoadmapEnrichment) String() string {
 func (*RoadmapEnrichment) ProtoMessage() {}
 
 func (x *RoadmapEnrichment) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[18]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2403,7 +2581,7 @@ func (x *RoadmapEnrichment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoadmapEnrichment.ProtoReflect.Descriptor instead.
 func (*RoadmapEnrichment) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{18}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RoadmapEnrichment) GetSteps() []*EnrichedStep {
@@ -2452,7 +2630,7 @@ type RestructuringRoadmap struct {
 
 func (x *RestructuringRoadmap) Reset() {
 	*x = RestructuringRoadmap{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[19]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2464,7 +2642,7 @@ func (x *RestructuringRoadmap) String() string {
 func (*RestructuringRoadmap) ProtoMessage() {}
 
 func (x *RestructuringRoadmap) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[19]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2477,7 +2655,7 @@ func (x *RestructuringRoadmap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestructuringRoadmap.ProtoReflect.Descriptor instead.
 func (*RestructuringRoadmap) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{19}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RestructuringRoadmap) GetDiagnosis() *RoadmapDiagnosis {
@@ -2547,7 +2725,7 @@ type BlueprintService struct {
 
 func (x *BlueprintService) Reset() {
 	*x = BlueprintService{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[20]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2559,7 +2737,7 @@ func (x *BlueprintService) String() string {
 func (*BlueprintService) ProtoMessage() {}
 
 func (x *BlueprintService) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[20]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2572,7 +2750,7 @@ func (x *BlueprintService) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlueprintService.ProtoReflect.Descriptor instead.
 func (*BlueprintService) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{20}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BlueprintService) GetName() string {
@@ -2633,7 +2811,7 @@ type ServiceBlueprint struct {
 
 func (x *ServiceBlueprint) Reset() {
 	*x = ServiceBlueprint{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[21]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2645,7 +2823,7 @@ func (x *ServiceBlueprint) String() string {
 func (*ServiceBlueprint) ProtoMessage() {}
 
 func (x *ServiceBlueprint) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[21]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2658,7 +2836,7 @@ func (x *ServiceBlueprint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceBlueprint.ProtoReflect.Descriptor instead.
 func (*ServiceBlueprint) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{21}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ServiceBlueprint) GetServices() []*BlueprintService {
@@ -2744,7 +2922,7 @@ type MigrationsFilter struct {
 
 func (x *MigrationsFilter) Reset() {
 	*x = MigrationsFilter{}
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[22]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2756,7 +2934,7 @@ func (x *MigrationsFilter) String() string {
 func (*MigrationsFilter) ProtoMessage() {}
 
 func (x *MigrationsFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[22]
+	mi := &file_milton_prism_types_migration_v1_migration_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2769,7 +2947,7 @@ func (x *MigrationsFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MigrationsFilter.ProtoReflect.Descriptor instead.
 func (*MigrationsFilter) Descriptor() ([]byte, []int) {
-	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{22}
+	return file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *MigrationsFilter) GetOwnerUserId() uint64 {
@@ -2923,8 +3101,7 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\routput_target\x18\x01 \x01(\x0e2-.milton_prism.types.migration.v1.OutputTargetBd\xbaGa:\x1a\x12\x18OUTPUT_TARGET_NEW_BRANCH\x92\x02BWhether the output was pushed to a new branch or a new repository.R\foutputTarget\x12\x85\x01\n" +
 	"\vbranch_name\x18\x02 \x01(\tBd\xbaGa:\x17\x12\x15migration/output-2025\x92\x02EBranch that received the migration output (when pushing to a branch).R\n" +
 	"branchName\x12\xa3\x01\n" +
-	"\x12new_repository_url\x18\x03 \x01(\tBu\xbaGr:,\x12*https://github.com/org/my-service-migrated\x92\x02AURL of the newly created repository (when pushing to a new repo).R\x10newRepositoryUrl:J\xbaGGJ\x0fMigrationOutput\x92\x023Push coordinates of the committed migration output.\"\xc3\n" +
-	"\n" +
+	"\x12new_repository_url\x18\x03 \x01(\tBu\xbaGr:,\x12*https://github.com/org/my-service-migrated\x92\x02AURL of the newly created repository (when pushing to a new repo).R\x10newRepositoryUrl:J\xbaGGJ\x0fMigrationOutput\x92\x023Push coordinates of the committed migration output.\"\xfe\v\n" +
 	"\x17ServiceGenerationRecord\x126\n" +
 	"\fservice_name\x18\x01 \x01(\tB\x13\xbaG\x10\x92\x02\rService name.R\vserviceName\x12X\n" +
 	"\x06status\x18\x02 \x01(\tB@\xbaG=\x92\x02:Generation status: generating, verifying, done, or failed.R\x06status\x12Q\n" +
@@ -2938,7 +3115,20 @@ const file_milton_prism_types_migration_v1_migration_proto_rawDesc = "" +
 	"\x17cache_read_input_tokens\x18\n" +
 	" \x01(\x03B:\xe0A\x03\xbaG4\x92\x021Cache-read input tokens consumed by this service.R\x14cacheReadInputTokens\x12U\n" +
 	"\routput_tokens\x18\v \x01(\x03B0\xe0A\x03\xbaG*\x92\x02'Output tokens produced by this service.R\foutputTokens\x12\xb7\x01\n" +
-	"\rfailure_class\x18\f \x01(\x0e2-.milton_prism.types.migration.v1.FailureClassBc\xe0A\x03\xbaG]\x92\x02ZFailure classification (TRANSIENT or DESIGN) when status is failed. UNSPECIFIED otherwise.R\ffailureClass:Q\xbaGNJ\x17ServiceGenerationRecord\x92\x022Per-service outcome of autonomous code generation.\"\xa6\x02\n" +
+	"\rfailure_class\x18\f \x01(\x0e2-.milton_prism.types.migration.v1.FailureClassBc\xe0A\x03\xbaG]\x92\x02ZFailure classification (TRANSIENT or DESIGN) when status is failed. UNSPECIFIED otherwise.R\ffailureClass\x12\xb8\x01\n" +
+	"\rport_coverage\x18\r \x01(\v2-.milton_prism.types.migration.v1.PortCoverageBd\xe0A\x03\xbaG^\x92\x02[Deterministic port-coverage summary (signal, not audited %). Absent for pre-Fase-4 records.R\fportCoverage:Q\xbaGNJ\x17ServiceGenerationRecord\x92\x022Per-service outcome of autonomous code generation.\"\xd0\x06\n" +
+	"\fPortCoverage\x12\x83\x01\n" +
+	"\x13source_method_count\x18\x01 \x01(\x05BS\xbaGP\x92\x02MDistinct domain-role source symbols (denominator). 0 when no source captured.R\x11sourceMethodCount\x12^\n" +
+	"\x0eport_gap_count\x18\x02 \x01(\x05B8\xbaG5\x92\x022Total PORT-GAP markers across the generated files.R\fportGapCount\x12~\n" +
+	"\x13ported_method_count\x18\x03 \x01(\x05BN\xbaGK\x92\x02HPorted method-equivalents: max(source_method_count - port_gap_count, 0).R\x11portedMethodCount\x12j\n" +
+	"\x0ecoverage_ratio\x18\x04 \x01(\x01BC\xbaG@\x92\x02=Coverage ratio (0..1). Meaningful only when measured is true.R\rcoverageRatio\x12x\n" +
+	"\bmeasured\x18\x05 \x01(\bB\\\xbaGY\x92\x02VFalse ⇒ contract-only (no source to port); render 'contract-only', not a percentage.R\bmeasured\x12\x89\x01\n" +
+	"\x04gaps\x18\x06 \x03(\v2(.milton_prism.types.migration.v1.PortGapBK\xbaGH\x92\x02EPer-marker detail, capped at 200 entries; port_gap_count stays exact.R\x04gaps:h\xbaGeJ\fPortCoverage\x92\x02TDeterministic per-service port-coverage summary (signal, not an audited percentage).\"\xf3\x02\n" +
+	"\aPortGap\x12D\n" +
+	"\x04file\x18\x01 \x01(\tB0\xbaG-\x92\x02*Generated file path containing the marker.R\x04file\x125\n" +
+	"\x04line\x18\x02 \x01(\x05B!\xbaG\x1e\x92\x02\x1b1-based line of the marker.R\x04line\x12W\n" +
+	"\x06symbol\x18\x03 \x01(\tB?\xbaG<\x92\x029Best-effort nearest source symbol; empty when none found.R\x06symbol\x12H\n" +
+	"\x04note\x18\x04 \x01(\tB4\xbaG1\x92\x02.Text following 'PORT-GAP:' on the marker line.R\x04note:H\xbaGEJ\aPortGap\x92\x029Detail for one PORT-GAP marker found in a generated file.\"\xa6\x02\n" +
 	"\fFileArtifact\x12c\n" +
 	"\x04path\x18\x01 \x01(\tBO\xbaGL:%\x12#core/services/user/domain/domain.go\x92\x02\"Relative path within the monorepo.R\x04path\x12K\n" +
 	"\acontent\x18\x02 \x01(\tB1\xbaG.\x92\x02+UTF-8 source content of the generated file.R\acontent:d\xbaGaJ\fFileArtifact\x92\x02PA single generated source file produced by the autonomous code generation agent.\"\x9d\x03\n" +
@@ -3101,7 +3291,7 @@ func file_milton_prism_types_migration_v1_migration_proto_rawDescGZIP() []byte {
 }
 
 var file_milton_prism_types_migration_v1_migration_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_milton_prism_types_migration_v1_migration_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_milton_prism_types_migration_v1_migration_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_milton_prism_types_migration_v1_migration_proto_goTypes = []any{
 	(MigrationState)(0),                // 0: milton_prism.types.migration.v1.MigrationState
 	(TargetLanguage)(0),                // 1: milton_prism.types.migration.v1.TargetLanguage
@@ -3121,22 +3311,24 @@ var file_milton_prism_types_migration_v1_migration_proto_goTypes = []any{
 	(*OperationalCoupling)(nil),        // 15: milton_prism.types.migration.v1.OperationalCoupling
 	(*MigrationOutput)(nil),            // 16: milton_prism.types.migration.v1.MigrationOutput
 	(*ServiceGenerationRecord)(nil),    // 17: milton_prism.types.migration.v1.ServiceGenerationRecord
-	(*FileArtifact)(nil),               // 18: milton_prism.types.migration.v1.FileArtifact
-	(*ServiceGenerationArtifacts)(nil), // 19: milton_prism.types.migration.v1.ServiceGenerationArtifacts
-	(*ServiceGenerationSpec)(nil),      // 20: milton_prism.types.migration.v1.ServiceGenerationSpec
-	(*GenerationPackage)(nil),          // 21: milton_prism.types.migration.v1.GenerationPackage
-	(*RoadmapDiagnosis)(nil),           // 22: milton_prism.types.migration.v1.RoadmapDiagnosis
-	(*StructuralProblem)(nil),          // 23: milton_prism.types.migration.v1.StructuralProblem
-	(*ActionItem)(nil),                 // 24: milton_prism.types.migration.v1.ActionItem
-	(*EnrichedStep)(nil),               // 25: milton_prism.types.migration.v1.EnrichedStep
-	(*RoadmapEnrichment)(nil),          // 26: milton_prism.types.migration.v1.RoadmapEnrichment
-	(*RestructuringRoadmap)(nil),       // 27: milton_prism.types.migration.v1.RestructuringRoadmap
-	(*BlueprintService)(nil),           // 28: milton_prism.types.migration.v1.BlueprintService
-	(*ServiceBlueprint)(nil),           // 29: milton_prism.types.migration.v1.ServiceBlueprint
-	(*MigrationsFilter)(nil),           // 30: milton_prism.types.migration.v1.MigrationsFilter
-	(*timestamppb.Timestamp)(nil),      // 31: google.protobuf.Timestamp
-	(*v1.MigrabilityAssessment)(nil),   // 32: milton_prism.types.common.v1.MigrabilityAssessment
-	(v11.AuthScheme)(0),                // 33: milton_prism.types.analysis.v1.AuthScheme
+	(*PortCoverage)(nil),               // 18: milton_prism.types.migration.v1.PortCoverage
+	(*PortGap)(nil),                    // 19: milton_prism.types.migration.v1.PortGap
+	(*FileArtifact)(nil),               // 20: milton_prism.types.migration.v1.FileArtifact
+	(*ServiceGenerationArtifacts)(nil), // 21: milton_prism.types.migration.v1.ServiceGenerationArtifacts
+	(*ServiceGenerationSpec)(nil),      // 22: milton_prism.types.migration.v1.ServiceGenerationSpec
+	(*GenerationPackage)(nil),          // 23: milton_prism.types.migration.v1.GenerationPackage
+	(*RoadmapDiagnosis)(nil),           // 24: milton_prism.types.migration.v1.RoadmapDiagnosis
+	(*StructuralProblem)(nil),          // 25: milton_prism.types.migration.v1.StructuralProblem
+	(*ActionItem)(nil),                 // 26: milton_prism.types.migration.v1.ActionItem
+	(*EnrichedStep)(nil),               // 27: milton_prism.types.migration.v1.EnrichedStep
+	(*RoadmapEnrichment)(nil),          // 28: milton_prism.types.migration.v1.RoadmapEnrichment
+	(*RestructuringRoadmap)(nil),       // 29: milton_prism.types.migration.v1.RestructuringRoadmap
+	(*BlueprintService)(nil),           // 30: milton_prism.types.migration.v1.BlueprintService
+	(*ServiceBlueprint)(nil),           // 31: milton_prism.types.migration.v1.ServiceBlueprint
+	(*MigrationsFilter)(nil),           // 32: milton_prism.types.migration.v1.MigrationsFilter
+	(*timestamppb.Timestamp)(nil),      // 33: google.protobuf.Timestamp
+	(*v1.MigrabilityAssessment)(nil),   // 34: milton_prism.types.common.v1.MigrabilityAssessment
+	(v11.AuthScheme)(0),                // 35: milton_prism.types.analysis.v1.AuthScheme
 }
 var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	0,  // 0: milton_prism.types.migration.v1.Migration.state:type_name -> milton_prism.types.migration.v1.MigrationState
@@ -3144,17 +3336,17 @@ var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	10, // 2: milton_prism.types.migration.v1.Migration.plan:type_name -> milton_prism.types.migration.v1.RestructurePlan
 	16, // 3: milton_prism.types.migration.v1.Migration.output:type_name -> milton_prism.types.migration.v1.MigrationOutput
 	17, // 4: milton_prism.types.migration.v1.Migration.generation_records:type_name -> milton_prism.types.migration.v1.ServiceGenerationRecord
-	31, // 5: milton_prism.types.migration.v1.Migration.create_time:type_name -> google.protobuf.Timestamp
-	31, // 6: milton_prism.types.migration.v1.Migration.update_time:type_name -> google.protobuf.Timestamp
-	31, // 7: milton_prism.types.migration.v1.Migration.delete_time:type_name -> google.protobuf.Timestamp
-	31, // 8: milton_prism.types.migration.v1.Migration.purge_time:type_name -> google.protobuf.Timestamp
-	32, // 9: milton_prism.types.migration.v1.Migration.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
-	27, // 10: milton_prism.types.migration.v1.Migration.restructuring_roadmap:type_name -> milton_prism.types.migration.v1.RestructuringRoadmap
+	33, // 5: milton_prism.types.migration.v1.Migration.create_time:type_name -> google.protobuf.Timestamp
+	33, // 6: milton_prism.types.migration.v1.Migration.update_time:type_name -> google.protobuf.Timestamp
+	33, // 7: milton_prism.types.migration.v1.Migration.delete_time:type_name -> google.protobuf.Timestamp
+	33, // 8: milton_prism.types.migration.v1.Migration.purge_time:type_name -> google.protobuf.Timestamp
+	34, // 9: milton_prism.types.migration.v1.Migration.migrability_assessment:type_name -> milton_prism.types.common.v1.MigrabilityAssessment
+	29, // 10: milton_prism.types.migration.v1.Migration.restructuring_roadmap:type_name -> milton_prism.types.migration.v1.RestructuringRoadmap
 	1,  // 11: milton_prism.types.migration.v1.TargetConfig.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
 	2,  // 12: milton_prism.types.migration.v1.TargetConfig.database:type_name -> milton_prism.types.migration.v1.TargetDatabase
 	3,  // 13: milton_prism.types.migration.v1.TargetConfig.inter_service_transport:type_name -> milton_prism.types.migration.v1.Transport
 	5,  // 14: milton_prism.types.migration.v1.TargetConfig.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
-	33, // 15: milton_prism.types.migration.v1.TargetConfig.target_auth_scheme:type_name -> milton_prism.types.analysis.v1.AuthScheme
+	35, // 15: milton_prism.types.migration.v1.TargetConfig.target_auth_scheme:type_name -> milton_prism.types.analysis.v1.AuthScheme
 	4,  // 16: milton_prism.types.migration.v1.TargetConfig.http_framework:type_name -> milton_prism.types.migration.v1.HttpFramework
 	13, // 17: milton_prism.types.migration.v1.RestructurePlan.services:type_name -> milton_prism.types.migration.v1.ProposedService
 	15, // 18: milton_prism.types.migration.v1.RestructurePlan.operational_couplings:type_name -> milton_prism.types.migration.v1.OperationalCoupling
@@ -3163,28 +3355,30 @@ var file_milton_prism_types_migration_v1_migration_proto_depIdxs = []int32{
 	14, // 21: milton_prism.types.migration.v1.ProposedService.cross_service_fks:type_name -> milton_prism.types.migration.v1.CrossServiceFk
 	6,  // 22: milton_prism.types.migration.v1.MigrationOutput.output_target:type_name -> milton_prism.types.migration.v1.OutputTarget
 	7,  // 23: milton_prism.types.migration.v1.ServiceGenerationRecord.failure_class:type_name -> milton_prism.types.migration.v1.FailureClass
-	18, // 24: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
-	20, // 25: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
-	25, // 26: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
-	31, // 27: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
-	22, // 28: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
-	23, // 29: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
-	24, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
-	31, // 31: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
-	26, // 32: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
-	29, // 33: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
-	28, // 34: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
-	31, // 35: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
-	0,  // 36: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
-	0,  // 37: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
-	5,  // 38: milton_prism.types.migration.v1.MigrationsFilter.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
-	3,  // 39: milton_prism.types.migration.v1.MigrationsFilter.protocol:type_name -> milton_prism.types.migration.v1.Transport
-	1,  // 40: milton_prism.types.migration.v1.MigrationsFilter.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
-	41, // [41:41] is the sub-list for method output_type
-	41, // [41:41] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	18, // 24: milton_prism.types.migration.v1.ServiceGenerationRecord.port_coverage:type_name -> milton_prism.types.migration.v1.PortCoverage
+	19, // 25: milton_prism.types.migration.v1.PortCoverage.gaps:type_name -> milton_prism.types.migration.v1.PortGap
+	20, // 26: milton_prism.types.migration.v1.ServiceGenerationArtifacts.files:type_name -> milton_prism.types.migration.v1.FileArtifact
+	22, // 27: milton_prism.types.migration.v1.GenerationPackage.services:type_name -> milton_prism.types.migration.v1.ServiceGenerationSpec
+	27, // 28: milton_prism.types.migration.v1.RoadmapEnrichment.steps:type_name -> milton_prism.types.migration.v1.EnrichedStep
+	33, // 29: milton_prism.types.migration.v1.RoadmapEnrichment.enriched_time:type_name -> google.protobuf.Timestamp
+	24, // 30: milton_prism.types.migration.v1.RestructuringRoadmap.diagnosis:type_name -> milton_prism.types.migration.v1.RoadmapDiagnosis
+	25, // 31: milton_prism.types.migration.v1.RestructuringRoadmap.structural_problems:type_name -> milton_prism.types.migration.v1.StructuralProblem
+	26, // 32: milton_prism.types.migration.v1.RestructuringRoadmap.action_plan:type_name -> milton_prism.types.migration.v1.ActionItem
+	33, // 33: milton_prism.types.migration.v1.RestructuringRoadmap.generated_time:type_name -> google.protobuf.Timestamp
+	28, // 34: milton_prism.types.migration.v1.RestructuringRoadmap.enrichment:type_name -> milton_prism.types.migration.v1.RoadmapEnrichment
+	31, // 35: milton_prism.types.migration.v1.RestructuringRoadmap.blueprint:type_name -> milton_prism.types.migration.v1.ServiceBlueprint
+	30, // 36: milton_prism.types.migration.v1.ServiceBlueprint.services:type_name -> milton_prism.types.migration.v1.BlueprintService
+	33, // 37: milton_prism.types.migration.v1.ServiceBlueprint.generated_time:type_name -> google.protobuf.Timestamp
+	0,  // 38: milton_prism.types.migration.v1.MigrationsFilter.state:type_name -> milton_prism.types.migration.v1.MigrationState
+	0,  // 39: milton_prism.types.migration.v1.MigrationsFilter.states:type_name -> milton_prism.types.migration.v1.MigrationState
+	5,  // 40: milton_prism.types.migration.v1.MigrationsFilter.topology:type_name -> milton_prism.types.migration.v1.TargetTopology
+	3,  // 41: milton_prism.types.migration.v1.MigrationsFilter.protocol:type_name -> milton_prism.types.migration.v1.Transport
+	1,  // 42: milton_prism.types.migration.v1.MigrationsFilter.language:type_name -> milton_prism.types.migration.v1.TargetLanguage
+	43, // [43:43] is the sub-list for method output_type
+	43, // [43:43] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_milton_prism_types_migration_v1_migration_proto_init() }
@@ -3193,15 +3387,15 @@ func file_milton_prism_types_migration_v1_migration_proto_init() {
 		return
 	}
 	file_milton_prism_types_migration_v1_migration_proto_msgTypes[0].OneofWrappers = []any{}
-	file_milton_prism_types_migration_v1_migration_proto_msgTypes[14].OneofWrappers = []any{}
-	file_milton_prism_types_migration_v1_migration_proto_msgTypes[22].OneofWrappers = []any{}
+	file_milton_prism_types_migration_v1_migration_proto_msgTypes[16].OneofWrappers = []any{}
+	file_milton_prism_types_migration_v1_migration_proto_msgTypes[24].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_milton_prism_types_migration_v1_migration_proto_rawDesc), len(file_milton_prism_types_migration_v1_migration_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

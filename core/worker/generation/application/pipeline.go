@@ -323,6 +323,12 @@ persist:
 		AgentRawResult:           result.RawResult,
 	}
 
+	// Fase 4 §1d: deterministic port-coverage, computed for EVERY terminal status
+	// (including FAILED) at the single worker-side persist point. The source side
+	// is adapted from []ports.SourceFile to []workerdomain.SourceFileInput so the
+	// domain package need not import ports (import-cycle note in port_coverage.go).
+	rec.PortCoverage = workerdomain.ComputePortCoverage(toSourceFileInputs(spec.SourceToPort), result.FileArtifacts)
+
 	switch {
 	case invokeErr != nil:
 		rec.Status = workerdomain.ServiceStatusFailed
@@ -357,4 +363,19 @@ persist:
 			applog.Warningf("generation-worker: persist artifacts service=%s: %v", spec.Name, upsertErr)
 		}
 	}
+}
+
+// toSourceFileInputs adapts the ports-level captured source ([]ports.SourceFile)
+// to the minimal projection ComputePortCoverage needs ([]workerdomain.
+// SourceFileInput), carrying only the two fields the coverage denominator depends
+// on (Role + Symbols). Kept local to the single Fase-4 wiring site.
+func toSourceFileInputs(src []ports.SourceFile) []workerdomain.SourceFileInput {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]workerdomain.SourceFileInput, len(src))
+	for i, sf := range src {
+		out[i] = workerdomain.SourceFileInput{Role: sf.Role, Symbols: sf.Symbols}
+	}
+	return out
 }

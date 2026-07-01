@@ -5,5 +5,4 @@ core/bin/*
 infra/bin/*
 CLAUDE.md
 .milton/*
-docs/prism
 milton-prism-panel

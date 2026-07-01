@@ -71,7 +71,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to init SSE cache pool: %v", err)
 		}
-		sseHandler = sse.NewHandler(pool, validator)
+		// Pass the same [cors] config the middleware uses: the SSE route bypasses
+		// the CORS middleware, so the handler must emit Access-Control-* itself.
+		sseHandler = sse.NewHandler(pool, validator, cfg.Cors)
 		log.Info("SSE real-time notifications ENABLED (GET /v1/events)")
 	} else {
 		log.Info("SSE real-time notifications DISABLED (no [auth]+[cache] in gateway config)")

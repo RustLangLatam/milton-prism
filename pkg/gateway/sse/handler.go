@@ -16,10 +16,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"milton_prism/core/shared/auth_token"
 	"milton_prism/core/shared/event_bus"
+	"milton_prism/pkg/config"
 	"milton_prism/pkg/log"
 
 	"github.com/gomodule/redigo/redis"
@@ -45,15 +47,35 @@ type tokenClaims struct {
 type Handler struct {
 	pool      *redis.Pool
 	validator auth_token.TokenValidator
+	// cors carries the gateway's [cors] config. Because this handler is mounted
+	// ABOVE the middleware chain (route-level bypass), it also bypasses the CORS
+	// middleware — so it must emit the CORS headers itself for cross-origin
+	// browser EventSource clients. May be nil (CORS disabled / not configured).
+	cors *config.CORSCfg
 }
 
 // NewHandler builds an SSE handler over a redigo pool and a token validator
-// (JWT or PASETO, per gateway config).
-func NewHandler(pool *redis.Pool, validator auth_token.TokenValidator) *Handler {
-	return &Handler{pool: pool, validator: validator}
+// (JWT or PASETO, per gateway config). corsCfg is the gateway's [cors] config
+// (the same value passed to the CORS middleware); it is used to emit the
+// Access-Control-* headers the bypassed middleware would otherwise set.
+func NewHandler(pool *redis.Pool, validator auth_token.TokenValidator, corsCfg *config.CORSCfg) *Handler {
+	return &Handler{pool: pool, validator: validator, cors: corsCfg}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// CORS: this handler is a route-level bypass ABOVE the middleware chain, so
+	// it also bypasses the CORS middleware. Emit the same Access-Control-* headers
+	// the middleware would have set, on EVERY response path (stream, 401, OPTIONS),
+	// BEFORE any WriteHeader/flush. Without this a cross-origin EventSource fails.
+	h.setCorsHeaders(w, r)
+
+	// EventSource issues a simple GET (no preflight), but mirror the middleware's
+	// OPTIONS short-circuit for robustness against manual/preflight probes.
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	// The ResponseWriter MUST support flushing for streaming. The gateway mounts
 	// this handler outside the middleware chain precisely so the raw,
 	// flush-capable ResponseWriter reaches us. Guard anyway.
@@ -154,6 +176,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// setCorsHeaders mirrors handlers.HandlerEnableCors so the SSE endpoint — which
+// is mounted above (and therefore bypasses) the CORS middleware — carries the
+// same Access-Control-* headers. A nil/disabled config is a no-op (matching the
+// middleware's early return when cfg.Enabled is false).
+//
+// EventSource passes its token in the query string, so requests are
+// non-credentialed and Access-Control-Allow-Origin: "*" is valid and sufficient
+// — deliberately no Access-Control-Allow-Credentials (illegal with "*").
+func (h *Handler) setCorsHeaders(w http.ResponseWriter, r *http.Request) {
+	if h.cors == nil || !h.cors.Enabled {
+		return
+	}
+
+	if h.cors.AllowOrigin == "*" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	} else if origin := r.Header.Get("Origin"); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	} else {
+		w.Header().Set("Access-Control-Allow-Origin", h.cors.AllowOrigin)
+	}
+
+	w.Header().Set("Access-Control-Allow-Methods", strings.Join(h.cors.AllowedMethods, ", "))
+	w.Header().Set("Access-Control-Allow-Headers", strings.Join(h.cors.AllowedHeaders, ", "))
+	w.Header().Set("Access-Control-Expose-Headers", strings.Join(h.cors.ExposeHeaders, ", "))
 }
 
 // authenticate verifies the ?access_token= PASETO token and returns the owner
